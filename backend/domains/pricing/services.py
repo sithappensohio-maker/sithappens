@@ -744,8 +744,10 @@ def money_modifier_breakdown(
                 # Never run the clock overnight: a daycare dog checked out on a
                 # later day was either a forgotten checkout (no late fee) or a
                 # stay that is re-priced as boarding (domains/bookings/late_day.py).
-                later_day = (booking.get("service_type") != "boarding"
-                             and checked.astimezone(_business_tz).date().isoformat() > str(pickup_date)[:10])
+                # Boarding too: a dog collected a day after its booked end date is billed
+                # the extra night(s), and the clock must not also run from the old pickup
+                # time across the night (audit #17).
+                later_day = checked.astimezone(_business_tz).date().isoformat() > str(pickup_date)[:10]
                 if booking.get("late_day_resolution") or later_day:
                     minutes_late = 0.0
                 if minutes_late > 0:
