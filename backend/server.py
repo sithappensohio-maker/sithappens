@@ -6998,7 +6998,9 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
                 unit,
             )
             unit = pricing["effective_price"]
-            if booking.get("service_type") == "boarding":
+            if (booked := await _boarding_auto_base(booking, settings)) > 0:   # the stay's booked rate: what checkout charges (audit #2)
+                tentative_price = booked
+            elif booking.get("service_type") == "boarding":
                 ps = booking.get("pricing_snapshot") or {}
                 cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
                 pickup_clock = booking.get("pickup_time") or cutoff_time
