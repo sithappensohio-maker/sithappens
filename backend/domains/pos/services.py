@@ -1220,6 +1220,9 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
             raise HTTPException(status_code=400, detail=stock_refusal(product.get("name"), stock, held))
 
     subtotal = round(sum(li["amount"] for li in line_items), 2)
+    # A gift card is money in at its face value, so a cart discount is taken off the
+    # other lines only (audit #4). Discounting a card would load less than it was sold for.
+    discountable = round(sum(li["amount"] for li in line_items if li["kind"] != "gift_card"), 2)
 
     discount_amount = 0.0
     discount_kind = None
@@ -1227,12 +1230,14 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     if discount is not None:
         if not can_price:
             raise HTTPException(status_code=403, detail="You don't have permission to apply a discount.")
+        if discountable <= 0:
+            raise HTTPException(status_code=400, detail="A discount can't be taken off a gift card. Discount the other items in the cart.")
         if discount.kind == "percent":
             if discount.value > 100:
                 raise HTTPException(status_code=400, detail="A percentage discount cannot exceed 100%.")
-            discount_amount = round(subtotal * (discount.value / 100.0), 2)
+            discount_amount = round(discountable * (discount.value / 100.0), 2)
         else:
-            discount_amount = round(min(discount.value, subtotal), 2)
+            discount_amount = round(min(discount.value, discountable), 2)
         discount_kind = discount.kind
         discount_reason = discount.reason.strip()
 
@@ -1240,7 +1245,7 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     # whose catalog item is actually configured `taxable` contribute, and
     # each gets its own discount-proportional share of the total tax so the
     # receipt/invoice can show taxable status + rate + amount per line.
-    discount_ratio = (discount_amount / subtotal) if subtotal > 0 else 0.0
+    discount_ratio = (discount_amount / discountable) if discountable > 0 else 0.0
     taxable_indices = [i for i, li in enumerate(line_items) if li["taxable"]]
     taxable_subtotal = round(sum(line_items[i]["amount"] for i in taxable_indices), 2)
     taxable_base = round(taxable_subtotal * (1 - discount_ratio), 2)
@@ -1286,13 +1291,14 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     # running-remainder correction on the last line (same rounding-safe
     # pattern as the tax allocation above).
     discount_allocated_so_far = 0.0
+    discount_lines = [i for i, li in enumerate(line_items) if li["kind"] != "gift_card"]
     for idx, li in enumerate(line_items):
-        if subtotal <= 0:
+        if li["kind"] == "gift_card" or discountable <= 0:
             line_discount = 0.0
-        elif idx == len(line_items) - 1:
+        elif idx == discount_lines[-1]:
             line_discount = round(discount_amount - discount_allocated_so_far, 2)
         else:
-            line_discount = round(discount_amount * (li["amount"] / subtotal), 2)
+            line_discount = round(discount_amount * (li["amount"] / discountable), 2)
             discount_allocated_so_far = round(discount_allocated_so_far + line_discount, 2)
         li["allocated_discount"] = line_discount
         li["net_amount"] = round(li["amount"] - line_discount, 2)
