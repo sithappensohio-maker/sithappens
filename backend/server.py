@@ -6765,6 +6765,11 @@ async def remove_booking_addon(
         raise HTTPException(status_code=404, detail="Booking not found")
     if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
+    # Taking an add-on off lowers what the family pays, so staff need the same
+    # booking_edit permission that changes a booking (audit: any admin-type
+    # login could remove one).
+    if user.get("role") != "client" and not _perms_for(user).get("booking_edit"):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
     friends_family.refuse_client_change(booking, user)
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="Booking already financially closed — add-ons are locked in.")
