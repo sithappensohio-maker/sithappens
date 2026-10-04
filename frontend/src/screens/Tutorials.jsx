@@ -210,7 +210,7 @@ const ADMIN_SECTIONS = [
         path: "Sidebar → Schedule",
         steps: [
           "Schedule is one workspace with four tabs. Calendar is the month/list view; Bookings is the full list with filters; Waitlist holds overflow; Recurring holds standing schedules.",
-          "Waitlist: when daycare or boarding is at capacity, drop the client on the waitlist instead of a booking error. Status flow: Waiting → Offered → Booked / Declined / Expired / Removed. Convert creates the real booking (bypasses the daily cap, still checks vaccines, waiver, and conflicts).",
+          "Waitlist: when daycare or boarding is at capacity, drop the client on the waitlist instead of a booking error. Status flow: Waiting → Offered → Booked / Declined / Expired / Removed. Convert creates the real booking only when there is room: it runs the same capacity, vaccine, waiver and conflict checks as any booking.",
           "Recurring: create a template (client, dog, service, days of week, horizon in weeks). Click Extend once to book the first window.",
           "After that first Extend, the scheduler keeps the schedule booked ahead automatically — about two weeks before the booked window runs out it books the next horizon. Turn Auto-extend off on the template if you'd rather do it by hand.",
         ],

@@ -52445,6 +52445,18 @@ async def update_waitlist_entry(entry_id: str, body: WaitlistPatch, user: dict =
         patch["requested_end_date"] = body.requested_end_date
     if not patch:
         return existing
+    if "requested_date" in patch or "requested_end_date" in patch:
+        # The duplicate check keys on the dates, so a moved entry gets the key
+        # for its NEW dates (the same rule the add uses), and may not collide.
+        new_start = patch.get("requested_date", existing.get("requested_date") or "")
+        new_end = patch.get("requested_end_date", existing.get("requested_end_date")) or new_start
+        new_key = "|".join([existing.get("dog_id") or "", existing.get("service_type") or "", existing.get("service_id") or "",
+                            new_start, new_end, existing.get("time") or ""])
+        clash = await db.waitlist.find_one(
+            {"dedupe_key": new_key, "id": {"$ne": entry_id}, "status": {"$in": ["waiting", "offered", "converting"]}}, {"_id": 1})
+        if clash and existing.get("status") in ("waiting", "offered", "converting"):
+            raise HTTPException(status_code=409, detail="This dog is already on the waitlist for those dates.")
+        patch["dedupe_key"] = new_key
     patch["updated_at"] = now
     await db.waitlist.update_one({"id": entry_id}, {"$set": patch})
     return await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
