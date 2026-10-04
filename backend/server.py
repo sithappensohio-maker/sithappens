@@ -195,6 +195,7 @@ REGISTER_METHOD_LABELS = {
     "venmo_paypal": "Venmo / PayPal (legacy transfer)",
     "stripe_online": "Online Card (Stripe)",
     "credits": "Credits",
+    "gift_card": "Gift card",
     "other": "Other",
 }
 
