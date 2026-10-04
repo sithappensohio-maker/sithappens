@@ -34,6 +34,7 @@ Two deliberate exceptions, both narrow and both explicit:
 """
 import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -188,6 +189,7 @@ def register_photo_special_routes(
     require_admin_and_permission, slot_overlaps, notify_client_booking_approved,
     create_pos_sale=None, price_pos_cart=None, require_take_payments=None,
     pos_sale_model=None, pos_line_model=None, pos_tender_model=None, business_today=None, default_duration=None,
+    acquire_capacity_locks=None, release_capacity_locks=None,
 ) -> Dict[str, Any]:
     """Register the public + admin Photo Specials routes. Returns the callables
     the in-process suite drives directly."""
@@ -352,6 +354,17 @@ def register_photo_special_routes(
             t = r.get("time") or ""
             out[t] = out.get(t, 0) + 1
         return out
+
+    @asynccontextmanager
+    async def _day_lease(day: str):
+        """The day's time pool, held while a reservation checks and saves: a lesson,
+        grooming or Meet & Greet on the same day and time waits for it (audit).
+        Without a lease the check and the insert can both pass."""
+        if acquire_capacity_locks and release_capacity_locks:
+            async with time_pool.lease(day, acquire_capacity_locks, release_capacity_locks):
+                yield
+        else:
+            yield
 
     async def _other_service_blocks(day: str) -> List[dict]:
         """The day's live timed appointments — lessons, grooming, portraits and
@@ -604,61 +617,62 @@ def register_photo_special_routes(
         # connection, a browser retry — must get back the reservation it
         # already made. Checking availability first would tell that customer
         # their own slot had been taken, which is both wrong and alarming.
-        if body.idempotency_key:
-            prior = await db.bookings.find_one(
-                {"photo_special_id": sp["id"], "reservation_idempotency_key": body.idempotency_key}, {"_id": 0}
-            )
-            if prior:
-                return {"ok": True, "reservation": _public_reservation(prior, body.dog_name.strip())}
+        async with _day_lease(body.date.strip()):
+            if body.idempotency_key:
+                prior = await db.bookings.find_one(
+                    {"photo_special_id": sp["id"], "reservation_idempotency_key": body.idempotency_key}, {"_id": 0}
+                )
+                if prior:
+                    return {"ok": True, "reservation": _public_reservation(prior, body.dog_name.strip())}
 
-        if not sp.get("booking_open"):
-            raise BookingBlocked(
-                409, "Booking for this session has closed. Give us a call and we'll see what we can do.",
-                code="special_closed", action="contact_us",
-            )
+            if not sp.get("booking_open"):
+                raise BookingBlocked(
+                    409, "Booking for this session has closed. Give us a call and we'll see what we can do.",
+                    code="special_closed", action="contact_us",
+                )
 
-        day, when = body.date.strip(), body.time.strip()
-        if day and day not in _upcoming(_special_dates(sp)):
-            raise BookingBlocked(409, "That date is no longer available. Please choose another.", code="date_unavailable", action="pick_date")
-        if _passed(day, when):
-            raise BookingBlocked(409, "That time has already passed. Please choose a later time.", code="time_in_past", action="pick_time")
-        avail = await _availability(sp, day)
-        if avail.get("closed") or not any(s["time"] == when and s["available"] for s in avail.get("slots") or []):
-            raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
+            day, when = body.date.strip(), body.time.strip()
+            if day and day not in _upcoming(_special_dates(sp)):
+                raise BookingBlocked(409, "That date is no longer available. Please choose another.", code="date_unavailable", action="pick_date")
+            if _passed(day, when):
+                raise BookingBlocked(409, "That time has already passed. Please choose a later time.", code="time_in_past", action="pick_time")
+            avail = await _availability(sp, day)
+            if avail.get("closed") or not any(s["time"] == when and s["available"] for s in avail.get("slots") or []):
+                raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
 
-        service = await _portrait_service()
-        client, dog = await _resolve_owner_and_dog(body)
+            service = await _portrait_service()
+            client, dog = await _resolve_owner_and_dog(body)
 
-        booking = {
-            "id": str(uuid.uuid4()),
-            "dog_id": dog["id"],
-            "dog_name": dog["name"],
-            "client_id": client["id"],
-            "client_name": client.get("name") or "",
-            "date": day,
-            "time": when,
-            "duration_minutes": int(sp.get("slot_minutes") or service.get("duration_minutes") or 15),
-            "service_type": "photography",
-            "service_id": service["id"],
-            "status": "approved",
-            "notes": _clean(body.dog_notes, 600),
-            "created_at": now_iso(),
-            "photo_special_id": sp["id"],
-            "reservation_idempotency_key": body.idempotency_key or None,
-            # Narrow, explicit and visible in the data. This booking was allowed
-            # without vaccine documentation BECAUSE it is a photo special; it
-            # says nothing about the dog and nothing about any other service.
-            "vaccine_booking_exception": VACCINE_EXCEPTION,
-            # No actual_price. The Register decides what is owed, after the
-            # session, when the customer picks a package.
-        }
-        try:
-            await db.bookings.insert_one(dict(booking))
-        except Exception as e:  # pragma: no cover - exercised via the index test
-            if "duplicate key" not in str(e).lower():
-                raise
-            # Someone else's insert landed first. The index is the authority.
-            raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
+            booking = {
+                "id": str(uuid.uuid4()),
+                "dog_id": dog["id"],
+                "dog_name": dog["name"],
+                "client_id": client["id"],
+                "client_name": client.get("name") or "",
+                "date": day,
+                "time": when,
+                "duration_minutes": int(sp.get("slot_minutes") or service.get("duration_minutes") or 15),
+                "service_type": "photography",
+                "service_id": service["id"],
+                "status": "approved",
+                "notes": _clean(body.dog_notes, 600),
+                "created_at": now_iso(),
+                "photo_special_id": sp["id"],
+                "reservation_idempotency_key": body.idempotency_key or None,
+                # Narrow, explicit and visible in the data. This booking was allowed
+                # without vaccine documentation BECAUSE it is a photo special; it
+                # says nothing about the dog and nothing about any other service.
+                "vaccine_booking_exception": VACCINE_EXCEPTION,
+                # No actual_price. The Register decides what is owed, after the
+                # session, when the customer picks a package.
+            }
+            try:
+                await db.bookings.insert_one(dict(booking))
+            except Exception as e:  # pragma: no cover - exercised via the index test
+                if "duplicate key" not in str(e).lower():
+                    raise
+                # Someone else's insert landed first. The index is the authority.
+                raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
         booking.pop("_id", None)
 
         try:
@@ -827,32 +841,33 @@ def register_photo_special_routes(
         """Add a reservation by hand — a phone booking, or someone at the desk.
         Goes through the same availability and the same unique index."""
         sp = await _special_by({"id": special_id})
-        avail = await _availability(sp, body.date.strip())
-        if avail.get("closed") or not any(s["time"] == body.time.strip() and s["available"] for s in avail.get("slots") or []):
-            raise HTTPException(status_code=409, detail="That time is not available.")
-        dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
-        if not dog:
-            raise HTTPException(status_code=404, detail="Dog not found")
-        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
-        booking_guards.refuse_archived(dog=dog, client=client)   # audit #36
-        service = await _portrait_service()
-        booking = {
-            "id": str(uuid.uuid4()),
-            "dog_id": dog["id"], "dog_name": dog.get("name"),
-            "client_id": client.get("id"), "client_name": client.get("name") or "",
-            "date": body.date.strip(), "time": body.time.strip(),
-            "duration_minutes": int(sp.get("slot_minutes") or 15),
-            "service_type": "photography", "service_id": service["id"],
-            "status": "approved", "notes": _clean(body.notes, 600),
-            "created_at": now_iso(), "photo_special_id": special_id,
-            "vaccine_booking_exception": VACCINE_EXCEPTION,
-        }
-        try:
-            await db.bookings.insert_one(dict(booking))
-        except Exception as e:
-            if "duplicate key" not in str(e).lower():
-                raise
-            raise HTTPException(status_code=409, detail="That time has just been taken.")
+        async with _day_lease(body.date.strip()):
+            avail = await _availability(sp, body.date.strip())
+            if avail.get("closed") or not any(s["time"] == body.time.strip() and s["available"] for s in avail.get("slots") or []):
+                raise HTTPException(status_code=409, detail="That time is not available.")
+            dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+            if not dog:
+                raise HTTPException(status_code=404, detail="Dog not found")
+            client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
+            booking_guards.refuse_archived(dog=dog, client=client)   # audit #36
+            service = await _portrait_service()
+            booking = {
+                "id": str(uuid.uuid4()),
+                "dog_id": dog["id"], "dog_name": dog.get("name"),
+                "client_id": client.get("id"), "client_name": client.get("name") or "",
+                "date": body.date.strip(), "time": body.time.strip(),
+                "duration_minutes": int(sp.get("slot_minutes") or 15),
+                "service_type": "photography", "service_id": service["id"],
+                "status": "approved", "notes": _clean(body.notes, 600),
+                "created_at": now_iso(), "photo_special_id": special_id,
+                "vaccine_booking_exception": VACCINE_EXCEPTION,
+            }
+            try:
+                await db.bookings.insert_one(dict(booking))
+            except Exception as e:
+                if "duplicate key" not in str(e).lower():
+                    raise
+                raise HTTPException(status_code=409, detail="That time has just been taken.")
         booking.pop("_id", None)
         return _reservation_row(booking, dog)
 

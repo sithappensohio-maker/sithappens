@@ -56159,6 +56159,7 @@ _photo_special_callables = register_photo_special_routes(
     # Photo-package sales ride the real register, same as the event photo booth.
     create_pos_sale=_create_pos_sale_impl, price_pos_cart=_price_pos_cart, require_take_payments=_require_take_payments,
     pos_sale_model=PosSaleIn, pos_line_model=PosSaleLineIn, pos_tender_model=PosSaleTenderIn,
+    acquire_capacity_locks=_acquire_capacity_locks, release_capacity_locks=_release_capacity_locks,
 )
 globals().update(_photo_special_callables)
 update_inquiry = _public_site_callables["update_inquiry"]
