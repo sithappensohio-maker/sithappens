@@ -217,6 +217,28 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     }
   }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price, ffNoCredits]);
   useEffect(() => { if (ffNoCredits && useCredits) setUseCredits(false); }, [ffNoCredits, useCredits]);
+  // The family's own add-on rates (GET /clients/{id}/service-prices, add_on_prices).
+  // The catalogue price is not a family's price, so the cart is priced from these (audit #81).
+  const [addOnRates, setAddOnRates] = useState({});
+  const [addOnRatesLoaded, setAddOnRatesLoaded] = useState(false);
+  const payerForRates = booking.bill_to_client_id || booking.client_id;
+  const loadAddOnRates = async () => {
+    if (!payerForRates) return null;
+    try {
+      const { data } = await api.get(`/clients/${payerForRates}/service-prices`, { sharedCache: "refresh" });
+      const map = {};
+      for (const [id, row] of Object.entries(data?.add_on_prices || {})) map[id] = Number(row.effective_price);
+      setAddOnRates(map);
+      setAddOnRatesLoaded(true);
+      return map;
+    } catch {
+      setAddOnRatesLoaded(false);
+      return null;
+    }
+  };
+  const addOnPriceIn = (rates, svc) => (rates && rates[svc?.id] != null ? rates[svc.id] : Number(svc?.base_price || 0));
+  const addOnPriceFor = (svc) => addOnPriceIn(addOnRates, svc);
+  useEffect(() => { loadAddOnRates(); }, [payerForRates]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ffResult, setFfResult] = useState(null);   // after a friends & family checkout: { bill, dogs }
   const [ffBusy, setFfBusy] = useState(false);
   const ffBusyRef = useRef(false);   // (a second tap lands before the screen redraws)
@@ -441,7 +463,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   });
 
   const cartItems = Object.values(cart);
-  const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
+  const addOnTotal = cartItems.reduce((s, it) => s + (addOnPriceFor(it.service) * it.qty), 0);
   const addonTotalFor = (row) => (row.add_ons || []).reduce(
     (sum, ao) => sum + (Number(ao.price || 0) * Number(ao.qty || 1)), 0,
   );
@@ -619,22 +641,31 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // cart, says so and returns true: the operator checks the total again.
   const recheckAddOnPrices = async () => {
     if (cartItems.length === 0) return false;
-    const { data: now } = await api.get("/services", { sharedCache: "refresh" });
+    const [{ data: now }, fresh] = await Promise.all([api.get("/services", { sharedCache: "refresh" }), loadAddOnRates()]);
     if (!Array.isArray(now) || !now.length) return false;
     const current = (it) => now.find(sv => sv.id === it.service.id && sv.active);
-    const changed = cartItems.filter(it => !current(it) || Math.abs(Number(current(it).base_price || 0) - Number(it.service.base_price || 0)) > 0.005);
+    const priceNow = (sv) => addOnPriceIn(fresh, sv);
+    const changed = cartItems.filter(it => !current(it) || Math.abs(priceNow(current(it)) - addOnPriceFor(it.service)) > 0.005);
     if (!changed.length) return false;
     setLiveServices(now);
     setCart(c => Object.fromEntries(Object.values(c).filter(it => current(it)).map(it => [it.service.id, { ...it, service: current(it) }])));
     const svcNow = current(changed[0]);
     setErr(svcNow
-      ? `The price of ${svcNow.name} is now $${Number(svcNow.base_price || 0).toFixed(2)}. Check the total and press Complete again.`
+      ? `The price of ${svcNow.name} is now $${priceNow(svcNow).toFixed(2)}. Check the total and press Complete again.`
       : `${changed[0].service.name} isn't offered anymore, so it was taken off. Check the total and press Complete again.`);
     return true;
   };
 
   const submit = async () => {
     setErr("");
+    // Never charge an add-on at a guessed price: the family's rates must be in hand first.
+    if (cartItems.length > 0 && !addOnRatesLoaded) {
+      const loaded = await loadAddOnRates();
+      setErr(loaded
+        ? "The add-on prices have just loaded. Check the total and press Complete again."
+        : "Couldn't load this family's add-on prices. Try again in a moment.");
+      return;
+    }
     if (checkoutDiscountReasonMissing) {
       setErr("Enter a reason for the checkout discount (at least 3 characters).");
       return;
@@ -672,7 +703,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         ...(payFromDaycare && useCredits ? { late_day_credit_pool: "daycare" } : {}),
         add_ons: cartItems.map(it => ({
           service_id: it.service.id, name: it.service.name,
-          price: Number(it.service.base_price || 0), qty: it.qty,
+          price: addOnPriceFor(it.service), qty: it.qty,
         })),
       };
       if (checkoutDiscountRequested > 0) {
@@ -1322,7 +1353,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                           className={`text-left flex items-center justify-between gap-2 p-2.5 rounded border transition ${inCart > 0 ? "border-purple-400 bg-purple-400/10" : "border-bgHover hover:border-purple-400/60"}`}>
                     <div className="min-w-0 flex-1">
                       <p className="text-[15px] font-black text-white truncate"><i className={`fas ${svc.icon || 'fa-tag'} mr-1.5 text-purple-400`}/>{svc.name}</p>
-                      <p className="text-[13px] text-gray-400 font-bold">${Number(svc.base_price || 0).toFixed(2)}</p>
+                      <p className="text-[13px] text-gray-400 font-bold" data-testid={`addon-price-${svc.id}`}>${addOnPriceFor(svc).toFixed(2)}
+                        {Math.abs(addOnPriceFor(svc) - Number(svc.base_price || 0)) > 0.005 && (
+                          <span className="ml-1.5 line-through text-gray-600">${Number(svc.base_price || 0).toFixed(2)}</span>
+                        )}
+                      </p>
                     </div>
                     {inCart > 0 && (
                       <div className="flex items-center gap-1 shrink-0" onClick={(e)=>e.stopPropagation()}>

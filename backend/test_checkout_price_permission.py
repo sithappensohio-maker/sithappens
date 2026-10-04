@@ -158,33 +158,35 @@ def test_without_the_pricing_permission_a_changed_price_is_refused_and_the_dog_s
         assert _status(bid) != "completed"
 
 
-def test_without_the_pricing_permission_an_add_on_is_sold_at_its_catalogue_price():
+def test_without_the_pricing_permission_an_add_on_is_sold_at_the_familys_own_rate():
     with _catalogue() as svc, _family(svc) as (_cid, dogs):
         bid = _daycare(svc, dogs[0])
-        done = run(server.check_out(bid, _paid(add_ons=_bath(svc, 20.0, qty=2)), DESK))   # the catalogue price (what the screen sends)
-        assert done["status"] == "completed" and done["actual_price"] == 80.0
+        e = _refused(server.check_out, bid, _paid(add_ons=_bath(svc, 20.0, qty=2)))   # the catalogue price is not this family's
+        assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))
+        assert _status(bid) != "completed"
+        done = run(server.check_out(bid, _paid(add_ons=_bath(svc, 15.0, qty=2)), DESK))   # the family's own rate
+        assert done["status"] == "completed" and done["actual_price"] == 70.0
 
 
 def _price_now(name, price):
     return checkout_prices.MSG_ADDON_PRICE.format(name=f"{TAG} {name}", price=price)
 
 
-def test_without_the_pricing_permission_any_other_add_on_price_is_refused_with_the_price_it_is_now():
+def test_without_the_pricing_permission_any_other_add_on_price_is_refused_with_the_familys_rate():
     """Nobody types an add-on price on the screen: a different one is a hand-made
-    request, or a screen showing a price from before the owner changed it.
-    Refused either way (never charged differently from what the screen
-    showed, which would record money nobody took)."""
+    request, or a screen showing a price from before. Refused either way (never
+    charged differently from what the family pays). The owner raising the
+    catalogue price does not move a family's own rate."""
     with _catalogue() as svc, _family(svc) as (_cid, dogs):
         bid = _daycare(svc, dogs[0])
         e = _refused(server.check_out, bid, _paid(add_ons=_bath(svc, 1.0)))
-        assert (e.status_code, e.detail) == (409, _price_now("Bath", 20))
-        run(server.db.services.update_one({"id": svc["bath"]}, {"$set": {"base_price": 25.0}}))   # the owner raised it
-        e = _refused(server.check_out, bid, _paid(add_ons=_bath(svc, 20.0)))
-        assert (e.status_code, e.detail) == (409, _price_now("Bath", 25))
-        assert e.detail == "The price of TEST_CHECKOUT_PRICES Bath is now $25.00. Check the total and press Complete again."
+        assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))
+        run(server.db.services.update_one({"id": svc["bath"]}, {"$set": {"base_price": 25.0}}))   # the owner raised the catalogue price
+        e = _refused(server.check_out, bid, _paid(add_ons=_bath(svc, 20.0)))                       # the screen's old catalogue price
+        assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))
         assert _status(bid) != "completed"
-        done = run(server.check_out(bid, _paid(add_ons=_bath(svc, 25.0)), DESK))
-        assert done["status"] == "completed" and done["actual_price"] == 65.0
+        done = run(server.check_out(bid, _paid(add_ons=_bath(svc, 15.0)), DESK))
+        assert done["status"] == "completed" and done["actual_price"] == 55.0
 
 
 def test_the_familys_own_add_on_rate_is_a_normal_price_too():
@@ -234,11 +236,11 @@ def test_a_household_leaving_together_is_refused_an_add_on_at_another_price_befo
         ids = _group(svc, dogs)
         for clicked in ids:
             e = _refused(server.check_out_group, clicked, _paid(add_ons=_bath(svc, 1.0)))
-            assert (e.status_code, e.detail) == (409, _price_now("Bath", 20))
+            assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))
             assert all(_status(b) != "completed" for b in ids)
-        run(server.check_out_group(ids[1], _paid(add_ons=_bath(svc, 20.0)), DESK))
+        run(server.check_out_group(ids[1], _paid(add_ons=_bath(svc, 15.0)), DESK))
         assert all(_status(b) == "completed" for b in ids)
-        assert _addon_lines(ids[1]) == [("Bath", 20.0, 1)] and _addon_lines(ids[0]) == []
+        assert _addon_lines(ids[1]) == [("Bath", 15.0, 1)] and _addon_lines(ids[0]) == []
 
 
 def test_a_friends_and_family_group_leaving_together_follows_the_same_rule_before_any_dog_leaves():
@@ -252,7 +254,7 @@ def test_a_friends_and_family_group_leaving_together_follows_the_same_rule_befor
                 assert all(_status(b) != "completed" for b in ids)
         for clicked in ids:
             e = _refused(server.check_out_group, clicked, server.CheckoutIn(use_credits=False, add_ons=_bath(svc, 1.0)))
-            assert (e.status_code, e.detail) == (409, _price_now("Bath", 20))
+            assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))
             assert all(_status(b) != "completed" for b in ids)
 
 
@@ -262,7 +264,7 @@ def test_on_a_friends_and_family_booking_the_familys_own_rate_is_the_paying_fami
         _group(svc, [payer_dogs[0], friend_dogs[0]], payer=payer)
         friends_dog = run(server.db.bookings.find_one({"dog_id": friend_dogs[0]}, {"_id": 0, "id": 1}))["id"]
         e = _refused(server.check_out, friends_dog, server.CheckoutIn(use_credits=False, add_ons=_bath(svc, 12.0)))
-        assert (e.status_code, e.detail) == (409, _price_now("Bath", 20))            # the friend's own rate is not this bill's
+        assert (e.status_code, e.detail) == (409, _price_now("Bath", 15))            # the friend's own rate is not this bill's
         run(server.check_out(friends_dog, server.CheckoutIn(use_credits=False, add_ons=_bath(svc, 15.0)), DESK))
         assert _addon_lines(friends_dog) == [("Bath", 15.0, 1)]              # the payer's rate
 
@@ -290,3 +292,12 @@ def test_the_owner_may_still_sell_an_add_on_that_is_not_in_the_catalogue():
 def test_a_visit_price_is_never_below_zero():
     with pytest.raises(ValidationError):
         server.CheckoutIn(base_price=-5)
+
+
+def test_client_service_prices_carries_the_familys_add_on_rates_apart_from_the_services():
+    # The checkout screen prices an add-on from this map (audit #81); the booking
+    # and Quick Check-In screens read `prices`, which must not start listing add-ons.
+    with _catalogue() as svc, _family(svc) as (cid, _dogs):
+        out = run(server.client_service_prices(cid, DESK))
+        assert out["add_on_prices"][svc["bath"]]["effective_price"] == 15.0
+        assert svc["bath"] not in out["prices"]

@@ -74,6 +74,8 @@ async def refuse_price_changes(booking_id: str, body: Any, user: dict) -> None:
         if not svc:
             raise HTTPException(status_code=400, detail=MSG_ADDON_GONE)
         list_price = float(svc.get("base_price") or 0)
+        # The family's own rate is the only price a non-pricing user may charge
+        # (audit #81): the catalogue price is not a family's price.
         own = (await _g("resolve_client_price")(payer, "service", ao.service_id, list_price))["effective_price"]
-        if not (_same(ao.price, list_price) or _same(ao.price, own)):
-            raise HTTPException(status_code=409, detail=MSG_ADDON_PRICE.format(name=svc.get("name") or ao.name, price=list_price))
+        if not _same(ao.price, own):
+            raise HTTPException(status_code=409, detail=MSG_ADDON_PRICE.format(name=svc.get("name") or ao.name, price=own))

@@ -48191,14 +48191,18 @@ async def client_service_prices(client_id: str, _: dict = Depends(require_employ
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     services = await db.services.find(
-        {"active": True, "is_addon": {"$ne": True}},
-        {"_id": 0, "id": 1, "name": 1, "service_type": 1, "base_price": 1, "is_default": 1},
+        {"active": True},
+        {"_id": 0, "id": 1, "name": 1, "service_type": 1, "base_price": 1, "is_default": 1, "is_addon": 1},
     ).to_list(500)
     out = {}
+    # Add-ons come back under their own key, so the booking and Quick Check-In
+    # screens that read `prices` see exactly what they always did. The checkout
+    # screen reads `add_on_prices` for the family's rate on each add-on (audit #81).
+    add_on_out = {}
     for svc in services:
         pricing = await resolve_client_price(
             client_id, "service", svc["id"], float(svc.get("base_price") or 0))
-        out[svc["id"]] = {
+        row = {
             "service_id": svc["id"],
             "service_name": svc.get("name"),
             "service_type": svc.get("service_type"),
@@ -48209,7 +48213,8 @@ async def client_service_prices(client_id: str, _: dict = Depends(require_employ
             "override_id": pricing["override_id"],
             "tier_name": pricing["tier_name"],
         }
-    return {"prices": out}
+        (add_on_out if svc.get("is_addon") else out)[svc["id"]] = row
+    return {"prices": out, "add_on_prices": add_on_out}
 
 
 async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):

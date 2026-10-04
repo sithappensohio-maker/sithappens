@@ -41,12 +41,16 @@ const SERVICES = [{ id: "svc-d", name: "Daycare", service_type: "daycare", base_
                   { id: "svc-bath", name: "Bath", service_type: "grooming", base_price: 20, active: true, is_addon: true,
                     addon_for: ["daycare", "boarding"] }];
 
-let container, root, preview, early, boardingCredits, priceList;
+let container, root, preview, early, boardingCredits, priceList, familyRates, familyRatesDown;
 
 const respond = (url) => {
   if (url === "/services") return Promise.resolve({ data: priceList() });
   if (url.includes("checkout-group-preview")) return Promise.resolve({ data: { bookings: preview } });
   if (url.includes("early-checkout-quote")) return Promise.resolve({ data: early });
+  if (url.endsWith("/service-prices")) {
+    return familyRatesDown ? Promise.reject(new Error("offline"))
+      : Promise.resolve({ data: { prices: {}, add_on_prices: familyRates } });
+  }
   if (url.startsWith("/clients/")) return Promise.resolve({ data: url.endsWith("credit-lots") ? [] : { credits: 0, boarding_credits: boardingCredits, account_balance: 0 } });
   if (url.includes("money-modifier-preview")) return Promise.resolve({ data: { sales_tax: { enabled: false } } });
   return Promise.resolve({ data: {} });
@@ -57,6 +61,8 @@ beforeEach(() => {
   early = { applicable: false };
   boardingCredits = 3;
   priceList = () => ({});                    // (no list: the screen keeps the one it was given)
+  familyRates = {};                          // this family's own add-on rates (none unless a test sets them)
+  familyRatesDown = false;
   container = document.createElement("div");
   document.body.appendChild(container);
   api.get.mockReset();
@@ -200,4 +206,27 @@ test("a price changed between the check and Complete is shown with the refusal, 
   const posts = api.post.mock.calls.filter(([path]) => String(path).includes("/check-out"));
   expect(posts.length).toBe(2);
   expect(posts[1][1].add_ons).toEqual([{ service_id: "svc-bath", name: "Bath", price: 25, qty: 1 }]);
+});
+
+test("an add-on is charged at the family's own rate, and the catalogue price is struck through", async () => {
+  noPricing();
+  priceList = withBath(20);
+  familyRates = { "svc-bath": { service_id: "svc-bath", effective_price: 15, list_price: 20, pricing_source: "client_override" } };
+  await mount(DAYCARE);
+  expect(q("addon-price-svc-bath").textContent).toContain("$15.00");
+  expect(q("addon-price-svc-bath").textContent).toContain("$20.00");
+  await click("addon-svc-bath");
+  await click("confirm-checkout");
+  expect(checkoutPost()[1].add_ons).toEqual([{ service_id: "svc-bath", name: "Bath", price: 15, qty: 1 }]);
+});
+
+test("if the family's add-on rates can't be read, Complete is blocked and nothing is charged", async () => {
+  noPricing();
+  priceList = withBath(20);
+  familyRatesDown = true;                    // the family's rates can't be read when the checkout opens
+  await mount(DAYCARE);
+  await click("addon-svc-bath");
+  await click("confirm-checkout");
+  expect(checkoutPost()).toBeUndefined();
+  expect(q("checkout-error").textContent).toBe("Couldn't load this family's add-on prices. Try again in a moment.");
 });
