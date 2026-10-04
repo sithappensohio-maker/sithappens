@@ -27,6 +27,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
 from domains.bookings import friends_family
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_FRIENDS_FAMILY"
 OWNER = {"id": "ff-owner", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner"}
@@ -154,14 +155,14 @@ def test_only_daycare_and_boarding():
         assert e.value.status_code == 400 and "daycare and boarding" in e.value.detail
 
 
-def test_managers_need_the_permission_granted_and_clients_never_can(monkeypatch):
+def test_managers_need_the_permission_granted_and_clients_never_can(monkeypatch, saved_matrix):
     with _two_families() as (svc, _addon, fams):
         (payer, payer_dog), (_friend, friend_dog) = fams["payer"], fams["friend"]
         for who in (MANAGER, {"id": "c", "role": "client", "client_id": payer}):
             with pytest.raises(HTTPException) as e:
                 _book(svc, [payer_dog, friend_dog], payer=payer, user=who)
             assert e.value.status_code == 403
-        monkeypatch.setitem(server._ROLE_OVERRIDES, "manager", {friends_family.PERMISSION: True})
+        saved_matrix("manager", {friends_family.PERMISSION: True})
         _book(svc, [payer_dog, friend_dog], payer=payer, user=MANAGER)
         assert _row(friend_dog)["bill_to_client_id"] == payer
 

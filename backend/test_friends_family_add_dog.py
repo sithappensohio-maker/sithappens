@@ -21,6 +21,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
 from domains.bookings import friends_family, group_add
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_FF_ADD"
 OWNER = {"id": "ffadd-owner", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner"}
@@ -216,7 +217,7 @@ def test_a_dog_already_on_the_booking_is_not_added_twice():
         assert e.value.status_code == 409 and "already on this booking" in e.value.detail
 
 
-def test_only_with_the_permission_and_only_while_switched_on(monkeypatch):
+def test_only_with_the_permission_and_only_while_switched_on(monkeypatch, saved_matrix):
     with _families() as (svc, _addon, payer, friend):
         lone = _book_one(svc, payer["dog"])
         for who in (MANAGER, {"id": "c", "role": "client", "client_id": payer["client"]}):
@@ -228,7 +229,7 @@ def test_only_with_the_permission_and_only_while_switched_on(monkeypatch):
             _add(lone["id"], friend["dog"])
         assert e.value.status_code == 400 and "switched on" in e.value.detail
         monkeypatch.setattr(friends_family, "ENABLED", True)
-        monkeypatch.setitem(server._ROLE_OVERRIDES, "manager", {friends_family.PERMISSION: True})
+        saved_matrix("manager", {friends_family.PERMISSION: True})
         assert _add(lone["id"], friend["dog"], user=MANAGER)["dog_count"] == 2
 
 

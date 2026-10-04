@@ -22,6 +22,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
 from domains.bookings import checkout_discount, checkout_prices, friends_family, reopen
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_CHECKOUT_DISCOUNT"
 OWNER = {"id": "cd-owner", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner"}
@@ -30,8 +31,8 @@ VAX = {"rabies": "2030-01-01", "dhpp": "2030-01-01", "bordetella": "2030-01-01"}
 
 
 @pytest.fixture(autouse=True)
-def _setup(monkeypatch):
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "front_desk", {"take_payments": True, "pricing": False})
+def _setup(monkeypatch, saved_matrix):
+    saved_matrix("front_desk", {"take_payments": True, "pricing": False})
     monkeypatch.setattr(friends_family, "ENABLED", True)
     marker = f"{TAG}-{uuid.uuid4()}"
     day = server.business_today().isoformat()

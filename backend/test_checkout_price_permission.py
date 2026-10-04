@@ -21,6 +21,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
 from domains.bookings import checkout_prices, friends_family
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_CHECKOUT_PRICES"
 OWNER = {"id": "cp-owner", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner"}
@@ -30,10 +31,10 @@ VAX = {"rabies": "2030-01-01", "dhpp": "2030-01-01", "bordetella": "2030-01-01"}
 
 
 @pytest.fixture(autouse=True)
-def _roles(monkeypatch):
+def _roles(monkeypatch, saved_matrix):
     """The front desk takes payments but may not set prices; the manager may."""
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "front_desk", {"take_payments": True, "pricing": False})
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "manager", {"take_payments": True, "pricing": True})
+    saved_matrix("front_desk", {"take_payments": True, "pricing": False})
+    saved_matrix("manager", {"take_payments": True, "pricing": True})
     monkeypatch.setattr(friends_family, "ENABLED", True)
 
 

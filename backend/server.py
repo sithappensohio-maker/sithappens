@@ -634,6 +634,10 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         user = await _load_auth_user(payload["sub"])
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Read the saved permission matrix on every request, not only in the
+        # process that handled the save. Two workers each hold their own copy,
+        # so a revoked permission used to keep working on the other one (audit #7).
+        await _load_role_overrides_from_settings()
         # Safety: deactivated staff/client accounts must not keep working from
         # old saved JWTs. Legacy rows without an `active` field are treated as
         # active so existing production accounts are not locked out.
@@ -6662,11 +6666,24 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
     return existing
 
 
+def _require_care_permission(user: dict) -> None:
+    """Checking dogs in and out, and every feeding, medication and potty log, is
+    the "Check Dogs In/Out" permission. Read-only staff can see the board but not
+    change it (audit #25)."""
+    if not _perms_for(user).get("care_complete"):
+        raise HTTPException(status_code=403, detail="Missing permission: care_complete")
+
+
 async def check_in(
     booking_id: str,
     body: Optional[CheckInIn] = None,
     user: dict = Depends(require_employee_or_admin),
 ):
+    # Front desk checks dogs in every day, and that is a booking change as much
+    # as a care one, so either permission lets a dog in. Read-only has neither.
+    perms = _perms_for(user)
+    if not (perms.get("care_complete") or perms.get("booking_edit")):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit or care_complete")
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -10647,6 +10664,7 @@ async def _maybe_send_report_card_email(booking: dict) -> dict:
 
 
 async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Depends(require_employee_or_admin)):
+    _require_care_permission(user)   # a report card emails the client, so it is written by care staff only (audit #25)
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -29751,7 +29769,11 @@ async def admin_today_brain_dismiss(body: TodayBrainDismissIn, user: dict = Depe
 async def admin_today_brain_clear_all(user: dict = Depends(require_admin)):
     """Dismiss every currently-visible Today's Tasks row in one shot. Each
     row's state-signature is captured so any that flip back to a new state
-    (e.g. credits drop further, a fresh vaccine expires) reappear automatically."""
+    (e.g. credits drop further, a fresh vaccine expires) reappear automatically.
+    Clears for everyone, so it needs the booking-edit permission, which a
+    read-only login does not have (audit #25)."""
+    if not _perms_for(user).get("booking_edit"):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
     # Build the current list exactly as the tile sees it (with signatures),
     # then upsert one dismissal per item.
     current = await admin_today_brain(_=user)
@@ -52316,12 +52338,14 @@ async def set_booking_care(booking_id: str, body: CareScheduleIn, _: dict = Depe
 
 async def complete_care_item(booking_id: str, item_id: str, body: CareCompleteIn,
                               user: dict = Depends(require_employee_or_admin)):
+    _require_care_permission(user)
     return await care_domain.record(booking_id, item_id, user, status="completed",
                                     initials=body.initials, note=body.note or "", day=body.day)
 
 
 async def skip_care_item(booking_id: str, item_id: str, body: CareSkipIn,
                           user: dict = Depends(require_employee_or_admin)):
+    _require_care_permission(user)
     return await care_domain.record(booking_id, item_id, user, status="skipped", initials=body.initials,
                                     reason=body.reason, note=body.note or "", day=body.day)
 

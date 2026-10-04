@@ -14,6 +14,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import pytest
 import server
 from _test_loop import run
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_SLC"
 
@@ -171,8 +172,8 @@ def test_b4_staff_without_either_permission_rejected(monkeypatch):
         assert e.value.status_code == 403
 
 
-def test_b4_trainer_may_assign_in_person_and_hybrid_not_online(monkeypatch):
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "trainer",
+def test_b4_trainer_may_assign_in_person_and_hybrid_not_online(monkeypatch, saved_matrix):
+    saved_matrix("trainer",
                         {"manage_school": False, "manage_training_sessions": True})
     tr = _staff("trainer")
     assert server._perms_for(tr).get("manage_training_sessions") is True
@@ -444,8 +445,8 @@ def test_live_checkpoint_permissions():
         assert e2.value.status_code == 403
 
 
-def test_live_checkpoint_online_program_requires_school_permission(monkeypatch):
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "trainer",
+def test_live_checkpoint_online_program_requires_school_permission(monkeypatch, saved_matrix):
+    saved_matrix("trainer",
                         {"manage_school": False, "manage_training_sessions": True})
     tr = _staff("trainer")
     with _program("self_guided", n_lessons=2) as p:

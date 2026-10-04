@@ -21,6 +21,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
 from domains.bookings import friends_family
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_FF_SCREENS"
 OWNER = {"id": "ffs-owner", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner", "email": "owner@example.com"}
@@ -136,10 +137,10 @@ MANAGER = {"id": "ffs-manager", "role": "admin", "staff_role": "manager", "name"
 
 
 @pytest.fixture
-def _no_pricing(monkeypatch):
+def _no_pricing(monkeypatch, saved_matrix):
     """A manager who takes payments and edits clients, but may not set a price
     or write a dog's vaccine record."""
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "manager",
+    saved_matrix("manager",
                         {"take_payments": True, "pricing": False, "clients_edit": True, "dogs_edit": False})
 
 

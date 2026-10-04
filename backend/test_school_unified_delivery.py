@@ -18,6 +18,7 @@ import _test_env  # noqa: F401 — must run before `import server`
 import pytest
 import server
 from _test_loop import run
+from matrix_support import saved_matrix  # noqa: F401 — the fixture is a test argument
 
 TAG = "TEST_SUD"
 
@@ -193,7 +194,7 @@ def test_client_cannot_enroll_in_any_mode():
     assert run(server.db.dog_programs.count_documents({"dog_id": dog["id"]})) == 0
 
 
-def test_restricted_trainer_may_run_in_person_but_not_online(monkeypatch):
+def test_restricted_trainer_may_run_in_person_but_not_online(monkeypatch, saved_matrix):
     """manage_training_sessions enables in-person delivery; it must NOT
     confer Online School administration."""
     c, dog = _client_and_dog()
@@ -201,7 +202,7 @@ def test_restricted_trainer_may_run_in_person_but_not_online(monkeypatch):
     tr = _staff("trainer")
     # Simulate an owner who narrowed the trainer role: training sessions yes,
     # School administration no.
-    monkeypatch.setitem(server._ROLE_OVERRIDES, "trainer",
+    saved_matrix("trainer",
                         {"manage_school": False, "manage_training_sessions": True})
     perms = server._perms_for(tr)
     assert perms.get("manage_training_sessions") is True

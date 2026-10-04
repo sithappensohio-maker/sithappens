@@ -31,11 +31,26 @@ TAG = "TEST_STAFF_PERM_GAPS"
 REFUSED = (401, 403)
 
 
+def _matrix(overrides):
+    """A test's matrix is saved, as the app saves it: every request reads the saved
+    matrix now (audit #7), so an in-memory patch would be overwritten on the next call."""
+    run(server.db.settings.update_one({"id": "global"}, {"$set": {"staff_role_permissions": overrides}}, upsert=True))
+    run(server._load_role_overrides_from_settings())
+
+
 @pytest.fixture(autouse=True)
 def _clean_overrides(monkeypatch, tmp_path):
-    """Each test starts from the default matrix; restore snapshots stay in tmp."""
-    monkeypatch.setattr(server, "_ROLE_OVERRIDES", {})
+    """Each test starts from the default matrix and puts the saved one back afterwards;
+    restore snapshots stay in tmp."""
+    prev = run(server.db.settings.find_one({"id": "global"}, {"_id": 0, "staff_role_permissions": 1})) or {}
+    _matrix({})
     monkeypatch.setattr(server, "BACKUP_ROOT", str(tmp_path))
+    yield
+    if "staff_role_permissions" in prev:
+        run(server.db.settings.update_one({"id": "global"}, {"$set": {"staff_role_permissions": prev["staff_role_permissions"]}}))
+    else:
+        run(server.db.settings.update_one({"id": "global"}, {"$unset": {"staff_role_permissions": ""}}))
+    run(server._load_role_overrides_from_settings())
 
 
 def _mk_user(role, staff_role=None, client_id=None):
@@ -137,7 +152,7 @@ def test_a_cancellation_charge_also_needs_take_payments(monkeypatch):
         assert r.status_code == 200, r.text
         assert run(server.db.bookings.find_one({"id": b["id"]}))["cancellation_charged"] is True
 
-        monkeypatch.setattr(server, "_ROLE_OVERRIDES", {"front_desk": {"take_payments": False}})
+        _matrix({"front_desk": {"take_payments": False}})
         b2 = booking(c1["id"], actual_price=40.0)
         r = _call("DELETE", f"/bookings/{b2['id']}", who["front_desk"], params={"forfeit": "true"})
         assert r.status_code == 403 and "Take payments" in r.text
@@ -145,7 +160,7 @@ def test_a_cancellation_charge_also_needs_take_payments(monkeypatch):
         # A plain cancel still works without take_payments.
         assert _call("DELETE", f"/bookings/{b2['id']}", who["front_desk"]).status_code == 200
 
-        monkeypatch.setattr(server, "_ROLE_OVERRIDES", {"front_desk": {"booking_edit": False}})
+        _matrix({"front_desk": {"booking_edit": False}})
         b3 = booking(c1["id"])
         assert _call("DELETE", f"/bookings/{b3['id']}", who["front_desk"]).status_code == 403
 
@@ -185,7 +200,7 @@ def test_a_refused_cancel_never_takes_the_clients_money_lock(monkeypatch):
 # ─────────────────── (b) clients hold no staff permissions ───────────────────
 
 def test_clients_resolve_to_no_permissions_whatever_read_only_holds(monkeypatch):
-    monkeypatch.setattr(server, "_ROLE_OVERRIDES", {"read_only": {"messages": True, "manage_school": True}})
+    _matrix({"read_only": {"messages": True, "manage_school": True}})
     for user in ({"role": "client"}, {"role": "client", "staff_role": "owner"},
                  {"role": "client", "staff_role": "manager"}, {"role": "prospect"}, {}):
         assert not any(server._perms_for(user).values()), user
@@ -195,7 +210,7 @@ def test_clients_resolve_to_no_permissions_whatever_read_only_holds(monkeypatch)
 
 
 def test_a_read_only_override_no_longer_opens_staff_routes_to_clients(monkeypatch):
-    monkeypatch.setattr(server, "_ROLE_OVERRIDES", {"read_only": {
+    _matrix({"read_only": {
         "messages": True, "manage_school": True, "manage_training_sessions": True}})
     with _world() as (who, _c1, _c2, _booking):
         client = who["client_a"]
@@ -291,7 +306,7 @@ def test_a_dotted_key_in_a_settings_save_cannot_reach_the_matrix(monkeypatch):
     before = _settings_docs()
     try:
         with _world() as (who, _c1, _c2, _booking):
-            monkeypatch.setattr(server, "_ROLE_OVERRIDES", {"front_desk": {"settings": True}})
+            _matrix({"front_desk": {"settings": True}})
             matrix = (run(server.db.settings.find_one({"id": "global"})) or {}).get("staff_role_permissions")
             r = _call("PUT", "/settings", who["front_desk"], json_body={
                 "staff_role_permissions.front_desk": {"payroll": True, "data_export": True},
