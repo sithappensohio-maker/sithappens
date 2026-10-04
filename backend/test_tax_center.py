@@ -27,6 +27,14 @@ _http = httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_ur
 
 
 @pytest.fixture(autouse=True)
+def _pin_today(monkeypatch):
+    """The scenarios are written as of AS_OF; the months they build (last month,
+    two months back) must be counted from that same day, not the real calendar,
+    or they drift into other deadlines as time passes (audit: stale Tax Center tests)."""
+    monkeypatch.setattr(server, "business_today", lambda: AS_OF)
+
+
+@pytest.fixture(autouse=True)
 def _clean_state():
     before = run(server.db.settings.find_one({"id": server.SALES_TAX_SETTINGS_ID}, {"_id": 0}))
     yield
