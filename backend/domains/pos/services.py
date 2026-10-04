@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 import sales_tax_policy
 from domains.bookings import friends_family
 from domains.gift_cards import services as gift_cards_services
-from domains.pos import given_back
+from domains.pos import given_back, sale_claims
 
 _db = None
 _resolve_client_price_fn = None
@@ -593,6 +593,15 @@ async def refuse_after_hand_refund(sale: dict, action: str) -> None:
 
 async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
     """Take merchandise back and give that merchandise's money back.
+
+    Holds the sale's money claim while it reads and writes, so a refund or a
+    void on the same sale can't run alongside it (audit #86)."""
+    async with sale_claims.held(_db, sale_id, "return"):
+        return await _return_pos_sale_held(sale_id=sale_id, body=body, user=user)
+
+
+async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
+    """The return itself, run while the sale's claim is held (see return_pos_sale).
 
     The money goes back the way it came, the tax that was collected on those
     items goes back with it, and each item is either restocked or written off

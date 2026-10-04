@@ -75,6 +75,7 @@ from school_practice_integrity import retain_template_if_referenced, release_sch
 from domains.training import services as training_domain_services
 from domains.pricing import services as pricing_domain_services
 from domains.pos import services as pos_domain_services
+from domains.pos import sale_claims
 from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
@@ -29999,6 +30000,7 @@ BACKUP_EXCLUDED = {
     "system_runs": "cron-job audit, not needed for recovery",
     "trivia_daily": "one-row daily cache, regenerated on the next portal visit",
     "auth_rate_limits": "short-lived sign-in throttle counters",
+    "sale_action_claims": "a short lock held while a refund, return or void runs on one sale; empty when idle",
     "capacity_locks": "short-lived booking locks",
     "pos_action_tokens": "short-lived print / cash-drawer tokens",
     "homework_assignment_claims": "short-lived lock while one homework row is created",
@@ -33935,6 +33937,7 @@ async def startup():
         (db.pos_sale_claims, "idempotency_key", {"unique": True}),
         (db.pos_sale_void_claims, "idempotency_key", {"unique": True}),
         (db.pos_sale_void_claims, "pos_sale_id", {"unique": True}),
+        (db.sale_action_claims, "pos_sale_id", {"unique": True}),
         # Returns are partial and repeatable, so unlike a void there is NO
         # one-per-sale index here — only the key stops a double refund.
         (db.pos_sale_return_claims, "idempotency_key", {"unique": True}),
@@ -44325,6 +44328,12 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
     CURRENT qty_remaining — if some credits were already redeemed (e.g. a
     dog checked in using one) before the void, only the unused remainder
     can be reversed; already-rendered service can't be undone by a void."""
+    async with sale_claims.held(db, sale_id, "void"):   # no refund or return on this sale can run alongside it (audit #86)
+        return await _void_pos_sale_held(sale_id, body, user)
+
+
+async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
+    """The void itself, run while the sale's money claim is held (see void_pos_sale)."""
     original = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     if not original:
         raise HTTPException(status_code=404, detail="POS sale not found")

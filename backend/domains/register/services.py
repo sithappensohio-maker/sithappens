@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from domains.gift_cards import services as gift_card_services
-from domains.pos import given_back
+from domains.pos import given_back, sale_claims
 
 _active_register_closeout_fn = None
 _closeout_rollover_cash_fn = None
@@ -224,6 +224,25 @@ async def record_no_sale(*, pin: str, reason: str, workstation_id: Optional[str]
 
 async def record_register_refund(body, user: dict) -> dict:
     """A manual money-back correction from the register tools.
+
+    A refund against a receipt holds that sale's money claim while it reads what
+    the sale has already given back and writes, so a return or a void on the
+    same sale can't run alongside it (audit #86). See _record_register_refund.
+    """
+    sale_ref = (getattr(body, "sale_id", None) or "").strip().lstrip("#").strip()
+    flagged = bool(getattr(body, "not_against_sale", False))
+    if not sale_ref or flagged:   # a bad pair of inputs is refused inside, before any lookup
+        return await _record_register_refund(body, user)
+    await _require_register_day_open_fn(body.date or _business_today_fn().isoformat())
+    sale = await _find_sale(sale_ref)
+    async with sale_claims.held(_db, sale["id"], "refund"):
+        return await _record_register_refund(body, user)
+
+
+async def _record_register_refund(body, user: dict) -> dict:
+    """The refund itself, run while the sale's claim is held (see record_register_refund).
+
+    The free-form refund's rules are below.
 
     This is the free-form path — a cancellation, an overcharge, something a
     return cannot express. Merchandise coming back over the counter should go
