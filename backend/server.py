@@ -54490,17 +54490,17 @@ async def _send_message_notification_email(thread: Dict[str, Any], to_email: str
             if is_admin_reply else
             f"New client message · {thread.get('client_name') or 'Client'}")
     paragraphs = "".join(
-        f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{p}</p>"
+        f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{email_service._h(p)}</p>"  # the body is typed by a family member: escaped (audit #9)
         for p in (body or "").split("\n") if p.strip()
     )
     try:
         html = email_service._wrap(  # type: ignore
             title=subj, intro="", rows=[], show_install=False,
-            body_html=(paragraphs or f"<p>{body}</p>")
+            body_html=(paragraphs or f"<p>{email_service._h(body)}</p>")  # type: ignore
                      + "<p style='margin-top:18px;font-size:13px;color:#6b7280;'>You can reply directly inside the Sit Happens app.</p>",
         )
     except Exception:
-        html = f"<html><body>{paragraphs or body}</body></html>"
+        html = f"<html><body>{paragraphs or email_service._h(body)}</body></html>"  # type: ignore
     try:
         return await email_service._send(to_email, subj, html)  # type: ignore
     except Exception:
