@@ -228,9 +228,30 @@ def derive(item: Dict[str, Any], day: str, *, today: str, booking_date: str = ""
     return out
 
 
+def _arrival_cut(b: Dict[str, Any]) -> Optional[Tuple[str, int]]:
+    """(business day, local minute) the dog arrived. A dose due before that on the
+    arrival day was the owner's, given at home, so it is not due here (audit #1)."""
+    at = b.get("checked_in_at")
+    local = _local(at) if at else None
+    if local is None:
+        return None
+    arrived_day = _g("_business_date_from_timestamp")(at, (b.get("date") or "")[:10])
+    return (arrived_day, local.hour * 60 + local.minute) if arrived_day else None
+
+
 def _view(b: Dict[str, Any], items: List[Dict[str, Any]], day: str, today: str) -> List[Dict[str, Any]]:
     bd = b.get("date") or ""
-    return [derive(it, day, today=today, booking_date=bd) for it in items if _active_on(it, day, bd)]
+    cut = _arrival_cut(b)
+    out = []
+    for it in items:
+        if not _active_on(it, day, bd):
+            continue
+        due = _minutes(it.get("time"))
+        if (cut and it.get("kind") == "medication" and cut[0] == day and due is not None and due < cut[1]
+                and not day_record(it, day, bd)):
+            continue   # a dose before the dog arrived: the owner's, not a missed one. Meals are not changed here. A recorded dose stays.
+        out.append(derive(it, day, today=today, booking_date=bd))
+    return out
 
 
 def items_for_day(b: Dict[str, Any], day: str, today: Optional[str] = None) -> List[Dict[str, Any]]:

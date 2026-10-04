@@ -16,6 +16,8 @@ from starlette.requests import Request
 
 import server
 from _test_loop import run
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 TAG = "TEST_GAP"
 
@@ -228,6 +230,12 @@ def test_intake_upload_rejects_unsupported_mime():
 
 # ── Medication Action Required + care-ID persistence ────────────────────────
 
+def _day_start_iso():
+    """Arrived at the start of the business day: a dose at any time today is after arrival (audit #1)."""
+    d = server.business_today()
+    return datetime(d.year, d.month, d.day, tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc).isoformat()
+
+
 def _seed_checked_in_med_booking(*, checked_in=True, checked_out=False, care_items=None):
     cid, did, bid = _id("care-client"), _id("care-dog"), _id("care-booking")
     run(server.db.clients.insert_one({"id": cid, "name": TAG + " Care Client"}))
@@ -238,7 +246,7 @@ def _seed_checked_in_med_booking(*, checked_in=True, checked_out=False, care_ite
     doc = {
         "id": bid, "client_id": cid, "client_name": TAG + " Care Client", "dog_id": did, "dog_name": TAG + " Care Dog",
         "service_type": "boarding", "date": server.business_today().isoformat(), "end_date": server.business_today().isoformat(),
-        "status": "approved", "checked_in_at": server.now_iso() if checked_in else None,
+        "status": "approved", "checked_in_at": _day_start_iso() if checked_in else None,
     }
     if checked_out:
         doc["checked_out_at"] = server.now_iso()
