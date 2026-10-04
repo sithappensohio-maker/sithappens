@@ -288,3 +288,43 @@ def test_a_program_sold_with_no_start_date_starts_on_the_weekday_from_ohios_toda
         run(server.db.programs.delete_one({"id": prog["id"]}))
         run(server.db.dogs.delete_one({"id": did}))
         run(server.db.clients.delete_one({"id": cid}))
+
+
+def test_a_program_sale_skips_a_holiday_from_the_real_settings(monkeypatch):
+    """Closed dates come from the business settings document, so a sale never
+    books a closed day. (An older lookup read a document that does not exist,
+    so holidays were booked.)"""
+    tuesday = dt.date(2030, 1, 8)
+    monkeypatch.setattr(server, "business_today", lambda: tuesday)
+    cid, did = str(uuid.uuid4()), str(uuid.uuid4())
+    run(server.db.clients.insert_one({"id": cid, "name": f"{TAG} family", "email": f"{uuid.uuid4().hex[:8]}@example.com",
+                                      "training_credits": 0}))
+    run(server.db.dogs.insert_one({"id": did, "name": f"{TAG} dog", "owner_id": cid, "breed": "Mix", "age_y": 3,
+                                   "vaccines": {"rabies": "2031-01-01", "dhpp": "2031-01-01", "bordetella": "2031-01-01"}}))
+    prog = run(server.create_program(server.ProgramIn(
+        name=f"{TAG} program {uuid.uuid4().hex[:6]}", type="private_lessons", format={"count": 3, "unit": "sessions"},
+        price=150, delivery_mode="trainer_led"), ADMIN))
+    day = tuesday.isoformat()
+    run(server.get_settings())
+    before = run(server.db.settings.find_one({"id": "global"}, {"_id": 0}))
+    run(server.db.settings.update_one({"id": "global"}, {"$set": {"closed_dates": ["2030-01-15"]}}))
+    run(server.db.cash_drawer_sessions.insert_one({"date": day, "opening_cash": 0.0, "opened_at": server.now_iso(),
+                                                   "opened_by": TAG, "opened_by_name": TAG, "notes": TAG}))
+    try:
+        out = run(server.sell_training_program(cid, server.SellProgramIn(
+            program_id=prog["id"], payment_method="cash", dog_id=did, schedule_day_of_week=tuesday.weekday(),
+            schedule_time="10:00"), ADMIN))
+        dates = sorted(b["date"] for b in out["scheduled_bookings"])
+        assert dates == ["2030-01-08", "2030-01-22", "2030-01-29"], "the closed Jan 15 is skipped"
+        assert {"date": "2030-01-15", "reason": "business_closed"} in [
+            {k: w.get(k) for k in ("date", "reason")} for w in out.get("schedule_warnings", [])]
+    finally:
+        run(server.db.settings.replace_one({"id": "global"}, before))
+        run(server.db.cash_drawer_sessions.delete_many({"date": day, "notes": TAG}))
+        for coll in ("bookings", "dog_programs", "school_enrollments", "homework"):
+            run(server.db[coll].delete_many({"dog_id": did}))
+        for coll in ("credit_lots", "retail_sales"):
+            run(server.db[coll].delete_many({"client_id": cid}))
+        run(server.db.programs.delete_one({"id": prog["id"]}))
+        run(server.db.dogs.delete_one({"id": did}))
+        run(server.db.clients.delete_one({"id": cid}))
