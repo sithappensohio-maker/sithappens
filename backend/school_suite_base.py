@@ -29,6 +29,25 @@ from domains.training import services as training_services
 SCHOOL_DELIVERY_CHANNELS = ("online_school", "in_person_school", "hybrid_school")
 
 
+# Media the School screens may show inline. Anything else (a web page, a
+# script, an SVG) is handed over as a download. A page served from this site
+# runs with the signed-in user's login, so it must never render here (audit
+# #0: a student disguised a web page as a practice video).
+SCHOOL_INLINE_MEDIA_MIME = {
+    "video/mp4", "video/quicktime", "video/webm", "video/x-m4v", "video/3gpp",
+    "image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf",
+}
+
+
+def school_media_file_response(path: str, row: dict) -> FileResponse:
+    headers = {"X-Content-Type-Options": "nosniff"}
+    mime = str(row.get("mime") or "").lower().strip()
+    if mime in SCHOOL_INLINE_MEDIA_MIME:
+        return FileResponse(path, media_type=mime, headers=headers)
+    return FileResponse(path, media_type="application/octet-stream",
+                        filename=row.get("filename") or "download", headers=headers)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -982,7 +1001,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             # Legacy Mongo-only media has no raw file to stream. Keep a clear
             # status instead of silently reading an arbitrary storage_path.
             raise HTTPException(status_code=404, detail="Stored media file is unavailable")
-        return FileResponse(path, media_type=row.get("mime") or "application/octet-stream")
+        return school_media_file_response(path, row)
 
     @api.get("/portal/school/{sid}/resources")
     async def portal_school_resources(sid:str,user:dict=Depends(get_current_user)):

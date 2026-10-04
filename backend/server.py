@@ -14862,6 +14862,17 @@ async def answer_section_question(
 
 
 # ────────────────────────── Daily-tracker media (video) ──────────────────────────
+def _checked_video_data_url(raw: str) -> str:
+    """The type a practice video is stored under must be a video type. The
+    header used to be taken as given, so a web page sent as "video" was kept
+    and later opened in the site (audit #0). The serving route is hardened too."""
+    header = (raw or "").split(",", 1)[0] if "," in (raw or "") else ""
+    mime = header.split(";")[0].replace("data:", "").lower().strip()
+    if mime not in ALLOWED_CHECKPOINT_VIDEO_MIME:
+        raise HTTPException(status_code=400, detail="Upload a video file (MP4, MOV, WebM or 3GP).")
+    return mime
+
+
 async def _store_homework_practice_video(
     homework_id: str, body: CertificateUploadIn, user: dict, *, day_number: Optional[int] = None,
 ) -> str:
@@ -14885,6 +14896,7 @@ async def _store_homework_practice_video(
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
     await _require_school_practice_unlocked_for_client(hw, user)
+    _checked_video_data_url(body.photo)
     if "," in (body.photo or ""):
         _, _b64 = body.photo.split(",", 1)
         approx_bytes = (len(_b64) * 3) // 4
