@@ -78,6 +78,7 @@ def _sell(price=100.00, qty=1, method="cash"):
 def _refund(**kw):
     payload = {"reason": f"{TAG} correction", "payment_method": "cash"}
     payload.update(kw)
+    payload.setdefault("not_against_sale", not payload.get("sale_id"))
     return run(server.admin_register_refund(server.RegisterRefundIn(**payload), ADMIN))
 
 

@@ -1863,7 +1863,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "card", client_id: "", notes: "", apply_tax: false });
   const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "card", amount_paid: "", note: "" });
   const [payment, setPayment] = useState({ client_id: "", amount: "", method: "card", notes: "", tendered_amount: "" });
-  const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "card", reason: "", notes: "", sale_id: "", tax_amount: "" });
+  const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "card", reason: "", notes: "", sale_id: "", tax_amount: "", not_against_sale: false });
   const refundSaleRef = refund.sale_id.trim().replace(/^#+\s*/, "");  // "#" alone is no receipt yet
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
@@ -2054,10 +2054,13 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       // tax out from it. Without one, the tax portion has to be stated —
       // zero for a service, which is the common case here.
       sale_id: refundSaleRef || null,
+      // No receipt: the refund must say it is not against a Register sale (a
+      // service or an overcharge), so no later void or return can take it again.
+      not_against_sale: !refundSaleRef && Boolean(refund.not_against_sale),
       // Against a receipt, an empty tax box means "work it out from the sale".
       tax_amount: refundSaleRef && String(refund.tax_amount).trim() === "" ? null : Number(refund.tax_amount || 0),
     });
-    setRefund({ client_id: refund.client_id, amount: "", payment_method: refund.payment_method, reason: "", notes: "", sale_id: "", tax_amount: "" });
+    setRefund({ client_id: refund.client_id, amount: "", payment_method: refund.payment_method, reason: "", notes: "", sale_id: "", tax_amount: "", not_against_sale: false });
     showDone("Refund recorded and deducted from Register totals.");
   });
   const submitPayout = () => submit(async () => {
@@ -2433,6 +2436,11 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
           <RegisterFormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
           <RegisterFormInput label="Against Register receipt # (optional)" value={refund.sale_id} testid="refund-sale-id"
                              onChange={v=>setRefund({...refund, sale_id:v})} placeholder="Receipt # of a Register sale — caps the refund and reverses its tax"/>
+          <label className="flex items-center gap-2 text-[12px] text-shTextMuted" data-testid="refund-not-against-sale-label">
+            <input type="checkbox" data-testid="refund-not-against-sale" checked={!refundSaleRef && refund.not_against_sale}
+                   disabled={!!refundSaleRef} onChange={e=>setRefund({...refund, not_against_sale:e.target.checked})}/>
+            Not against a Register sale (a service or an overcharge). Needed when the receipt # is empty.
+          </label>
           <RegisterFormInput label={refundSaleRef ? "Sales tax included (worked out from the sale — fill in only if asked)" : "Sales tax included (0 for a service)"}
                              type="number" step="0.01" testid="refund-tax-amount"
                              value={refund.tax_amount} onChange={v=>setRefund({...refund, tax_amount:v})}/>
@@ -2443,7 +2451,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
             merchandise sale, enter its Register receipt # above so the tax goes back to Ohio too.
           </p>
         )}
-        <button disabled={busy || !Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-shText px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record refund"}</button>
+        <button disabled={busy || !Number(refund.amount) || !refund.reason || (!refundSaleRef && !refund.not_against_sale)} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-shText px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record refund"}</button>
       </div>}
 
       {active === "adjustment" && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-4" data-testid="register-till-adjustment-tab">

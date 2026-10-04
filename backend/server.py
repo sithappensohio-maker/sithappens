@@ -37564,6 +37564,10 @@ class RegisterRefundIn(BaseModel):
     # a service). See domains.register.services.record_register_refund.
     sale_id: Optional[str] = None
     tax_amount: Optional[float] = Field(default=None, ge=0)  # None = left empty
+    # An empty receipt box is only for a refund that is not against a Register
+    # sale (a service, an overcharge). Ticked, it is saved as such and no later
+    # void or return can take the same money again.
+    not_against_sale: bool = False
 
 
 class RegisterCashPayoutIn(BaseModel):

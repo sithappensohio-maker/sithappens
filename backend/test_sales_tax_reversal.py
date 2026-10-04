@@ -282,7 +282,7 @@ def test_g_unlinked_register_refund_fabricates_no_tax():
         assert abs(float(s["retail_tax_total"])) < 0.005
         assert abs(float(s["total_tax_collected"])) < 0.005
         # And the live endpoint itself writes no tax field.
-        r = run(server.admin_register_refund(server.RegisterRefundIn(
+        r = run(server.admin_register_refund(server.RegisterRefundIn(not_against_sale=True, 
             reason=f"{TAG} live refund", amount=15.0, payment_method="cash",
             date=server.business_today().isoformat()), ADMIN))
         # It now writes tax_amount EXPLICITLY as 0.0 rather than omitting it,

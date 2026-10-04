@@ -119,7 +119,7 @@ def _void(sale_id, reason="register accounting test"):
 
 def _refund(amount, method, date):
     return run(server.admin_register_refund(
-        server.RegisterRefundIn(reason=f"{TAG} refund", amount=amount, payment_method=method, date=date),
+        server.RegisterRefundIn(not_against_sale=True, reason=f"{TAG} refund", amount=amount, payment_method=method, date=date),
         FAKE_USER,
     ))
 

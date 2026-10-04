@@ -256,6 +256,13 @@ async def record_register_refund(body, user: dict) -> dict:
     sale_ref = typed.lstrip("#").strip()
     if typed and not sale_ref:
         raise HTTPException(status_code=400, detail="Type the number after the # on the receipt, or leave the box empty.")
+    flagged = bool(getattr(body, "not_against_sale", False))
+    if sale_ref and flagged:
+        raise HTTPException(status_code=400, detail="A refund is either against a receipt, or not against a Register sale. Not both.")
+    if not sale_ref and not flagged:
+        raise HTTPException(status_code=400, detail=(
+            "Type the receipt # of the Register sale this refunds, or tick 'Not against a Register sale' "
+            "for a service or an overcharge."))
     sale_id = ""
     if sale_ref:
         sale = await _find_sale(sale_ref)
@@ -331,6 +338,7 @@ async def record_register_refund(body, user: dict) -> dict:
         "pre_tax_amount": -round(amount - tax_part, 2),
         "tax_rate_pct": float((sale or {}).get("tax_rate_pct") or 0),
         "pos_sale_id": sale_id or None,
+        "not_against_sale": flagged and not sale_id,
         "created_at": _now_iso_fn(),
         "created_by": user.get("id"),
         "logged_by": user.get("name") or user.get("email") or "admin",

@@ -183,7 +183,7 @@ def test_e_booking_refund_respected():
 # ── Test F — register refund reduces income exactly once ────────────────────
 def test_f_register_refund_reduces_income():
     ids = [_row("2001-06-01", 100.0, payment_method="cash")]
-    r = run(server.admin_register_refund(server.RegisterRefundIn(
+    r = run(server.admin_register_refund(server.RegisterRefundIn(not_against_sale=True, 
         reason=f"{TAG} refund", amount=20.0, payment_method="cash",
         date=server.business_today().isoformat()), ADMIN))
     live_refund_id = r["refund"]["id"]

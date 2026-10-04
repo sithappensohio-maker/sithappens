@@ -212,7 +212,7 @@ def test_e_single_cash_void_names_tender():
 # ── Test F — ordinary refund stays a clear Cash refund ──────────────────────
 def test_f_refund_stays_cash():
     with _OpenRegisterDay() as day:
-        r = run(server.admin_register_refund(server.RegisterRefundIn(
+        r = run(server.admin_register_refund(server.RegisterRefundIn(not_against_sale=True, 
             reason=f"{TAG} refund", amount=15.0, payment_method="cash", date=day.date), ADMIN))
         try:
             rows = _export_rows(day.date)
