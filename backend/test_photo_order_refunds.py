@@ -254,9 +254,9 @@ def test_an_unpaid_order_and_an_untouched_paid_order_are_left_alone():
     assert sm["revenue"] == o["total"] and sm["unpaid"] == 1
 
 
-def test_every_copy_returned_one_at_a_time_refunds_the_order_even_a_cent_short():
-    # 2 x $30 at 6.75% = $64.05; each single return gives back $32.02, so the
-    # money comes back a cent short. Every copy is back all the same.
+def test_every_copy_returned_one_at_a_time_refunds_exactly_what_was_charged():
+    # 2 x $30 at 6.75% = $64.05. Each single return is pro-rata; the last copy
+    # takes the remainder, so the order comes back to the cent, not a cent short.
     from domains.pos import services as pos
     owner = _staff()
     sp, base, o = _paid_order(owner, qty=2)
@@ -266,7 +266,7 @@ def test_every_copy_returned_one_at_a_time_refunds_the_order_even_a_cent_short()
             lines=[{"line_index": 0, "qty": 1, "restock": False}],
             reason=f"{TAG} returned", idempotency_key=f"{TAG}-{uuid.uuid4()}"), owner))
     got = _get(owner, base, o["id"])
-    assert got["refunded_amount"] == 64.04 and got["status"] == "refunded"
+    assert got["refunded_amount"] == 64.05 and got["status"] == "refunded"
 
 
 def test_a_refund_deleted_as_a_mistake_puts_the_order_back_how_it_was():

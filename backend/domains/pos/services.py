@@ -520,6 +520,61 @@ def _returned_line_amounts(line: dict, qty: float) -> tuple:
     return net, tax
 
 
+def _line_return_money(line: dict, qty: float, prior_qty: float, prior_net: float, prior_tax: float,
+                       known: bool = True) -> tuple:
+    """What this return refunds for one line. The FINAL return of a line takes
+    the exact remainder (what was charged, less what was already refunded), so
+    the units add up to the charge to the cent. Any other return is pro-rata.
+    `known` is False when the money already refunded on a legacy line can't be
+    read; then the old pro-rata figure is used."""
+    sold_qty = float(line.get("qty") or 0)
+    if (known and sold_qty > 0 and prior_qty + qty >= sold_qty - 0.0005
+            and line.get("net_amount") is not None and line.get("allocated_tax") is not None):
+        net = max(0.0, round(_money(line.get("net_amount")) - prior_net, 2))
+        tax = max(0.0, round(_money(line.get("allocated_tax")) - prior_tax, 2))
+        return net, tax
+    return _returned_line_amounts(line, qty)
+
+
+async def _legacy_returned_money(sale_id: str, idx: int) -> tuple:
+    """The money already refunded on a line returned before the line kept its
+    own totals: read from the return records. Returns (net, tax, found)."""
+    net = tax = 0.0
+    found = False
+    async for rec in _db.pos_sale_returns.find({"pos_sale_id": sale_id, "lines.line_index": idx},
+                                               {"_id": 0, "lines": 1}):
+        for ln in rec.get("lines") or []:
+            if ln.get("line_index") == idx:
+                found = True
+                net = round(net + _money(ln.get("net_amount")), 2)
+                tax = round(tax + _money(ln.get("tax_amount")), 2)
+    return net, tax, found
+
+
+async def _line_money_claim(sale_id: str, idx: int, line: dict, qty: float) -> tuple:
+    """(net, tax, pins, incs, sets) for one line's return. `pins` must still
+    hold when the reservation lands (so two returns can't both take the same
+    remainder); `incs` add to the line's running totals; `sets` write them for a
+    legacy line that had none."""
+    prior_qty = float(line.get("returned_qty") or 0)
+    base = f"line_items.{idx}"
+    if "returned_net" in line:
+        raw_net, raw_tax = line.get("returned_net"), line.get("returned_tax")
+        net, tax = _line_return_money(line, qty, prior_qty, _money(raw_net), _money(raw_tax))
+        pins = {f"{base}.returned_net": raw_net, f"{base}.returned_tax": raw_tax}
+        return net, tax, pins, {f"{base}.returned_net": net, f"{base}.returned_tax": tax}, {}
+    if prior_qty > 0:
+        prior_net, prior_tax, found = await _legacy_returned_money(sale_id, idx)
+    else:
+        prior_net, prior_tax, found = 0.0, 0.0, True
+    net, tax = _line_return_money(line, qty, prior_qty, prior_net, prior_tax, known=found)
+    if not found:
+        return net, tax, {}, {}, {}   # unknown history: leave the line's totals alone
+    pins = {f"{base}.returned_net": None, f"{base}.returned_tax": None}
+    sets = {f"{base}.returned_net": round(prior_net + net, 2), f"{base}.returned_tax": round(prior_tax + tax, 2)}
+    return net, tax, pins, {}, sets
+
+
 async def return_preview_checked(sale: dict, today: Optional[_date] = None) -> dict:
     """return_preview, plus the one refusal it can't see from the sale alone:
     money already refunded by hand against this sale (audit #27)."""
@@ -616,11 +671,21 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
         # going back twice from two tills.
         query: Dict[str, Any] = {"id": sale_id, "status": "completed"}
         inc: Dict[str, Any] = {}
+        sets: Dict[str, Any] = {}
+        money: Dict[int, tuple] = {}
         for idx, req in wanted.items():
             allowed = round(float(items[idx].get("qty") or 0) - req["qty"], 3)
             query[f"line_items.{idx}.returned_qty"] = {"$not": {"$gt": allowed}}
             inc[f"line_items.{idx}.returned_qty"] = req["qty"]
-        claimed = await _db.pos_sales.find_one_and_update(query, {"$inc": inc})
+            net, tax, pins, incs, puts = await _line_money_claim(sale_id, idx, items[idx], req["qty"])
+            money[idx] = (net, tax)
+            query.update(pins)
+            inc.update(incs)
+            sets.update(puts)
+        update: Dict[str, Any] = {"$inc": inc}
+        if sets:
+            update["$set"] = sets
+        claimed = await _db.pos_sales.find_one_and_update(query, update)
         if claimed is None:
             raise HTTPException(
                 status_code=409,
@@ -630,7 +695,7 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
         refund_lines, refund_net, refund_tax = [], 0.0, 0.0
         for idx, req in sorted(wanted.items()):
             line = items[idx]
-            net, tax = _returned_line_amounts(line, req["qty"])
+            net, tax = money[idx]
             refund_net = round(refund_net + net, 2)
             refund_tax = round(refund_tax + tax, 2)
             refund_lines.append({
@@ -740,9 +805,11 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
         if record_id:
             await _db.pos_sale_returns.delete_one({"id": record_id})
         if reserved:
-            await _db.pos_sales.update_one(
-                {"id": sale_id},
-                {"$inc": {f"line_items.{i}.returned_qty": -r["qty"] for i, r in wanted.items()}})
+            undo: Dict[str, Any] = {f"line_items.{i}.returned_qty": -r["qty"] for i, r in wanted.items()}
+            for i, (m_net, m_tax) in money.items():
+                undo[f"line_items.{i}.returned_net"] = -m_net
+                undo[f"line_items.{i}.returned_tax"] = -m_tax
+            await _db.pos_sales.update_one({"id": sale_id}, {"$inc": undo})
         await _db.pos_sale_return_claims.delete_one({"id": claim_id})
         raise
 

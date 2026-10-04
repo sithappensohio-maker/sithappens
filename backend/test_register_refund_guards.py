@@ -393,9 +393,9 @@ def test_after_a_refund_by_hand_the_sale_cannot_also_be_voided():
 
 
 def test_goods_returned_one_unit_at_a_time_leave_no_cent_of_tax_to_trip_the_mixed_rule():
-    # 2 x $8.99 ($1.21 tax) and a $20 service. Each single return gives back
-    # $0.60 of tax, leaving a cent on paper; the goods are all back, so the
-    # service refunds against the receipt with no tax and no refusal.
+    # 2 x $8.99 ($1.21 tax) and a $20 service. The goods come back one unit at
+    # a time; the last unit takes the remainder, so all $1.21 of tax is back.
+    # The service then refunds against the receipt with no tax and no refusal.
     pid = str(uuid.uuid4())
     run(server.db.pos_products.insert_one({
         "id": pid, "name": f"{TAG} toy", "price": 8.99, "active": True, "archived": False,
@@ -411,7 +411,7 @@ def test_goods_returned_one_unit_at_a_time_leave_no_cent_of_tax_to_trip_the_mixe
     assert run(server.db.pos_sales.find_one({"id": sale_id}, {"_id": 0, "tax_amount": 1}))["tax_amount"] == 1.21
     _return_all(sale_id)
     _return_all(sale_id)
-    assert _tax_reversed_on(sale_id) == 1.20
+    assert _tax_reversed_on(sale_id) == 1.21
     doc = _refund(amount=20.00, sale_id=_receipt(sale_id))["refund"]
     assert doc["tax_amount"] == 0.0 and doc["pos_sale_id"] == sale_id
 
