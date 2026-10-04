@@ -6881,9 +6881,14 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     if not client_id or not booking_date:
         return None
 
+    # A sibling is another dog of this family on the SAME service that day
+    # (a daycare visit is not a second dog for a grooming, and a dog is not
+    # its own sibling). Legacy daycare rows with no service_type still count.
+    sib_service = booking.get("service_type") or "daycare"
     sibling_q = {
         "client_id": client_id,
         "date": booking_date,
+        "service_type": {"$in": [sib_service] + ([None, ""] if sib_service == "daycare" else [])},
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
         # Only this family's own dogs — never one another family paid for (a friend's dog on a friends & family group).
@@ -6894,6 +6899,8 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     }
     if exclude_id:
         sibling_q["id"] = {"$ne": exclude_id}
+    if booking.get("dog_id"):
+        sibling_q["dog_id"] = {"$ne": booking["dog_id"]}
     sibling_count = await db.bookings.count_documents(sibling_q)
     if sibling_count < 1:
         return None
@@ -9085,15 +9092,21 @@ async def checkout_group_preview(
     preview_rows: List[Dict[str, Any]] = []
     combined = 0.0
     discount_total = 0.0
-    prior_completed = await db.bookings.count_documents({
+    anchor_service = anchor.get("service_type") or "daycare"
+    ticket_dogs = [r.get("dog_id") for r in rows if r.get("dog_id")]
+    prior_q = {
         "client_id": anchor.get("client_id"),
         "date": anchor.get("date"),
+        "service_type": {"$in": [anchor_service] + ([None, ""] if anchor_service == "daycare" else [])},
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
         # Only this family's own dogs — never one another family paid for (a friend's dog on a friends & family group).
         "bill_to_client_id": {"$in": [None, "", anchor.get("client_id")]},
         "$or": [{"multi_dog_discount": None}, {"multi_dog_discount.pre_applied": True}],
-    })
+    }
+    if ticket_dogs:
+        prior_q["dog_id"] = {"$nin": ticket_dogs}   # a dog's own earlier visit is not a sibling
+    prior_completed = await db.bookings.count_documents(prior_q)
     for idx, row in enumerate(rows):
         row, _rank_fields = await group_rank.settle(db, row, now=now_iso())
         row = await _refresh_booking_price_for_current_override(row)
