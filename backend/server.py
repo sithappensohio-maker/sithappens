@@ -49131,6 +49131,11 @@ async def sell_training_program(
 
     list_price = float(program.get("price") or 0)
     effective_price = float(body.override_price) if body.override_price is not None else list_price
+    # Typing a different price is a price change: only "pricing" may make one
+    # (the Register and gift cards already refuse it). Typing the list price is fine.
+    if body.override_price is not None and round(effective_price, 2) != round(list_price, 2) \
+            and not _perms_for(user).get("pricing"):
+        raise HTTPException(status_code=403, detail="You don't have permission to change a program price.")
     value_each = round(effective_price / max(qty, 1), 2)
 
     # If a dog is specified, make sure it belongs to this client.
