@@ -787,6 +787,19 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         setBusy(false);
         const done = data?.friends_family ? (data.bookings || []) : [data];
         setFfResult({ bill: data?.invoice || data?.group_bill || null, dogs: done.map(b => b?.dog_name).filter(Boolean) });
+        // Goods bought at pickup on this checkout print too. This screen has no
+        // hardware status, so a failed print is said in a toast instead.
+        const goodsTokens = data?.pos_extra_print_receipt_tokens || [];
+        if (goodsTokens.length) {
+          (async () => {
+            let failed = 0;
+            for (const token of goodsTokens) {
+              const r = await posPrintReceipt(token);
+              if (!r?.ok) failed += 1;
+            }
+            if (failed) toast.error(`${failed} receipt${failed === 1 ? "" : "s"} didn't print — reprint from Recent Sales.`);
+          })();
+        }
         return;
       }
       const printToken = data?.pos_print_receipt_token;
@@ -799,8 +812,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       // all) so staff has a manual View/Print/Email path when auto-print is
       // off and no cash was tendered — turning auto-print off must never
       // leave staff with zero way to produce a receipt on request.
-      if (data?.pos_invoice_id) {
-        await runHardware(printToken, drawerToken, data?.pos_extra_print_receipt_tokens || []);
+      const extraPrintTokens = data?.pos_extra_print_receipt_tokens || [];
+      if (data?.pos_invoice_id || extraPrintTokens.length) {   // goods bought at pickup print even with no visit bill
+        await runHardware(printToken, drawerToken, extraPrintTokens);
       } else {
         onClose();
       }
@@ -955,7 +969,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               )}
               {hwResult.extraFailed > 0 && (
                 <div className="rounded p-2.5 text-[13px] font-black bg-red-500/10 text-red-400 border border-red-500/30" data-testid="hw-extra-print-status">
-                  <i className="fas fa-triangle-exclamation mr-1.5"/>{hwResult.extraFailed} other receipt{hwResult.extraFailed === 1 ? "" : "s"} failed to print — use Print below.
+                  <i className="fas fa-triangle-exclamation mr-1.5"/>{hwResult.extraFailed} other receipt{hwResult.extraFailed === 1 ? "" : "s"} failed to print — reprint from the buttons below or Recent Sales.
                 </div>
               )}
               {hwWaiting && (

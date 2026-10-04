@@ -9291,6 +9291,7 @@ async def check_out_group(
                 raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
 
         completed: List[Dict[str, Any]] = []
+        goods_print_tokens: List[str] = []   # the merchandise rung on one dog's checkout prints with the group (audit #89)
         share = checkout_discount.HouseholdShare(body)
         for target in targets:
             payload = body.model_dump()
@@ -9315,6 +9316,7 @@ async def check_out_group(
             # the group is created once below, after the whole group succeeds.
             row = await _check_out_locked(target["id"], row_body, user, create_invoice=False)
             completed.append(share.took(row))
+            goods_print_tokens.extend(row.get("pos_extra_print_receipt_tokens") or [])
 
         combined_total = round(sum(float(row.get("actual_price") or 0) for row in completed), 2)
         combined_cash = round(sum(float(row.get("cash_revenue") or 0) for row in completed), 2)
@@ -9418,7 +9420,7 @@ async def check_out_group(
             "pos_open_drawer_token": pos_open_drawer_token,
             "pos_receipt_waiting": group_waiting,
             "pos_extra_invoice_ids": [b["id"] for b in extra_bills],
-            "pos_extra_print_receipt_tokens": extra_print_tokens,
+            "pos_extra_print_receipt_tokens": extra_print_tokens + goods_print_tokens,
         }
     except Exception:
         if originals:
@@ -10540,6 +10542,11 @@ async def _check_out_locked(
         # The merchandise rang as its own Register sale; the screen shows what
         # was sold alongside the stay rather than pretending it was one record.
         booking["pickup_sale"] = pickup_sale
+        # Its receipt prints with the visit's, as its own slip (audit #89). Only
+        # the goods' receipt is named here; the stay's receipt is unchanged.
+        if pickup_sale.get("pos_sale_id") and (await get_receipt_settings()).get("auto_print_receipts"):
+            booking["pos_extra_print_receipt_tokens"] = [await _issue_pos_token(
+                action="print_receipt", workstation_id=body.workstation_id, pos_sale_id=pickup_sale["pos_sale_id"])]
 
     return booking
 
