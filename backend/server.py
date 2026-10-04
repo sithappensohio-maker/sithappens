@@ -487,6 +487,24 @@ async def _enforce_rate_limit(
     )
 
 
+async def _refuse_if_rate_limited(scope: str, subject: str, *, limit: int, window_seconds: int) -> None:
+    """Read-only twin of _enforce_rate_limit: refuses while the window's count has
+    reached its limit, without spending anything. The count is spent by failures
+    only, so this is what stops a correct password once a guesser has used up the
+    allowance (audit #6). The bucket key must match _enforce_rate_limit's."""
+    now = datetime.now(timezone.utc)
+    bucket = int(now.timestamp()) // max(1, int(window_seconds))
+    row = await db.auth_rate_limits.find_one({"_id": _security_key(f"{scope}|{subject}|{bucket}")}, {"_id": 0, "count": 1})
+    if int((row or {}).get("count") or 0) < limit:
+        return
+    retry_after = max(1, int(window_seconds - (int(now.timestamp()) % window_seconds)))
+    raise HTTPException(
+        status_code=429,
+        detail="Too many attempts. Please wait and try again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def _token_version(user: dict) -> int:
     try:
         return int(user.get("token_version") or 0)
@@ -1656,6 +1674,10 @@ async def register(body: RegisterIn, request: Request):
 async def login(body: LoginIn, request: Request):
     email = body.email.lower()
     ip = _client_ip(request)
+    # Checked before the password: once this IP, or this email from this IP, has
+    # used up its failed attempts, even the right password is refused for the window.
+    await _refuse_if_rate_limited("login_ip", ip, limit=30, window_seconds=900)
+    await _refuse_if_rate_limited("login_email_ip", f"{ip}|{email}", limit=10, window_seconds=900)
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         # Count only failed attempts. Normal successful sign-ins (and the live
