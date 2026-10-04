@@ -47729,13 +47729,32 @@ class RetailSaleIn(BaseModel):
     amount_paid: Optional[float] = Field(default=None, ge=0)
 
 
+# A row the register, a payment, a refund or the Shop wrote. Only a manual
+# Income-screen sale may be edited or deleted here; the rest change from their
+# own screen (refund, void, return, payment), so the books can't be rewritten
+# under them (audit: "Editing a refund row in Income turns it into a sale").
+_SYSTEM_ROW_LINKS = ("pos_sale_id", "payment_id", "invoice_id", "shop_order_id", "booking_id",
+                     "gift_card_id", "lot_id", "ledger_id", "reversed_retail_sales_id",
+                     "reversed_payment_id", "stripe_dispute_id", "installment_id")
+
+
+def _retail_row_is_system(row: dict) -> bool:
+    if (row.get("source_kind") or "").strip():
+        return True
+    if any(row.get(k) for k in _SYSTEM_ROW_LINKS):
+        return True
+    return float(row.get("amount") or 0) < 0
+
+
 @api.get("/retail-sales")
 async def list_retail_sales(
     _: dict = Depends(require_admin_and_permission("finance_reports")),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ):
-    """List retail sales, optionally filtered to a date window. Newest first."""
+    """List retail sales, optionally filtered to a date window. Newest first.
+    Each row says whether it is written by the system (`system`), which the
+    Income screen uses to hide its edit and remove buttons."""
     q: Dict[str, Any] = {}
     if start_date or end_date:
         q["date"] = {}
@@ -47744,7 +47763,10 @@ async def list_retail_sales(
         if end_date:
             q["date"]["$lte"] = end_date
     cursor = db.retail_sales.find(q, {"_id": 0}).sort([("date", -1), ("created_at", -1)])
-    return await cursor.to_list(2000)
+    rows = await cursor.to_list(2000)
+    for r in rows:
+        r["system"] = _retail_row_is_system(r)
+    return rows
 
 
 async def _build_retail_sale_doc(
@@ -47870,6 +47892,10 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
     existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Retail sale not found")
+    if _retail_row_is_system(existing):
+        raise HTTPException(status_code=409, detail=(
+            "This money was written by the register, a payment or the Shop, so it can't be edited here. "
+            "Change it from its own screen (refund, void, return or payment)."))
     await _require_register_day_open(existing.get("date") or body.date)
     if body.date != existing.get("date"):
         await _require_register_day_open(body.date)
@@ -47901,6 +47927,10 @@ async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin_and_p
     existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Retail sale not found")
+    if _retail_row_is_system(existing):
+        raise HTTPException(status_code=409, detail=(
+            "This money was written by the register, a payment or the Shop, so it can't be removed here. "
+            "Reverse it from its own screen (refund, void, return or payment)."))
     await _require_register_day_open(existing.get("date") or business_today().isoformat())
     res = await db.retail_sales.delete_one({"id": sale_id})
     if res.deleted_count == 0:

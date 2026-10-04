@@ -540,8 +540,13 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
                 </div>
                 <span className="text-sm font-black text-purple-300 whitespace-nowrap">+{fmt(r.amount)}</span>
                 <div className="flex gap-2 shrink-0">
-                  <button onClick={()=>{ setRetailEditing(r); setRetailOpen(true); }} className="text-[14px] text-shTextMuted hover:text-shSecondary p-1" data-testid={`retail-edit-${r.id}`}><i className="fas fa-pen"/></button>
-                  <button onClick={()=>removeRetail(r)} className="text-[14px] text-shTextMuted hover:text-red-400 p-1" data-testid={`retail-delete-${r.id}`}><i className="fas fa-trash"/></button>
+                  {r.system ? (
+                    // The register, a payment or the Shop wrote this: it changes from its own screen.
+                    <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted self-center" data-testid={`retail-system-${r.id}`}>Register / payments</span>
+                  ) : (<>
+                    <button onClick={()=>{ setRetailEditing(r); setRetailOpen(true); }} className="text-[14px] text-shTextMuted hover:text-shSecondary p-1" data-testid={`retail-edit-${r.id}`}><i className="fas fa-pen"/></button>
+                    <button onClick={()=>removeRetail(r)} className="text-[14px] text-shTextMuted hover:text-red-400 p-1" data-testid={`retail-delete-${r.id}`}><i className="fas fa-trash"/></button>
+                  </>)}
                 </div>
               </div>
             )}
