@@ -28406,7 +28406,7 @@ def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[
         waiting_label = f"Waiting {d} day{'s' if d != 1 else ''}"
 
     today = business_today().isoformat()
-    now_hhmm = datetime.now().strftime("%H:%M")
+    now_hhmm = now_local().strftime("%H:%M")   # the Ohio clock, not the server's UTC
     requested_passed = False
     requested_today = False
     within_24h = False
