@@ -50928,14 +50928,19 @@ class PaymentPlanCreate(BaseModel):
     cadence: Literal["weekly", "biweekly", "monthly", "custom"] = "biweekly"
     installments: List[PaymentInstallmentIn] = Field(..., min_length=1, max_length=24)
     note: Optional[str] = ""
+    # Operator markup for THIS plan's agreement (audit: "A customized payment-plan
+    # agreement is thrown away"). Same trust as settings.agreement_html: both need
+    # finance_reports, and every value is still escaped when it is filled in.
+    custom_agreement_template: Optional[str] = None
 
 
 def _fmt_money(n: float) -> str:
     return f"${n:,.2f}"
 
 
-def _render_agreement(plan: dict, settings: dict) -> str:
-    """Render the agreement HTML for `plan` using current settings + variables."""
+def _render_agreement(plan: dict, settings: dict, template: Optional[str] = None) -> str:
+    """Render the agreement HTML for `plan` using current settings + variables.
+    `template` (this plan's own customized agreement) wins over the saved one."""
     # Deliberate markup, built here from dates and money this server
     # computed — so it is marked trusted, and its own pieces are escaped
     # first in case an installment ever carries something typed.
@@ -50956,7 +50961,7 @@ def _render_agreement(plan: dict, settings: dict) -> str:
     # program_name are not. This is a document somebody signs — a name with
     # an ampersand in it has to survive intact, and a name with a tag in it
     # must not become one.
-    template = settings.get("agreement_html") or DEFAULT_PAYMENT_AGREEMENT_HTML
+    template = template or settings.get("agreement_html") or DEFAULT_PAYMENT_AGREEMENT_HTML
     return email_service._substitute(template, ctx, into="html")
 
 
@@ -51003,8 +51008,10 @@ async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(r
         "created_by": current.get("id"),
         "reminder_days_before": settings.get("reminder_days_before", 3),
     }
-    # Pre-render the agreement so the client sees what's been proposed
-    plan["agreement_snapshot"] = _render_agreement(plan, settings)
+    # Pre-render the agreement now, with this plan's own text when it was
+    # customized. The snapshot is what the client reads and signs.
+    plan["agreement_snapshot"] = _render_agreement(
+        plan, settings, template=(body.custom_agreement_template or "").strip() or None)
     await db.payment_plans.insert_one(plan)
     plan.pop("_id", None)
 
