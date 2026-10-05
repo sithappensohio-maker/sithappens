@@ -27468,8 +27468,12 @@ async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = 
     relevant = []
     for b in bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
-        if target in days:
-            relevant.append(b)
+        if target not in days:
+            continue
+        # A dog who has gone home is not on a later day's sheet (audit #83).
+        if b.get("checked_out_at") and _business_date_from_timestamp(b["checked_out_at"]) < target:
+            continue
+        relevant.append(b)
 
     # Enrich with dog care data + client
     out = []
