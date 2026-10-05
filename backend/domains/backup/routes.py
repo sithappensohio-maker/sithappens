@@ -1165,6 +1165,25 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 await db.system_runs.delete_many(repairs)
             await prepaid_close.rearm_after_restore(db, collections, mode)
 
+    async def _drop_other_copies(c: str, docs: list, collections: dict) -> tuple:
+        """A booking lives in one place: bookings while it is open, bookings_archive once the nightly
+        archive has moved it (audit #8). A merge must not put it into the other collection. A backed-up
+        archive copy is dropped when the same id is hot live or hot in this backup; a backed-up hot copy
+        is dropped when the id is archived live. Returns (kept_docs, dropped_count)."""
+        other = backup_rules.MERGE_TWIN[c]
+        ids = [str(d["id"]) for d in docs if d.get("id")]
+        live_other: set = set()
+        for start in range(0, len(ids), 1000):
+            chunk = ids[start:start + 1000]
+            async for r in db[other].find({"id": {"$in": chunk}}, {"_id": 0, "id": 1}):
+                live_other.add(str(r["id"]))
+        hot_in_backup: set = set()
+        if c == "bookings_archive":
+            hot_in_backup = {str(d.get("id")) for d in (collections or {}).get("bookings") or [] if isinstance(d, dict)}
+        kept = [d for d in docs if not d.get("id") or not (
+            str(d["id"]) in live_other or (c == "bookings_archive" and str(d["id"]) in hot_in_backup))]
+        return kept, len(docs) - len(kept)
+
     async def _restore_collections_inner(collections: dict, mode: str, progress=None):
         """Restore each backed-up collection. Returns (summary, kept_live).
 
@@ -1182,6 +1201,9 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 await progress(c, index, len(todo), 0, False)
             docs = [backup_rules.restore_row(c, d) for d in (docs or []) if isinstance(d, dict)]
             is_string_id = c in STRING_ID_COLLECTIONS
+            other_copies = 0
+            if mode != "replace" and c in backup_rules.MERGE_TWIN:
+                docs, other_copies = await _drop_other_copies(c, docs, collections)
             if mode == "replace":
                 await db[c].delete_many({})
                 if docs:
@@ -1235,6 +1257,8 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                     except DuplicateKeyError:
                         await _collision(doc)
                 summary[c] = {"mode": "merge", "upserted": upserts}
+                if other_copies:
+                    summary[c]["skipped_other_copy"] = other_copies
                 if kept_live:
                     summary[c]["kept_live"] = len(kept_live)
                     summary[c]["kept_live_ids"] = kept_live[:10]

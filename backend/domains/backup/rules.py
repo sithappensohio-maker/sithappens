@@ -50,6 +50,9 @@ def merge_filter(collection: str, doc: dict, is_string_id: bool):
 # Sequences a merge may only raise. Records made after the backup stay in the
 # database during a merge, so putting the counter back would hand their
 # confirmation / contestant / photo-order numbers out a second time.
+# A booking lives in one place: an open visit in bookings, a finished one in bookings_archive (audit #8).
+MERGE_TWIN: Dict[str, str] = {"bookings": "bookings_archive", "bookings_archive": "bookings"}
+
 MERGE_MAX_FIELDS: Dict[str, str] = {
     "event_counters": "seq",
 }
