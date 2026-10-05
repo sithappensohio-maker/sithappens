@@ -37,3 +37,23 @@ def _no_checkin_title(out):
 def test_only_the_dog_whose_drop_off_has_passed_is_counted(day):
     out = run(server.admin_today_brain(ADMIN))
     assert _no_checkin_title(out) == "1 dog booked today not yet checked in"
+
+
+def _timed(service_type, time_, name):
+    row = {"id": f"{TAG}-{uuid.uuid4().hex[:6]}", "date": DAY.isoformat(), "status": "approved",
+           "checked_in_at": None, "dog_name": name, "service_type": service_type, "time": time_, "dropoff_time": "", "tag": TAG}
+    run(server.db.bookings.insert_one(row))
+
+
+def test_a_timed_appointment_counts_from_its_own_time_not_10_am(day):
+    # A 2 PM grooming is not late at 10:30, even though it has no drop-off time.
+    _timed("grooming", "14:00", "Groomed")
+    out = run(server.admin_today_brain(ADMIN))
+    assert _no_checkin_title(out) == "1 dog booked today not yet checked in"
+
+
+def test_a_timed_appointment_that_has_started_is_counted_even_unpadded(day):
+    # 9:00 is stored unpadded; it has started by 10:30, so it counts.
+    _timed("grooming", "9:00", "Early groomed")
+    out = run(server.admin_today_brain(ADMIN))
+    assert _no_checkin_title(out) == "2 dogs booked today not yet checked in"

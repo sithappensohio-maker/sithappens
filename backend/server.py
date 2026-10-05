@@ -28475,10 +28475,14 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             no_in = []
             async for b in db.bookings.find(
                 {"date": today_iso, "status": "approved", "checked_in_at": {"$in": [None, ""]}},
-                {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1, "dropoff_time": 1},
+                {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1, "dropoff_time": 1, "time": 1, "is_meet_greet": 1},
             ):
-                drop = (b.get("dropoff_time") or "").strip()
-                if drop and drop > now_hhmm:
+                # A timed appointment (grooming, photos, a Meet & Greet) is due at its own time; a day
+                # visit is due at its drop-off. Compared as minutes, since a stored time can be unpadded (audit #82).
+                appt = (b.get("time") or "").strip()
+                timed = bool(appt) and (b.get("service_type") in TIME_SLOTTED_SERVICES or bool(b.get("is_meet_greet")))
+                due = appt if timed else (b.get("dropoff_time") or "").strip()
+                if due and (_hhmm_to_min(due) or 0) > (_hhmm_to_min(now_hhmm) or 0):
                     continue
                 no_in.append(b)
             if no_in:
