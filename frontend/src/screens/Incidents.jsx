@@ -30,13 +30,14 @@ const SEVERITIES = [
 
 function nowHHMM() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 
-const emptyForm = {
+// A function, so the date and time are read when the form opens, not when the app loaded (audit #36).
+const emptyForm = () => ({
   dog_id: "", date: todayISO(), time: nowHHMM(), type: "other", severity: "low",
   description: "", witnesses: "", action_taken: "", photos: [],
   vet_required: false, follow_up_required: false,
   // Sprint 110ev — Phase 5
   staff_involved: [], manager_reviewed: false, client_notified: false, internal_notes: "",
-};
+});
 
 // A serious incident stays in the owner's Action Center until they mark it read (audit #35).
 // Same rule as the server's Action Center item: severe, or a bite or an injury.
@@ -72,7 +73,7 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
   const openNew = () => {
     if (dogs.length === 0) { toast.error("Add a dog first"); return; }
     setEditing(null);
-    setForm({ ...emptyForm, dog_id: presetDogId && dogs.some(d => d.id === presetDogId) ? presetDogId : dogs[0].id });
+    setForm({ ...emptyForm(), dog_id: presetDogId && dogs.some(d => d.id === presetDogId) ? presetDogId : dogs[0].id });
     setOpen(true); setErr("");
   };
   // Phase 4 — global "+ New" menu. Waits for `dogs` to load (openNew needs
@@ -86,7 +87,7 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openCreateOnMount, dogs]);
-  const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm, ...inc }); setEditReason(""); setOpen(true); setErr(""); };
+  const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm(), ...inc }); setEditReason(""); setOpen(true); setErr(""); };
 
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 4 - form.photos.length);
