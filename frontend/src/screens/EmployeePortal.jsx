@@ -211,7 +211,10 @@ function ClockTab() {
   const open = data.open_entry;
   const live = open ? hoursSinceISO(open.clock_in_at) : 0;
   // Sprint 110ba — running pay during open shift (hourly rate from /employee/me)
-  const rate = Number(data?.user?.hourly_rate || 0);
+  const currentRate = Number(data?.user?.hourly_rate || 0);
+  // The open shift is paid at the rate in force when it started (audit #24); the current rate only when it has none
+  const stampedRate = Number(open?.pay_rate || 0);
+  const rate = stampedRate > 0 ? stampedRate : currentRate;
   const liveGross = open && rate > 0 ? (live * rate) : 0;
 
   return (

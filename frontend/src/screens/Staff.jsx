@@ -282,7 +282,8 @@ export default function Staff() {
                 <tbody>
                   {tcData.entries.map(e => {
                     const u = tcData.per_user.find(p => p.user_id === e.user_id) || {};
-                    const cost = (Number(e.hours)||0) * (u.hourly_rate || 0);
+                    // The server prices each shift at the rate it was worked at (audit #24)
+                    const cost = Number(e.cost) || 0;
                     return (
                       <tr key={e.id} className="border-b border-shBorder/40 hover:bg-[var(--sh-card-base)]/40" data-testid={`tc-row-${e.id}`}>
                         <td className="px-2 py-2 text-gray-200">{u.name || e.user_name || "—"}</td>
