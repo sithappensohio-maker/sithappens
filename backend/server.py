@@ -11808,7 +11808,7 @@ async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
             training_sessions += len(past_days)
         if past_days:
             last_visit = max(past_days) if not last_visit else max(last_visit, max(past_days))
-    incidents_count = await db.incidents.count_documents({"dog_id": dog_id})
+    incidents_count = await db.incidents.count_documents({"dog_id": dog_id, "archived": {"$ne": True}})   # a deleted incident is archived (audit #80)
     homework_completed = await db.homework.count_documents({"dog_id": dog_id, "status": "completed"})
     homework_assigned = await db.homework.count_documents({"dog_id": dog_id, "status": "assigned"})
     return {
@@ -14413,7 +14413,7 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
         })
 
     # ── Incident log
-    async for inc in db.incidents.find({"dog_id": dog_id}, {"_id": 0}).sort("date", -1).limit(20):
+    async for inc in db.incidents.find({"dog_id": dog_id, "archived": {"$ne": True}}, {"_id": 0}).sort("date", -1).limit(20):
         events.append({
             "id": f"incident-{inc['id']}",
             "ts": inc.get("date") + "T00:00:00" if inc.get("date") else inc.get("created_at"),
@@ -28426,7 +28426,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     #     The item clears when the owner acknowledges the incident.
     try:
         serious = [inc async for inc in db.incidents.find(
-            {"owner_acknowledged_at": {"$in": [None, ""]},
+            {"owner_acknowledged_at": {"$in": [None, ""]}, "archived": {"$ne": True},
              "date": {"$gte": (business_today() - timedelta(days=14)).isoformat()},
              "$or": [{"severity": "severe"}, {"type": {"$in": ["bite", "injury"]}}]},
             {"_id": 0, "id": 1, "dog_name": 1, "type": 1, "severity": 1},
@@ -51936,7 +51936,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
 
     # Bulk-load recent open incidents
     inc_rows = await db.incidents.find(
-        {"dog_id": {"$in": dog_ids}, "follow_up_required": True},
+        {"dog_id": {"$in": dog_ids}, "follow_up_required": True, "archived": {"$ne": True}},
         {"_id": 0, "dog_id": 1, "id": 1},
     ).to_list(2000) if dog_ids else []
     open_incidents_by_dog: Dict[str, int] = {}
@@ -52118,7 +52118,7 @@ async def safety_flag_suggestions(dog_id: str, _: dict = Depends(require_admin))
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "owner_id": 1, "safety_flags": 1})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
-    incidents = await db.incidents.find({"dog_id": dog_id}, {"_id": 0, "type": 1}).to_list(2000)
+    incidents = await db.incidents.find({"dog_id": dog_id, "archived": {"$ne": True}}, {"_id": 0, "type": 1}).to_list(2000)
     submissions = await db.intake_submissions.find(
         {"$or": [{"dog_id": dog_id}, {"client_id": dog.get("owner_id")}]},
         {"_id": 0, "form_type": 1, "status": 1, "answers": 1},
