@@ -240,7 +240,7 @@ def test_a_backup_restore_re_arms_the_daily_pass_even_if_it_fails():
     old = {**_se(s), "status": "withdrawn"}
     run(server._restore_collections({"school_enrollments": [old]}, "merge"))
     assert run(server.db.system_runs.find_one({"_id": mirror_sync.SYNC_JOB})) is None
-    assert _se(s)["status"] == "withdrawn", "the restore brought the stale copy back"
+    assert _se(s)["status"] == "active", "the restore keeps the live status (audit #8: school status is kept on merge)"
     _job()
     assert _se(s)["status"] == "active"
 

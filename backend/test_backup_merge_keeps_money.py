@@ -25,7 +25,8 @@ def _one(coll, _id_):
 
 def teardown_module():
     for coll in ("gift_cards", "credit_lots", "clients", "bookings", "payment_ledger", "refund_idempotency_claims",
-                 "invoices", "time_clock_entries"):
+                 "invoices", "time_clock_entries", "dog_programs", "school_enrollments", "training_session_drafts",
+                 "checkpoint_submissions", "training_session_log"):
         run(getattr(server.db, coll).delete_many({"tag": TAG}))
 
 
@@ -123,3 +124,44 @@ def test_a_missing_gift_card_is_restored_whole_with_its_balance():
     _merge({"gift_cards": [{"id": gid, "code": gid, "balance": 50.0, "status": "active", "money_keys": ["sell:1"], "tag": TAG}]})
     row = _one("gift_cards", gid)
     assert row is not None and row["balance"] == 50.0 and row["money_keys"] == ["sell:1"]
+
+
+def test_a_merge_keeps_a_graduated_students_status_and_lesson_position_on_both_records():
+    eid, sid = _id(), _id()
+    run(server.db.dog_programs.insert_one({"id": eid, "dog_id": f"{TAG}-d", "status": "completed", "access_state": "active",
+                                           "completed_at": "2031-06-01T00:00:00+00:00", "current_lesson_id": "L9",
+                                           "goal_progress": {"sit": {"score": 5}}, "tag": TAG}))
+    run(server.db.school_enrollments.insert_one({"id": sid, "enrollment_id": eid, "status": "completed",
+                                                 "access_state": "active", "completed_at": "2031-06-01T00:00:00+00:00",
+                                                 "tag": TAG}))
+    _merge({"dog_programs": [{"id": eid, "dog_id": f"{TAG}-d", "status": "active", "completed_at": None,
+                              "current_lesson_id": "L1", "goal_progress": {"sit": {"score": 1}}, "tag": TAG}],
+            "school_enrollments": [{"id": sid, "enrollment_id": eid, "status": "active", "completed_at": None, "tag": TAG}]})
+    prog = _one("dog_programs", eid)
+    assert prog["status"] == "completed" and prog["current_lesson_id"] == "L9" and prog["goal_progress"] == {"sit": {"score": 5}}
+    assert _one("school_enrollments", sid)["status"] == "completed"
+
+
+def test_a_merge_does_not_reopen_a_completed_session_draft():
+    did = _id()
+    run(server.db.training_session_drafts.insert_one({"id": did, "status": "completed", "completed_log_id": "log-1",
+                                                      "recap_ready": True, "tag": TAG}))
+    _merge({"training_session_drafts": [{"id": did, "status": "draft", "completed_log_id": None, "recap_ready": False, "tag": TAG}]})
+    row = _one("training_session_drafts", did)
+    assert row["status"] == "completed" and row["completed_log_id"] == "log-1"
+
+
+def test_a_merge_keeps_a_graded_checkpoint_result():
+    cid = _id()
+    run(server.db.checkpoint_submissions.insert_one({"id": cid, "status": "graded", "outcome": "advance",
+                                                     "dog_overall": 4, "graded_by_name": "Sam", "tag": TAG}))
+    _merge({"checkpoint_submissions": [{"id": cid, "status": "pending_grading", "outcome": None, "dog_overall": None, "tag": TAG}]})
+    row = _one("checkpoint_submissions", cid)
+    assert row["status"] == "graded" and row["outcome"] == "advance" and row["dog_overall"] == 4
+
+
+def test_a_merge_keeps_a_session_log_as_it_was_written():
+    lid = _id()
+    run(server.db.training_session_log.insert_one({"id": lid, "enrollment_id": f"{TAG}-e", "prepaid_session_id": "b-live", "tag": TAG}))
+    _merge({"training_session_log": [{"id": lid, "enrollment_id": f"{TAG}-e", "prepaid_session_id": None, "tag": TAG}]})
+    assert _one("training_session_log", lid)["prepaid_session_id"] == "b-live"

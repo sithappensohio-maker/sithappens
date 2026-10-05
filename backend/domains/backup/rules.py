@@ -112,6 +112,23 @@ MERGE_KEEP_LIVE: Dict[str, Tuple[str, ...]] = {
     "estimated_tax_payments": ("voided", "void_reason", "voided_by", "voided_at"),
     "sales_tax_filings": ("status", "filed_at", "payments"),
     "cash_drawer_sessions": ("status", "closed_at", "closed_by"),
+    # A training program is the real record of a student's progress and standing (the School's own status is
+    # a copy of it). Its state and position are kept live, so an older backup cannot un-graduate, un-withdraw or
+    # move a student back a lesson, and a finished session cannot be replayed.
+    "dog_programs": ("status", "access_state", "completed_at", "on_hold_at", "graduated_by", "graduated_by_name",
+                     "graduation_ready", "current_module_id", "current_lesson_id", "goal_progress", "sessions_count"),
+    # School HQ's copy of a student's status. The daily pass copies it from dog_programs; keeping it live too
+    # means the two stay in step at once after a restore.
+    "school_enrollments": ("status", "access_state", "completed_at"),
+    # A checkpoint's grading is one state machine: a graded checkpoint keeps its result and its advance decision.
+    "checkpoint_submissions": ("status", "grading_plan", "last_advance_conflict_at", "handler_scores", "dog_scores",
+                               "handler_overall", "dog_overall", "outcome", "prescription", "graded_at",
+                               "graded_by", "graded_by_name", "progression_deferred_for_module_quiz",
+                               "trainer_assist_hold_active"),
+    # A session draft is completed exactly once: its status and completion record stay live, so a restored
+    # draft cannot be completed again and write a second log.
+    "training_session_drafts": ("status", "completing_started_at", "completion_plan", "completing_claim_token",
+                                "completed_log_id", "completed_at", "completed_by", "completed_by_name", "recap_ready"),
 }
 
 # Append-only money records and one-per-thing guards. A row that exists live is never rewritten; a row
@@ -119,7 +136,7 @@ MERGE_KEEP_LIVE: Dict[str, Tuple[str, ...]] = {
 # stale "processing" copy would replay it.)
 MERGE_INSERT_ONLY = frozenset({
     "payment_ledger", "credit_adjustments", "gift_card_transactions", "booking_financial_events",
-    "till_adjustments", "pos_drawer_audit", "inventory_movements", "tax_payments",
+    "till_adjustments", "pos_drawer_audit", "inventory_movements", "tax_payments", "training_session_log",
     "stripe_payouts", "stripe_balance_transactions", "stripe_webhook_events", "stripe_unlinked_refunds",
     "pos_sale_claims", "pos_sale_void_claims", "pos_sale_return_claims", "payment_topup_claims",
     "payment_void_claims", "refund_idempotency_claims", "shop_checkout_claims", "auto_receipt_email_claims",
