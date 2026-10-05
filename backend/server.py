@@ -51249,7 +51249,8 @@ async def portal_list_assigned_intake(user: dict = Depends(get_current_user)):
     if user.get("role") not in ("client",):
         raise HTTPException(status_code=403, detail="Client portal only")
     rows = await db.intake_submissions.find(
-        {"client_id": user.get("client_id"), "status": "sent"},
+        # A form sent back for follow-up is still the family's to finish (audit #64).
+        {"client_id": user.get("client_id"), "status": {"$in": ["sent", "needs_follow_up"]}},
         {"_id": 0},
     ).sort("created_at", -1).to_list(200)
     # Hydrate with the template's client-facing fields (omit staff_only)
@@ -51260,9 +51261,13 @@ async def portal_list_assigned_intake(user: dict = Depends(get_current_user)):
         )
         if not tpl:
             continue
-        public_fields = [f for f in (tpl.get("fields") or []) if not f.get("staff_only")]
+        staff_fields = {f.get("id") for f in (tpl.get("fields") or []) if f.get("staff_only") or f.get("field_type") == "staff_only_note"}
+        public_fields = [f for f in (tpl.get("fields") or []) if f.get("id") not in staff_fields]
+        # The staff's review notes and staff-only answers stay with staff (audit #64).
+        safe = {k: v for k, v in r.items() if k not in ("review_notes", "reviewed_by", "reviewed_at")}
+        safe["answers"] = {k: v for k, v in (r.get("answers") or {}).items() if k not in staff_fields}
         out.append({
-            **r,
+            **safe,
             "template": {
                 "name": tpl.get("name"),
                 "form_type": tpl.get("form_type"),
