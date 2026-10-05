@@ -190,6 +190,22 @@ def test_duplicate_booking_reads_plainly():
         assert "status:" not in e.detail and pretty_date(day) in e.detail and "My Bookings" in e.detail
 
 
+def test_moving_a_visit_onto_a_same_service_day_is_refused():
+    """A move (reschedule or edit) gets the same duplicate check as a new booking (audit #43)."""
+    d1 = _future_weekday()
+    d2 = _future_weekday(min_days=12)
+    with _daycare_service() as svc, _household() as (client, dogs):
+        user = _client_user(client)
+        run(_book(user, dogs[0], svc, d1))
+        later = run(_book(user, dogs[0], svc, d2))
+        e = _refusal(server.reschedule_booking(later["id"], server.RescheduleIn(date=d1), _admin_user()))
+        assert e.status_code == 409 and e.block["code"] == "duplicate_booking"
+        assert run(server.db.bookings.find_one({"id": later["id"]}, {"_id": 0}))["date"] == d2
+        e = _refusal(server.patch_booking(later["id"], server.BookingPatchIn(date=d1), _admin_user()))
+        assert e.status_code == 409 and e.block["code"] == "duplicate_booking"
+        assert run(server.db.bookings.find_one({"id": later["id"]}, {"_id": 0}))["date"] == d2
+
+
 def test_max_consecutive_boarding_nights_is_enforced():
     """Regression: the raise sat inside `except Exception: pass`."""
     with _settings(day_to_day__guardrails__max_consecutive_boarding_nights=3), _household() as (client, dogs):

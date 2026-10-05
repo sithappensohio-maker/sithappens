@@ -4076,6 +4076,13 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
             await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
             await prepaid_sessions.refuse_move(db, booking)   # audit #38
             dates_moved = any(merged.get(k) != booking.get(k) for k in ("date", "end_date", "time", "service_type", "service_id"))
+            # A visit moved onto a day the same dog already has this service is refused, as a new booking is (audit #43).
+            if any(merged.get(k) != booking.get(k) for k in ("date", "end_date", "service_type")):
+                dup = await _dog_conflicting_booking(
+                    booking.get("dog_id"), merged.get("date"), merged.get("end_date"), merged.get("service_type") or "other",
+                    exclude_booking_id=booking.get("id"))
+                if dup:
+                    raise _duplicate_booking_refusal(booking.get("dog_name") or "This dog", dup, merged.get("service_type") or "other")
             await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg, check_days=dates_moved)
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
     finally:
@@ -4083,6 +4090,15 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
             await _release_capacity_locks(owner, keys)
     merged.update(update)
     return merged
+
+
+def _duplicate_booking_refusal(dog_name: str, dup: dict, service_type: str) -> BookingBlocked:
+    """The refusal for a second visit of the same service on the same day(s). Shared by a new booking and a
+    move, so the two cannot drift (audit #43)."""
+    dup_end = dup.get("end_date")
+    span = f" through {pretty_date(dup_end)}" if dup_end and dup_end != dup.get("date") else ""
+    state = {"pending": "waiting for approval", "approved": "confirmed", "checked_in": "checked in"}.get(dup.get("status"), dup.get("status") or "booked")
+    return BookingBlocked(409, f"{dog_name} already has a {service_type} booking on {pretty_date(dup.get('date'))}{span} ({state}). " "Pick a different date, or see My Bookings to change the existing one.", code="duplicate_booking", action="pick_date", booking_id=dup.get("id"))
 
 
 async def _dog_conflicting_booking(
@@ -4267,10 +4283,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     if not (is_admin and body.override_capacity):
         dup = await _dog_conflicting_booking(body.dog_id, body.date, body.end_date, body.service_type)
         if dup:
-            dup_end = dup.get("end_date")
-            span = f" through {pretty_date(dup_end)}" if dup_end and dup_end != dup.get("date") else ""
-            state = {"pending": "waiting for approval", "approved": "confirmed", "checked_in": "checked in"}.get(dup.get("status"), dup.get("status") or "booked")
-            raise BookingBlocked(409, f"{dog.get('name') or 'This dog'} already has a {body.service_type} booking on {pretty_date(dup.get('date'))}{span} ({state}). " "Pick a different date, or see My Bookings to change the existing one.", code="duplicate_booking", action="pick_date", booking_id=dup.get("id"))
+            raise _duplicate_booking_refusal(dog.get('name') or 'This dog', dup, body.service_type)
 
     # Closed dates: clients only — staff can still book one day by hand (any day in a range counts).
     if not is_admin:
