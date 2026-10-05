@@ -35265,6 +35265,8 @@ async def _staff_readiness_summary(day: Optional[str] = None) -> Dict[str, Any]:
         {"$or": [{"clock_out_at": None}, {"clock_out_at": ""}, {"clock_out_at": {"$exists": False}}]},
         {"_id": 0},
     ).sort("clock_in_at", -1).to_list(500)
+    # A punch left open on a deactivated employee's account is not someone on the floor (review of 98ba00e).
+    open_entries = [e for e in open_entries if e.get("user_id") not in deactivated_ids]
     # Only staff/admin can create these rows through the clock endpoint. Keep
     # unknown user_ids visible too so an owner clocked in as the admin account
     # still counts for the live floor ratio.
