@@ -181,7 +181,8 @@ class BannerImageIn(BaseModel):
 def _registration_closed(ev: dict) -> bool:
     if not ev.get("registration_open", True):
         return True
-    closes = ev.get("registration_closes_at")
+    # No set close time: registration closes when the event ends (or starts, if it has no end) (audit #76).
+    closes = ev.get("registration_closes_at") or ev.get("end_at") or ev.get("start_at")
     if closes:
         try:
             return datetime.fromisoformat(str(closes).replace("Z", "+00:00")) <= datetime.now(timezone.utc)

@@ -190,7 +190,8 @@ export default function PublicEvent() {
     );
   }
 
-  const registrationOpen = ev.registration_open !== false && (!ev.registration_closes_at || new Date(ev.registration_closes_at) > new Date());
+  // The server says when registration has closed, including once the event has ended (audit #76).
+  const registrationOpen = ev.registration_closed !== true && ev.registration_open !== false && (!ev.registration_closes_at || new Date(ev.registration_closes_at) > new Date());
   const tel = (site?.phone || "").replace(/[^\d+]/g, "");
 
   return (
