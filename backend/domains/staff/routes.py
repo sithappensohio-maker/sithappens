@@ -30,7 +30,7 @@ def shift_hours(clock_in_at: Any, clock_out_at: Any, break_minutes: Any = 0) -> 
         co = datetime.fromisoformat(str(clock_out_at).replace("Z", "+00:00"))
         ci = ci if ci.tzinfo else ci.replace(tzinfo=timezone.utc)
         co = co if co.tzinfo else co.replace(tzinfo=timezone.utc)
-        return round(max((co - ci).total_seconds() / 3600.0 - (float(break_minutes or 0) / 60.0), 0.0), 3)
+        return round(max((co - ci).total_seconds() / 3600.0 - (max(float(break_minutes or 0), 0.0) / 60.0), 0.0), 3)   # never adds time (audit #59)
     except Exception:
         return None
 

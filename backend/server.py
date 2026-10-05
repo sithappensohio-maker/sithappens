@@ -1793,10 +1793,12 @@ async def mfa_enable(body: MfaCodeIn, user: dict = Depends(require_admin)):
 @api.post("/auth/mfa/disable")
 async def mfa_disable(body: MfaDisableIn, user: dict = Depends(require_admin)):
     full = await db.users.find_one({"id": user["id"]})
+    # 400, not 401: a mistyped password here must not look like an expired session,
+    # which signs the owner out (audit #90).
     if not full or not verify_password(body.current_password, full.get("password_hash") or ""):
-        raise HTTPException(status_code=401, detail="Current password is incorrect")
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     if not await _verify_mfa_user_code(full, body.code, consume_recovery=False):
-        raise HTTPException(status_code=401, detail="Authenticator or recovery code is incorrect")
+        raise HTTPException(status_code=400, detail="Authenticator or recovery code is incorrect")
     new_ver = _token_version(full) + 1
     await db.users.update_one(
         {"id": user["id"]},
@@ -10832,7 +10834,7 @@ def _ann_visible_today(a: Dict[str, Any]) -> bool:
     exp = (a.get("expires_on") or "").strip()
     if not exp:
         return True
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = business_today().isoformat()   # the Ohio day, not the UTC day: evening announcements stay up (audit #65)
     return exp >= today
 
 
@@ -34986,7 +34988,7 @@ class ClockOutIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     accuracy_m: Optional[float] = None
-    break_minutes: Optional[float] = 0
+    break_minutes: Optional[float] = Field(default=0, ge=0)   # a break cannot be negative (audit #59)
     note: Optional[str] = ""
 
 
@@ -45570,7 +45572,7 @@ async def employee_pay_history(
 class TimeClockEditIn(BaseModel):
     clock_in_at: Optional[str] = None
     clock_out_at: Optional[str] = None
-    break_minutes: Optional[float] = None
+    break_minutes: Optional[float] = Field(default=None, ge=0)   # a break cannot be negative (audit #59)
     note: Optional[str] = None
 
 

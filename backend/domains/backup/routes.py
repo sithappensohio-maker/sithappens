@@ -25,6 +25,14 @@ from domains.bookings import prepaid_close
 logger = logging.getLogger("sithappens")
 
 
+
+def scheduled_hhmm(cfg: dict) -> tuple:
+    """The configured automatic-backup time. An hour of 0 is midnight; only a missing
+    hour falls back to the 3 AM default (an hour of 0 used to become 3 AM; audit #91)."""
+    hour = int(cfg["hour"]) if cfg.get("hour") is not None else 3
+    minute = int(cfg["minute"]) if cfg.get("minute") is not None else 0
+    return hour, minute
+
 def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, CONFIG_BACKUP_VERSION, CONFIG_COLLECTIONS, ConfigRestoreIn, DuplicateKeyError, ReturnDocument, school_media_root_ref, STRING_ID_COLLECTIONS, SchoolMediaRestoreIn, _BACKUP_LEASE_ID, _BACKUP_PROCESS_ID, _CRITICAL_BACKUP_COLLECTIONS, _DISK_PROBE_PATHS, _build_config_payload, _business_day_utc_bounds, _disk_row, _export_collection_docs, _perms_for, _is_owner, _load_role_overrides_from_settings, _read_mounts, _safe_parse_iso, _school_media_archive_path, _validated_school_media_members, _write_school_media_archive, api, business_today, db, logger, now_iso, now_local, require_admin, require_admin_and_permission, require_owner):
     def _safe_backup_dir(path: Optional[str] = None) -> str:
         requested = os.path.realpath(path or backup_root_ref())
@@ -646,7 +654,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         if not cfg.get("enabled"):
             return {"skipped": "disabled"}
         now = now_local()
-        hour, minute = int(cfg.get("hour") or 3), int(cfg.get("minute") or 0)
+        hour, minute = scheduled_hhmm(cfg)
         if (now.hour, now.minute) < (hour, minute):
             return {"skipped": "before_window", "at": f"{hour:02d}:{minute:02d}"}
         today = business_today().isoformat()
