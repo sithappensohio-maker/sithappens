@@ -165,14 +165,16 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   };
 
   const load = useCallback(async () => {
+    // The list is the selected period, so an older month is not cut off by the newest-rows limit (audit #23).
+    const period = rangeStart && rangeEnd ? { start_date: rangeStart, end_date: rangeEnd } : {};
     const [s, sum, svcs, ds] = await Promise.all([
-      api.get("/transactions", { params: { revenue_only: !showLegacy } }),
+      api.get("/transactions", { params: { revenue_only: !showLegacy, ...period } }),
       api.get("/transactions/weekly-summary", { params: { ref_date: refDate } }),
       api.get("/services"),
       api.get("/dogs"),
     ]);
     setRows(s.data); setSummary(sum.data); setServices(svcs.data); setDogs(ds.data);
-  }, [refDate, showLegacy]);
+  }, [refDate, showLegacy, rangeStart, rangeEnd]);
   useEffect(() => { load(); }, [load]);
 
   // Compute preset range start/end (Month / Quarter / YTD anchored to refDate)
