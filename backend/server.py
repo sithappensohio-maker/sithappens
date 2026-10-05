@@ -54317,10 +54317,11 @@ async def admin_start_thread(body: AdminThreadStartIn, user: dict = Depends(requ
     }
     await db.client_message_threads.insert_one(thread)
     await _log_message_to_comm(thread, item)
-    if body.email_notify and thread.get("client_email"):
+    notify_to = await _thread_notify_email(thread)
+    if body.email_notify and notify_to:
         async def _notify_client_new():
             try:
-                await _send_message_notification_email(thread, thread["client_email"], body.body, is_admin_reply=True)
+                await _send_message_notification_email(thread, notify_to, body.body, is_admin_reply=True)
             except Exception:
                 pass
         asyncio.create_task(_notify_client_new())
@@ -54380,6 +54381,15 @@ async def admin_mark_read(thread_id: str, _: dict = Depends(require_permission("
     return {"ok": True}
 
 
+async def _thread_notify_email(thread: dict) -> str:
+    """Where a staff message to this family goes: the family's current address (audit #86). The copy kept
+    on the thread is only a fallback for a client record that no longer exists."""
+    client = await db.clients.find_one({"id": thread.get("client_id")}, {"_id": 0, "email": 1})
+    if client is None:
+        return (thread.get("client_email") or "").strip()
+    return (client.get("email") or "").strip()
+
+
 @api.post("/admin/messages/{thread_id}/reply")
 async def admin_reply_thread(thread_id: str, body: AdminReplyIn, user: dict = Depends(require_permission("messages"))):
     t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
@@ -54437,10 +54447,11 @@ async def admin_reply_thread(thread_id: str, body: AdminReplyIn, user: dict = De
             )
         except Exception:
             pass
-    if body.email_notify and t.get("client_email"):
+    notify_to = await _thread_notify_email(t)
+    if body.email_notify and notify_to:
         async def _notify_client_reply():
             try:
-                await _send_message_notification_email(t, t["client_email"], body.body, is_admin_reply=True)
+                await _send_message_notification_email(t, notify_to, body.body, is_admin_reply=True)
             except Exception:
                 pass
         asyncio.create_task(_notify_client_reply())
