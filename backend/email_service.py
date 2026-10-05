@@ -2387,6 +2387,10 @@ async def notify_client_low_credits(client: dict, service_type: str, remaining: 
     ))
 
 
+# What a pack line counts, by service. Daycare is the default.
+_PACK_UNIT_LABELS = {"training": "training sessions", "boarding": "boarding nights"}
+
+
 async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, payment_method: str, note: str, sold_by: str, sold_at: str) -> None:
     """Email a receipt to the client after one or more credit packs are sold.
     `lines` is [{name, qty, unit_price, line_total, service_type}], totals is
@@ -2397,17 +2401,20 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
     rows_html = "".join(
         f'<tr>'
         f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
-        f'{_h(ln["name"])}<br/><span style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">{_h(ln["qty"])} × ${ln["unit_price"]:.2f} · {("training sessions" if ln.get("service_type")=="training" else "daycare credits")}</span></td>'
+        f'{_h(ln["name"])}<br/><span style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">{_h(ln["qty"])} × ${ln["unit_price"]:.2f} · {_PACK_UNIT_LABELS.get(ln.get("service_type"), "daycare credits")}</span></td>'
         f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${ln["line_total"]:.2f}</td>'
         f'</tr>'
         for ln in lines
     )
-    grand_total = round((totals.get("daycare", {}).get("price", 0) or 0) + (totals.get("training", {}).get("price", 0) or 0), 2)
+    # Boarding is part of the charge too (audit #37); a daycare-only or training-only sale adds 0 for it.
+    grand_total = round(sum((totals.get(k, {}).get("price", 0) or 0) for k in ("daycare", "training", "boarding")), 2)
     pool_breakdown = ""
     if totals.get("daycare", {}).get("qty", 0):
         pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Daycare added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['daycare']['qty']} credits</td></tr>"
     if totals.get("training", {}).get("qty", 0):
         pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Training added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['training']['qty']} sessions</td></tr>"
+    if totals.get("boarding", {}).get("qty", 0):
+        pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Boarding added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['boarding']['qty']} nights</td></tr>"
 
     method_label = (payment_method or "cash").title()
     note_html = f'<p style="margin:14px 0 0 0;color:#64748b;font-size:13px;font-style:italic;">Note: {_h(note)}</p>' if note else ""
