@@ -14539,8 +14539,10 @@ async def admin_force_monday_digest(_: dict = Depends(require_admin)):
     """Force-fire the trainer Monday digest now (bypasses dedup for this week).
     Use this to preview the email or re-send after fixing something."""
     from daily_jobs import run_trainer_monday_digest_job
-    today = business_today().isoformat()   # the Ohio day, not the UTC day (audit #69)
-    await db.notification_log.delete_many({"key": {"$regex": f"^trainer_monday_digest:{today}$"}})
+    # The job keys on this week's Monday (the Ohio day, not UTC), so that is the key to clear (audit #69).
+    today = business_today()
+    monday = today - timedelta(days=today.weekday())
+    await db.notification_log.delete_many({"key": f"trainer_monday_digest:{monday.isoformat()}"})
     return await run_trainer_monday_digest_job(db)
 
 
