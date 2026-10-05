@@ -8880,6 +8880,18 @@ async def _check_out_locked(
         credits_to_use = round(min(available, float(credit_need or 0)), 2)
         if prepaid and credits_to_use < float(credit_need or 0):
             credits_to_use = 0.0   # a session is one whole credit or none (then $0 below)
+        # A late-pickup daycare fee is always cash (audit #3). It is worked out and
+        # its payment method checked BEFORE any credit is taken, so a refusal here
+        # leaves the client's credits untouched and nothing is recorded as unpaid.
+        late_fee_cash = 0.0
+        if booking.get("service_type") == "boarding" and booking.get("end_date"):
+            ps_row = booking.get("pricing_snapshot") or {}
+            fee_cutoff = ps_row.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
+            fee_pickup = booking.get("pickup_time") or fee_cutoff
+            late_fee = await _boarding_late_pickup_daycare_fee(payer, fee_pickup, fee_cutoff)
+            late_fee_cash = round(float(late_fee.get("amount") or 0) * _group_row_price_factor(booking), 2)
+        if credits_to_use > 0 and credit_need > 0 and late_fee_cash > 0.0001 and not body.payment_method:
+            raise HTTPException(status_code=400, detail="The late-pickup fee is paid in cash. Choose how it is paid before pressing Complete.")
         if credits_to_use > 0 and credit_need > 0:
             # Sprint 110bx — prefer the dog's active training program's lot
             prefer_pid = booking.get("program_id") if prepaid else None   # a session: its own program first
@@ -8917,17 +8929,9 @@ async def _check_out_locked(
 
             credit_shortfall = round(max(0.0, float(credit_need or 0) - credits_to_use), 2)
             # Credits only cover boarding nights. A late-pickup daycare fee is
-            # always cash, so a fee routes the checkout through the
-            # partial-coverage path even when the nights are fully covered.
-            late_fee_cash = 0.0
-            if booking.get("service_type") == "boarding" and booking.get("end_date"):
-                ps_row = booking.get("pricing_snapshot") or {}
-                fee_cutoff = ps_row.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
-                fee_pickup = booking.get("pickup_time") or fee_cutoff
-                late_fee = await _boarding_late_pickup_daycare_fee(
-                    payer, fee_pickup, fee_cutoff,
-                )
-                late_fee_cash = round(float(late_fee.get("amount") or 0) * _group_row_price_factor(booking), 2)
+            # always cash (decided above, before any credit is taken), so a fee
+            # routes the checkout through the partial-coverage path even when the
+            # nights are fully covered.
             if credit_shortfall <= 0.0001 and late_fee_cash <= 0.0001:
                 # Fully covered by credits. `actual_price` records the visit value,
                 # but `cash_revenue` stays $0 because payment_method=credits.

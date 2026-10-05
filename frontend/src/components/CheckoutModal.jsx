@@ -490,8 +490,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // (checkout charges it the same way) — so it must show as due today.
   const lateDayPickupCash = useCredits && !hadCredit && lateDay?.resolved === "stayed_overnight"
     ? Number(lateDay.late_pickup_cash || 0) : 0;
+  // A boarding stay's late-pickup daycare fee is cash even when credits cover the
+  // nights (audit #3). A converted late-day stay already shows its own fee above,
+  // so it is counted once.
+  const boardingLateFeeCash = useCredits && lateDayPickupCash === 0
+    ? Number(discountPreview?.late_pickup_fee_cash || 0) : 0;
   const baseCashDueOnCredits = useCredits
-    ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits) + lateDayPickupCash
+    ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits) + lateDayPickupCash + boardingLateFeeCash
     : 0;
 
   // Early boarding checkout applies when the server quoted one, the operator

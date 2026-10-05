@@ -76,9 +76,17 @@ def build(server_globals: dict) -> dict:
         preview_booking = {**booking, "actual_price": round(tentative_price, 2)}
         pre_applied = bool((booking.get("multi_dog_discount") or {}).get("pre_applied")) or _g("group_rank").group_priced(booking)
         disc = None if pre_applied else await _g("_compute_multi_dog_discount")(preview_booking, exclude_id=booking_id)
+        # The late-pickup daycare fee is always cash, even when credits cover the nights,
+        # so the screen shows it as due (the checkout charges the same figure; audit #3).
+        late_pickup_fee_cash = 0.0
+        if booking.get("service_type") == "boarding" and booking.get("end_date"):
+            fee_cutoff = (booking.get("pricing_snapshot") or {}).get("pickup_cutoff_time") or _g("_boarding_full_day_cutoff_from_rules")(settings.get("booking_rules") or {})
+            fee = await _g("_boarding_late_pickup_daycare_fee")(_g("friends_family").payer_id(booking), booking.get("pickup_time") or fee_cutoff, fee_cutoff)
+            late_pickup_fee_cash = round(float(fee.get("amount") or 0) * _g("_group_row_price_factor")(booking), 2)
         return {
             "eligible": bool(disc and disc["amount"] > 0),
             "preview_base_price": round(tentative_price, 2),
+            "late_pickup_fee_cash": late_pickup_fee_cash,
             "discount": disc,
         }
 

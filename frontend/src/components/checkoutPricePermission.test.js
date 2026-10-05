@@ -41,12 +41,13 @@ const SERVICES = [{ id: "svc-d", name: "Daycare", service_type: "daycare", base_
                   { id: "svc-bath", name: "Bath", service_type: "grooming", base_price: 20, active: true, is_addon: true,
                     addon_for: ["daycare", "boarding"] }];
 
-let container, root, preview, early, boardingCredits, priceList, familyRates, familyRatesDown;
+let container, root, preview, early, boardingCredits, priceList, familyRates, familyRatesDown, discountPreviewData;
 
 const respond = (url) => {
   if (url === "/services") return Promise.resolve({ data: priceList() });
   if (url.includes("checkout-group-preview")) return Promise.resolve({ data: { bookings: preview } });
   if (url.includes("early-checkout-quote")) return Promise.resolve({ data: early });
+  if (url.includes("discount-preview")) return Promise.resolve({ data: discountPreviewData });
   if (url.endsWith("/service-prices")) {
     return familyRatesDown ? Promise.reject(new Error("offline"))
       : Promise.resolve({ data: { prices: {}, add_on_prices: familyRates } });
@@ -63,6 +64,7 @@ beforeEach(() => {
   priceList = () => ({});                    // (no list: the screen keeps the one it was given)
   familyRates = {};                          // this family's own add-on rates (none unless a test sets them)
   familyRatesDown = false;
+  discountPreviewData = {};
   container = document.createElement("div");
   document.body.appendChild(container);
   api.get.mockReset();
@@ -229,4 +231,12 @@ test("if the family's add-on rates can't be read, Complete is blocked and nothin
   await click("confirm-checkout");
   expect(checkoutPost()).toBeUndefined();
   expect(q("checkout-error").textContent).toBe("Couldn't load this family's add-on prices. Try again in a moment.");
+});
+
+test("a boarding stay's late-pickup fee is due in cash even when credits cover the nights", async () => {
+  noPricing();
+  boardingCredits = 3;                          // enough for the two nights
+  discountPreviewData = { eligible: false, preview_base_price: 100, late_pickup_fee_cash: 40 };
+  await mount(STAY);
+  expect(q("checkout-total").textContent).toBe("$40.00");
 });
