@@ -23,12 +23,13 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _restore_pos_domain():
-    """pos.configure() below swaps the POS domain's database and helpers for fakes.
-    Put them back after each test, or every later POS test in the same run uses the fakes."""
-    saved = dict(vars(pos))
+def _restore_domain_configuration():
+    """pos.configure() and pricing.configure() below swap the domains' databases and helpers
+    for fakes. Put them back after each test, or every later test in the same run uses the fakes."""
+    saved = {mod: dict(vars(mod)) for mod in (pos, pricing)}
     yield
-    vars(pos).update(saved)
+    for mod, values in saved.items():
+        vars(mod).update(values)
 
 ROOT = Path(__file__).resolve().parent
 SERVER = ROOT / "server.py"
