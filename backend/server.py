@@ -38988,6 +38988,8 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
     _booking_refund_locked's stripe_gross calculation."""
     limit = max(1, min(int(limit or 50), 200))
     fetch_cap = max(limit * 4, 200)  # headroom for the trivial client/invoice-id filter below
+    if (q or "").strip():
+        fetch_cap = 5000   # a search looks through every online payment, not just the newest (audit #32)
     # Client Shop Phase 2 — a shop-order payment has source.kind==
     # "shop_order_payment" instead of "stripe_online_payment" (never a
     # refund reversal row either way — same exclusion convention as

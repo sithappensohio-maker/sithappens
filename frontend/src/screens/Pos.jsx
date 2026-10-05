@@ -771,9 +771,19 @@ export default function Pos({ onOpenShopManager } = {}) {
   // (payments/invoices) entirely, so they get their own panel here rather
   // than being forced into that list. ──
   const [onlinePayments, setOnlinePayments] = useState([]);
-  const loadOnlinePayments = () => api.get("/admin/stripe-online-payments", { params: { limit: 50 } })
-    .then(({ data }) => setOnlinePayments(data.payments || [])).catch(() => {});
-  useEffect(() => { if (onlinePaymentsOpen) loadOnlinePayments(); }, [onlinePaymentsOpen]);
+  // The search reaches every online payment, not just the newest 50 shown (audit #32).
+  const [onlineQuery, setOnlineQuery] = useState("");
+  const loadOnlinePayments = () => {
+    const q = onlineQuery.trim();
+    return api.get("/admin/stripe-online-payments", { params: { limit: 50, ...(q ? { q } : {}) } })
+      .then(({ data }) => setOnlinePayments(data.payments || [])).catch(() => {});
+  };
+  useEffect(() => {
+    if (!onlinePaymentsOpen) return undefined;
+    const t = setTimeout(loadOnlinePayments, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onlinePaymentsOpen, onlineQuery]);
   const [refundingPayment, setRefundingPayment] = useState(null);
   const [refundingShopPayment, setRefundingShopPayment] = useState(null);
 
@@ -1426,6 +1436,9 @@ export default function Pos({ onOpenShopManager } = {}) {
               <i className="fas fa-rotate-right mr-1" />Refresh
             </button>
           </div>
+          <input value={onlineQuery} onChange={(e) => setOnlineQuery(e.target.value)} data-testid="pos-online-search"
+                 placeholder="Search by name or order" aria-label="Search online payments"
+                 className="w-full mb-2 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           <StuckOnlinePayments onChanged={loadOnlinePayments} />
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {onlinePayments.length === 0 && <p className="text-shTextMuted text-sm">No Stripe Online payments yet.</p>}
