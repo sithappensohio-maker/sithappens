@@ -97,10 +97,13 @@ async def email_card(card: dict, *, outbox_key: Optional[str] = None, first: boo
     code = services._display(card.get("code") or "")
     amount = services._money(card.get("initial_amount") or card.get("balance"))
     who = (card.get("recipient_name") or "").strip()
-    note = (card.get("note") or "").strip()
+    # A card bought for the buyer is not called a gift, and carries no order note (audit #77).
+    self_purchase = bool(card.get("self_purchase"))
+    note = "" if self_purchase else (card.get("note") or "").strip()
+    intro = "Here is your gift card." if self_purchase else "Somebody bought you a gift card."
     body = (
         f'<p style="margin:0 0 14px">{"Hi " + _esc(who) + "," if who else "Hello,"}</p>'
-        f'<p style="margin:0 0 18px">Somebody bought you a gift card.</p>'
+        f'<p style="margin:0 0 18px">{intro}</p>'
         f'<div style="border:2px solid #8cc63f;border-radius:10px;padding:18px;text-align:center">'
         f'<div style="font-size:11px;letter-spacing:.22em;text-transform:uppercase;'
         f'color:#8cc63f;font-weight:800">Your code</div>'

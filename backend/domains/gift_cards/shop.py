@@ -136,6 +136,8 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
     to = ((line.get("recipient_email") or "").strip()
           or (order.get("client_email") or "").strip())
     made = []
+    # A card bought for the buyer has no recipient of its own. It carries no note and is not called a gift (audit #77).
+    gift = bool((line.get("recipient_email") or "").strip())
     for i in range(qty):
         card_id = f"gcshop-{order['id']}-{line.get('item_id')}-{i}"
         card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
@@ -147,8 +149,7 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
                     recipient_name=(line.get("recipient_name")
                                     or order.get("client_name") or ""),
                     recipient_email=to,
-                    note=(line.get("gift_message")
-                          or f"Bought in the Shop · order #{str(order['id'])[:8].upper()}"),
+                    note=((line.get("gift_message") or "").strip() if gift else ""),
                     client_id=order.get("client_id"), origin="digital",
                     card_id=card_id)
             except Exception:
@@ -156,6 +157,9 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
                 card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
                 if card is None:
                     raise
+        if not gift and not card.get("self_purchase"):
+            await _db.gift_cards.update_one({"id": card["id"]}, {"$set": {"self_purchase": True}})
+            card["self_purchase"] = True
         if card.get("recipient_email") and card.get("status") != "voided":   # a refunded card is never sent
             await email(card)
         made.append(card)
