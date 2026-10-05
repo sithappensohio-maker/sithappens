@@ -99,7 +99,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
   const roster = useMemo(() => stats?.today_roster || [], [stats]);
 
   const dogsHere = useMemo(() => roster.filter((b) => b.checked_in_at && !b.checked_out_at).length, [roster]);
-  const arrivingToday = useMemo(() => roster.filter((b) => !b.checked_in_at && b.date === today).length, [roster, today]);
+  const arrivingToday = useMemo(() => roster.filter((b) => !b.checked_in_at && b.date === today && b.status === "approved").length, [roster, today]);
   const leavingToday = useMemo(() => roster.filter((b) => !b.checked_out_at && (b.end_date || b.date) === today).length, [roster, today]);
   // What today's visits still owe on their bills (the server's number): a
   // bill paid after checkout leaves the visit's own balance_due behind.
@@ -123,7 +123,8 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
     for (const b of roster) {
       const dogName = b.dog?.name || b.dog_name || "Dog";
       const svc = SERVICE_LABEL[b.service_type] || b.service_type;
-      if (!b.checked_in_at && b.date === today) {
+      // Only an approved booking is arriving; a pending one cannot be checked in yet (audit #78).
+      if (!b.checked_in_at && b.date === today && b.status === "approved") {
         rows.push({
           id: `${b.id}-arrive`, time: b.dropoff_time || "", sortTime: b.dropoff_time || "99:99",
           label: `${dogName} arriving for ${svc}`, booking: b,
