@@ -39313,6 +39313,17 @@ async def verify_pos_drawer_token(body: Dict[str, Any]):
     return {"ok": True, "workstation_id": claims.get("workstation_id")}
 
 
+async def _audit_retry_open(user: dict, workstation_id: Optional[str], **refs: Any) -> None:
+    """A Retry Open or reprint that re-opens the cash drawer is written to the drawer audit, like a manual open
+    (audit #48). It creates no money and no till entry."""
+    await db.pos_drawer_audit.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user.get("id"), "user_name": user.get("name") or user.get("email"),
+        "reason": "Retry open or reprint", "workstation_id": workstation_id,
+        "source": "retry_open", "created_at": now_iso(), **{k: v for k, v in refs.items() if v},
+    })
+
+
 @api.post("/invoices/{invoice_id}/pos-tokens")
 async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str, Any]] = None, user: dict = Depends(require_employee_or_admin)):
     """On-demand hardware-action token (re)issuance for an existing invoice —
@@ -39322,6 +39333,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
     retry needs a FRESH token, never the stale one). Issuing a token creates
     NO financial mutation, no matter how many times it's called — it only
     ever authorizes reading canonical data / kicking the drawer once."""
+    _require_take_payments(user)   # a reprint that opens the drawer is a till action (audit #48)
     invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -39340,6 +39352,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, invoice_id=invoice_id,
         )
+        await _audit_retry_open(user, workstation_id, invoice_id=invoice_id)
     return out
 
 
@@ -43519,6 +43532,7 @@ async def issue_pos_tokens_for_sale(
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, pos_sale_id=sale_id,
         )
+        await _audit_retry_open(user, workstation_id, pos_sale_id=sale_id)
     return out
 
 
@@ -43531,6 +43545,7 @@ async def issue_pos_tokens_for_ledger_row(
     payment's ledger row — used for reprints and for retrying a failed
     hardware action right after the payment completed. Creates NO financial
     mutation no matter how many times it's called."""
+    _require_take_payments(user)   # a reprint that opens the drawer is a till action (audit #48)
     row = await db.payment_ledger.find_one({"id": ledger_id, "client_id": client_id}, {"_id": 0, "id": 1})
     if not row:
         raise HTTPException(status_code=404, detail="Ledger row not found")
@@ -43546,6 +43561,7 @@ async def issue_pos_tokens_for_ledger_row(
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, ledger_id=ledger_id,
         )
+        await _audit_retry_open(user, workstation_id, ledger_id=ledger_id)
     return out
 
 
