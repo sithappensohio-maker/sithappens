@@ -165,3 +165,12 @@ def test_a_merge_keeps_a_session_log_as_it_was_written():
     run(server.db.training_session_log.insert_one({"id": lid, "enrollment_id": f"{TAG}-e", "prepaid_session_id": "b-live", "tag": TAG}))
     _merge({"training_session_log": [{"id": lid, "enrollment_id": f"{TAG}-e", "prepaid_session_id": None, "tag": TAG}]})
     assert _one("training_session_log", lid)["prepaid_session_id"] == "b-live"
+
+
+def test_a_merge_does_not_reprice_a_shift_stamped_at_clock_in():
+    tid = _id()
+    run(server.db.time_clock_entries.insert_one({"id": tid, "user_id": f"{TAG}-u", "clock_in_at": "2031-04-02T08:00:00",
+                                                 "clock_out_at": "2031-04-02T16:00:00", "hours": 8.0, "pay_rate": 20.0, "tag": TAG}))
+    _merge({"time_clock_entries": [{"id": tid, "user_id": f"{TAG}-u", "clock_in_at": "2031-04-02T08:00:00",
+                                    "clock_out_at": "2031-04-02T16:00:00", "hours": 8.0, "pay_rate": 35.0, "tag": TAG}]})
+    assert _one("time_clock_entries", tid)["pay_rate"] == 20.0

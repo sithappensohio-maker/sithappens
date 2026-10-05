@@ -88,6 +88,7 @@ from domains.school import ownership as school_ownership, curriculum_moves, stru
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
+from domains.staff import pay_rate as pay_rate_domain   # each shift at the rate it was worked at (audit #24)
 from domains.clients import signup_claim, archive as client_archive
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.shop import shopify_pricing
@@ -31711,7 +31712,7 @@ async def payroll_year_end_csv(
         u = user_by_id.get(uid, {})
         rate = float(u.get("hourly_rate") or 0)
         row["hours"] += hrs
-        row["gross"] += hrs * rate
+        row["gross"] += hrs * pay_rate_domain.entry_rate(e, rate)
         row["entries"] += 1
 
     # Sprint 110bu — group by tax_status so the CPA sees W-2 / 1099 / other
@@ -31763,7 +31764,7 @@ async def payroll_year_end_csv(
                 u.get("address_city", ""),
                 u.get("address_state", ""),
                 u.get("address_zip", ""),
-                f"{float(u.get('hourly_rate') or 0):.2f}",
+                f"{(agg['gross'] / agg['hours'] if agg['hours'] else float(u.get('hourly_rate') or 0)):.2f}",
                 "Yes" if u.get("active", True) else "No",
                 f"{agg['hours']:.2f}",
                 f"{agg['gross']:.2f}",
@@ -31795,7 +31796,7 @@ async def payroll_year_end_csv(
                 continue
             u = user_by_id.get(e.get("user_id"), {})
             hrs = paid_hours(e)
-            rate = float(u.get("hourly_rate") or 0)
+            rate = pay_rate_domain.entry_rate(e, u.get("hourly_rate") or 0)
             w.writerow([
                 u.get("display_name") or u.get("name") or "(unknown)",
                 e.get("clock_in_at", ""),
@@ -34591,13 +34592,14 @@ async def summary_range(
     tc_entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": labor_start, "$lt": labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(10000)
     uids = list({e["user_id"] for e in tc_entries})
     rate_users = await db.users.find(
         {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1, "name": 1, "display_name": 1}
     ).to_list(500) if uids else []
     rate_map = {u["id"]: u for u in rate_users}
+    live_rates = {uid: float(u.get("hourly_rate") or 0) for uid, u in rate_map.items()}
     # YTD pre-period for cap math
     try:
         ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
@@ -34606,21 +34608,14 @@ async def summary_range(
     pre = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": _business_day_utc_bounds(ytd_start)[0], "$lt": labor_start},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
-    pre_hours: Dict[str, float] = {}
-    for e in pre:
-        pre_hours[e["user_id"]] = pre_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
-    period_hours: Dict[str, float] = {}
-    for e in tc_entries:
-        period_hours[e["user_id"]] = period_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    period_gross = pay_rate_domain.pay_by_user(tc_entries, live_rates, round_result=False)
+    pre_gross = pay_rate_domain.pay_by_user(pre, live_rates, round_result=False)
     labor_gross = 0.0
     labor_burden = 0.0
-    for uid, hrs in period_hours.items():
-        u = rate_map.get(uid, {})
-        rate = float(u.get("hourly_rate") or 0)
-        ytd = pre_hours.get(uid, 0) * rate
-        c = _compute_payroll_tax(hrs, rate, ytd, tax)
+    for uid in {e["user_id"] for e in tc_entries}:
+        c = _compute_payroll_tax_on_gross(round(period_gross.get(uid, 0.0), 2), pre_gross.get(uid, 0.0), tax)
         labor_gross += c["gross"]
         labor_burden += c["employer_burden"]
     labor_gross = round(labor_gross, 2)
@@ -35111,24 +35106,28 @@ async def owner_draw_summary(_: dict = Depends(require_admin_and_permission("fin
         entries = await db.time_clock_entries.find(
             {"user_id": row["id"], "clock_in_at": {"$gte": s, "$lte": e},
              "clock_out_at": {"$ne": None, "$exists": True}},
-            {"_id": 0, "hours": 1},
+            {"_id": 0, "hours": 1, "pay_rate": 1, "user_id": 1},
         ).to_list(10000)
         hrs = sum(float(x.get("hours") or 0) for x in entries)
+        priced = list(entries)   # each shift is paid at the rate it was worked at (audit #24)
         # Plus any currently-open shift projected to "now" (matches today-pnl)
         open_rows = await db.time_clock_entries.find(
             {"user_id": row["id"], "clock_in_at": {"$gte": s, "$lte": e},
              "$or": [{"clock_out_at": None}, {"clock_out_at": {"$exists": False}}]},
-            {"_id": 0, "clock_in_at": 1, "break_minutes": 1},
+            {"_id": 0, "clock_in_at": 1, "break_minutes": 1, "pay_rate": 1, "user_id": 1},
         ).to_list(50)
         for r in open_rows:
             try:
                 ci = datetime.fromisoformat((r.get("clock_in_at") or "").replace("Z", "+00:00"))
                 br = float(r.get("break_minutes") or 0) / 60.0
-                hrs += max(0.0, (now_dt - ci).total_seconds() / 3600.0 - br)
+                projected = max(0.0, (now_dt - ci).total_seconds() / 3600.0 - br)
+                hrs += projected
+                priced.append({**r, "hours": projected})
             except Exception:
                 pass
         hrs = round(hrs, 2)
-        out[label] = {"hours": hrs, "draw": round(hrs * rate, 2)}
+        draw = pay_rate_domain.pay_by_user(priced, {row["id"]: rate}, hours_ndigits=2).get(row["id"], 0.0)
+        out[label] = {"hours": hrs, "draw": draw}
     return {
         "owner": {
             "id": row["id"],
@@ -35370,9 +35369,11 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("fin
     # YTD entries — one query for all employees
     rows = await db.time_clock_entries.find(
         {"user_id": {"$in": uids}, "clock_in_at": {"$gte": ytd_start}},
-        {"_id": 0, "user_id": 1, "clock_in_at": 1, "clock_out_at": 1, "hours": 1, "break_minutes": 1},
+        {"_id": 0, "user_id": 1, "clock_in_at": 1, "clock_out_at": 1, "hours": 1, "break_minutes": 1, "pay_rate": 1},
     ).to_list(20000)
     by_user: Dict[str, Dict[str, Any]] = {}
+    # Closed shifts per window, so each is priced at the rate it was worked at (audit #24)
+    closed_by_window: Dict[str, Dict[str, List[dict]]] = {}
     for u in employees:
         by_user[u["id"]] = {
             "user_id": u["id"],
@@ -35399,10 +35400,14 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("fin
             except Exception:
                 continue
             slot["ytd_hours"] += hrs
+            windows = closed_by_window.setdefault(r.get("user_id"), {"this": [], "last": [], "ytd": []})
+            windows["ytd"].append(r)
             if sunday <= d <= today:
                 slot["this_week_hours"] += hrs
+                windows["this"].append(r)
             elif last_sunday <= d <= last_saturday:
                 slot["last_week_hours"] += hrs
+                windows["last"].append(r)
         elif not co:
             # Currently clocked in — build a live block
             try:
@@ -35412,20 +35417,21 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("fin
                 elapsed = max(0.0, elapsed - br)
                 slot["live"] = {
                     "hours_so_far": round(elapsed, 2),
-                    "gross_so_far": round(elapsed * slot["hourly_rate"], 2),
+                    "gross_so_far": round(elapsed * pay_rate_domain.entry_rate(r, slot["hourly_rate"]), 2),
                     "clock_in_at": ci,
                 }
             except Exception:
                 pass
     snapshot = []
-    for s in by_user.values():
+    rates_by_user = {uid: slot["hourly_rate"] for uid, slot in by_user.items()}
+    for uid, s in by_user.items():
         s["this_week_hours"] = round(s["this_week_hours"], 2)
         s["last_week_hours"] = round(s["last_week_hours"], 2)
         s["ytd_hours"] = round(s["ytd_hours"], 2)
-        rate = s["hourly_rate"]
-        s["this_week_gross"] = round(s["this_week_hours"] * rate, 2)
-        s["last_week_gross"] = round(s["last_week_hours"] * rate, 2)
-        s["ytd_gross"] = round(s["ytd_hours"] * rate, 2)
+        windows = closed_by_window.get(uid, {"this": [], "last": [], "ytd": []})
+        s["this_week_gross"] = pay_rate_domain.pay_by_user(windows["this"], rates_by_user, hours_ndigits=2).get(uid, 0.0)
+        s["last_week_gross"] = pay_rate_domain.pay_by_user(windows["last"], rates_by_user, hours_ndigits=2).get(uid, 0.0)
+        s["ytd_gross"] = pay_rate_domain.pay_by_user(windows["ytd"], rates_by_user, hours_ndigits=2).get(uid, 0.0)
         snapshot.append(s)
     snapshot.sort(key=lambda x: -x["this_week_gross"])
     totals = {
@@ -44019,7 +44025,7 @@ async def admin_quarterly_tax(
     tc_entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": q_labor_start, "$lt": q_labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
     uids = list({e["user_id"] for e in tc_entries})
     rate_users = await db.users.find(
@@ -44030,19 +44036,20 @@ async def admin_quarterly_tax(
     hours_by_user: Dict[str, float] = {}
     for e in tc_entries:
         hours_by_user[e["user_id"]] = hours_by_user.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    # Each shift at the rate it was worked at (audit #24)
+    gross_by_user = pay_rate_domain.pay_by_user(tc_entries, rate_map, round_result=False)
     labor_gross = 0.0
     labor_burden = 0.0
     owner_draw_ytd = 0.0
     owner_draw_hours = 0.0
     for uid, hrs in hours_by_user.items():
-        rate = rate_map.get(uid, 0.0)
         if uid in owner_ids:
             # Owner's pay is a DRAW (out of net profit) — never an expense
             # and never subject to employer payroll tax burden.
-            owner_draw_ytd += hrs * rate
+            owner_draw_ytd += gross_by_user.get(uid, 0.0)
             owner_draw_hours += hrs
             continue
-        c = _compute_payroll_tax(hrs, rate, 0.0, payroll_tax)
+        c = _compute_payroll_tax_on_gross(round(gross_by_user.get(uid, 0.0), 2), 0.0, payroll_tax)
         labor_gross += c["gross"]
         labor_burden += c["employer_burden"]
     labor_total = labor_gross + labor_burden
@@ -45683,7 +45690,7 @@ async def employee_pay_history(
     entries = await db.time_clock_entries.find(
         {"user_id": user["id"], "clock_in_at": {"$gte": cutoff},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "clock_in_at": 1, "hours": 1},
+        {"_id": 0, "clock_in_at": 1, "hours": 1, "pay_rate": 1},
     ).to_list(10000)
 
     # Bucket by week-start (Sunday) date
@@ -45709,7 +45716,7 @@ async def employee_pay_history(
             continue  # outside requested window
         h = float(e.get("hours") or 0)
         buckets[key]["hours"] += h
-        buckets[key]["gross"] += h * rate
+        buckets[key]["gross"] += h * pay_rate_domain.entry_rate(e, rate)   # each shift at its own rate (audit #24)
         buckets[key]["days_worked"].add(ci.isoformat())
 
     rows = []
@@ -45836,8 +45843,12 @@ async def update_payroll_tax_settings(body: dict, _: dict = Depends(require_admi
 def _compute_payroll_tax(hours: float, rate: float, ytd_gross: float, tax: Dict[str, float]) -> Dict[str, float]:
     """Compute employer burden + employee withholdings for a single pay period.
     YTD gross is used to respect wage caps on FICA / FUTA / SUTA."""
-    gross = round(hours * rate, 2)
+    return _compute_payroll_tax_on_gross(round(hours * rate, 2), ytd_gross, tax)
 
+
+def _compute_payroll_tax_on_gross(gross: float, ytd_gross: float, tax: Dict[str, float]) -> Dict[str, float]:
+    """The same figures for a period whose pay is already priced shift by shift (audit #24).
+    `gross` is the period's pay; `ytd_gross` is the year's pay before the period, for the wage caps."""
     # Wage-capped employer FICA + unemployment
     ss_cap_left = max(tax["social_security_wage_cap"] - ytd_gross, 0)
     ss_taxable = min(gross, ss_cap_left)
@@ -45906,7 +45917,7 @@ async def payroll_estimate(
         _filter["user_id"] = {"$nin": list(owner_ids)}
     period_entries = await db.time_clock_entries.find(
         _filter,
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(5000)
     user_ids = list({e["user_id"] for e in period_entries})
     users = await db.users.find(
@@ -45923,11 +45934,12 @@ async def payroll_estimate(
     ytd_entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
-    ytd_hours: Dict[str, float] = {}
-    for e in ytd_entries:
-        ytd_hours[e["user_id"]] = ytd_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    rates_by_user = {uid: float(u.get("hourly_rate") or 0) for uid, u in user_map.items()}
+    # Each shift at the rate it was worked at (audit #24); unrounded, as the wage-cap base always was
+    ytd_gross_by_user = pay_rate_domain.pay_by_user(ytd_entries, rates_by_user, round_result=False)
+    period_gross_by_user = pay_rate_domain.pay_by_user(period_entries, rates_by_user, round_result=False)
 
     # Tally period hours per user
     period_hours: Dict[str, float] = {}
@@ -45943,13 +45955,15 @@ async def payroll_estimate(
     for uid, hrs in period_hours.items():
         u = user_map.get(uid, {})
         rate = float(u.get("hourly_rate") or 0)
-        ytd_gross = ytd_hours.get(uid, 0) * rate
-        calc = _compute_payroll_tax(hrs, rate, ytd_gross, tax)
+        ytd_gross = ytd_gross_by_user.get(uid, 0.0)
+        period_gross = period_gross_by_user.get(uid, 0.0)
+        calc = _compute_payroll_tax_on_gross(round(period_gross, 2), ytd_gross, tax)
         per_user.append({
             "user_id": uid,
             "name": u.get("display_name") or u.get("name") or "Unknown",
             "email": u.get("email", ""),
-            "hourly_rate": rate,
+            # the effective rate: the blend when the period's shifts were paid at different rates
+            "hourly_rate": (period_gross / hrs) if hrs else rate,
             "hours": round(hrs, 2),
             "ytd_gross_before_period": round(ytd_gross, 2),
             **calc,
@@ -46022,6 +46036,10 @@ async def payroll_csv(
             flags_per_user[s["user_id"]] = flags_per_user.get(s["user_id"], 0) + 1
 
     per_user: Dict[str, Dict[str, Any]] = {}
+    rates_by_user = {uid: float(u.get("hourly_rate") or 0) for uid, u in user_map.items()}
+    # Each shift at the rate it was worked at (audit #24)
+    period_gross_by_user = pay_rate_domain.pay_by_user(
+        [e for e in entries if e["user_id"] in user_map], rates_by_user, round_result=False)
     for e in entries:
         if e["user_id"] not in user_map:
             # Owner (excluded above) or deleted user.
@@ -46044,20 +46062,21 @@ async def payroll_csv(
     ytd_pre = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
-    ytd_hours_pre: Dict[str, float] = {}
-    for e in ytd_pre:
-        ytd_hours_pre[e["user_id"]] = ytd_hours_pre.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    ytd_gross_pre = pay_rate_domain.pay_by_user(ytd_pre, rates_by_user, round_result=False)
 
     # Build CSV with tax columns
     lines = ["Employee,Email,Period Start,Period End,Hours,Hourly Rate,Gross Pay,Employer Burden,Total Cost,Est. Net Pay,Shifts,Flags"]
     for uid, p in sorted(per_user.items(), key=lambda x: x[1]["name"]):
-        ytd_gross = ytd_hours_pre.get(uid, 0) * p["rate"]
-        calc = _compute_payroll_tax(p["hours"], p["rate"], ytd_gross, tax)
+        ytd_gross = ytd_gross_pre.get(uid, 0.0)
+        period_gross = period_gross_by_user.get(uid, 0.0)
+        calc = _compute_payroll_tax_on_gross(round(period_gross, 2), ytd_gross, tax)
+        # the effective rate: the blend when the period's shifts were paid at different rates
+        effective_rate = (period_gross / p["hours"]) if p["hours"] else p["rate"]
         lines.append(",".join([
             f'"{p["name"]}"', f'"{p["email"]}"', start_date, end_date,
-            f"{p['hours']:.2f}", f"{p['rate']:.2f}", f"{calc['gross']:.2f}",
+            f"{p['hours']:.2f}", f"{effective_rate:.2f}", f"{calc['gross']:.2f}",
             f"{calc['employer_burden']:.2f}",
             f"{calc['total_cost']:.2f}",
             f"{calc['estimated_take_home']:.2f}",
@@ -46450,6 +46469,7 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
     owner_hours_today = 0.0
     open_shifts = 0
     per_employee: Dict[str, Dict[str, Any]] = {}
+    raw_cost_by_user: Dict[str, float] = {}
     for e in entries:
         u = user_map.get(e["user_id"], {})
         rate = float(u.get("hourly_rate") or 0)
@@ -46465,9 +46485,11 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
                 open_shifts += 1
             except Exception:
                 hrs = 0
-        cost = hrs * rate
+        shift_rate = pay_rate_domain.entry_rate(e, rate)   # each shift at the rate it was worked at (audit #24)
+        cost = hrs * shift_rate
         labor_cost += cost
         labor_hours += hrs
+        raw_cost_by_user[e["user_id"]] = raw_cost_by_user.get(e["user_id"], 0.0) + cost
         if is_owner_u:
             owner_draw_today += cost
             owner_hours_today += hrs
@@ -46483,6 +46505,10 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
             slot["is_clocked_in"] = True
     labor_cost = round(labor_cost, 2)
     labor_hours = round(labor_hours, 2)
+    for uid, slot in per_employee.items():
+        # Effective rate for display: a blend when the shifts were paid at different rates
+        if slot["hours"]:
+            slot["hourly_rate"] = round(raw_cost_by_user.get(uid, 0.0) / slot["hours"], 4)
     # Add employer tax burden (~12-14%) for the true cost basis on the dashboard
     tax = await _get_payroll_tax_settings()
     # Effective combined rate as a rough multiplier (no YTD cap math here — today

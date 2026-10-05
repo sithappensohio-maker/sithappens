@@ -93,7 +93,8 @@ def test_time_clock_me_returns_pay_fields():
     for e in body["entries"]:
         assert "gross" in e
         if e.get("hours") and not e.get("clock_out_at") is None:
-            assert e["gross"] == round(float(e["hours"]) * 25.0, 2)
+            # each shift is paid at the rate it was worked at (audit #24); an unstamped shift keeps the live rate
+            assert e["gross"] == round(float(e["hours"]) * (e.get("pay_rate") or 25.0), 2)
 
 
 def test_time_clock_me_live_shift():

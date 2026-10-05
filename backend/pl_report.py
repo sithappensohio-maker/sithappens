@@ -100,9 +100,10 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     from server import (  # type: ignore
         _business_day_utc_bounds,
         _business_range_utc_bounds,
-        _compute_payroll_tax,
+        _compute_payroll_tax_on_gross,
         _get_payroll_tax_settings,
     )
+    from domains.staff.pay_rate import pay_by_user   # each shift at the rate it was worked at (audit #24)
 
     tax = await _get_payroll_tax_settings()
 
@@ -113,7 +114,7 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     period_entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": labor_start, "$lt": labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
 
     uids = list({e["user_id"] for e in period_entries})
@@ -145,11 +146,11 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
         {"clock_in_at": {"$gte": _business_day_utc_bounds(ytd_start)[0], "$lt": labor_start},
          "clock_out_at": {"$ne": None, "$exists": True},
          "user_id": {"$in": uids}},
-        {"_id": 0, "user_id": 1, "hours": 1},
+        {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(100000)
-    pre_hours: Dict[str, float] = defaultdict(float)
-    for e in pre_entries:
-        pre_hours[e["user_id"]] += float(e.get("hours") or 0)
+    live_rates = {uid: float(u.get("hourly_rate") or 0) for uid, u in rate_map.items()}
+    pre_gross = pay_by_user(pre_entries, live_rates, round_result=False)
+    period_gross = pay_by_user(period_entries, live_rates, round_result=False)
 
     period_hours: Dict[str, float] = defaultdict(float)
     for e in period_entries:
@@ -162,13 +163,14 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     for uid, hrs in period_hours.items():
         u = rate_map.get(uid, {})
         rate = float(u.get("hourly_rate") or 0)
-        ytd_gross_for_user = pre_hours.get(uid, 0) * rate
-        c = _compute_payroll_tax(hrs, rate, ytd_gross_for_user, tax)
+        gross_for_user = period_gross.get(uid, 0.0)
+        c = _compute_payroll_tax_on_gross(round(gross_for_user, 2), pre_gross.get(uid, 0.0), tax)
         per_employee.append({
             "user_id": uid,
             "name": u.get("display_name") or u.get("name") or "Unknown",
             "hours": round(hrs, 2),
-            "rate": round(rate, 2),
+            # the effective rate: the blend when the period's shifts were paid at different rates
+            "rate": round((gross_for_user / hrs) if hrs else rate, 2),
             "gross": c["gross"],
             "employer_burden": c["employer_burden"],
             "total_cost": c["total_cost"],

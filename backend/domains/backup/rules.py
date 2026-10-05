@@ -107,7 +107,8 @@ MERGE_KEEP_LIVE: Dict[str, Tuple[str, ...]] = {
     "shop_payment_attempts": ("status", "stripe_payment_intent_id"),
     "stripe_refund_attempts": ("status", "stripe_refund_id"),
     "stripe_disputes": ("status",),
-    "time_clock_entries": ("clock_in_at", "clock_out_at", "hours", "break_minutes"),
+    # pay_rate is the rate a shift was worked at (audit #24): a historical fact, never repriced by a restore
+    "time_clock_entries": ("clock_in_at", "clock_out_at", "hours", "break_minutes", "pay_rate"),
     "daily_closeouts": ("status",),
     "estimated_tax_payments": ("voided", "void_reason", "voided_by", "voided_at"),
     "sales_tax_filings": ("status", "filed_at", "payments"),

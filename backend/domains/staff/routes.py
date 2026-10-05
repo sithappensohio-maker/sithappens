@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from domains.staff.pay_rate import entry_gross, entry_rate, pay_by_user, stamp_rate
 
 
 logger = logging.getLogger("sithappens")
@@ -70,6 +71,8 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         )
         if existing:
             raise HTTPException(status_code=400, detail="You're already clocked in. Clock out first.")
+        # The rate in force when the shift starts is the rate it is paid at (audit #24).
+        rate_now = stamp_rate((await db.users.find_one({"id": user["id"]}, {"_id": 0, "hourly_rate": 1}) or {}).get("hourly_rate"))
         entry = {
             "id": str(uuid.uuid4()),
             "user_id": user["id"],
@@ -84,6 +87,8 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
             "hours": None,
             "created_at": now_iso(),
         }
+        if rate_now is not None:
+            entry["pay_rate"] = rate_now
         await db.time_clock_entries.insert_one(entry)
         entry.pop("_id", None)
         return entry
@@ -138,18 +143,20 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
             {"id": user["id"]}, {"_id": 0, "hourly_rate": 1, "name": 1, "display_name": 1, "email": 1}
         ) or {}
         rate = float(me.get("hourly_rate") or 0)
+        uid = user["id"]
+        rates = {uid: rate}
 
-        def _gross(hrs: float) -> float:
-            return round(float(hrs or 0) * rate, 2)
+        def _gross_of(rows: list) -> float:
+            return pay_by_user(rows, rates, hours_ndigits=2).get(uid, 0.0)
 
-        # Annotate per-entry gross
+        # Annotate per-entry gross: each shift at the rate it was worked at (audit #24)
         for e in entries:
-            e["gross"] = _gross(e.get("hours"))
-            e["hourly_rate"] = rate
+            e["gross"] = entry_gross(e, rate)
+            e["hourly_rate"] = entry_rate(e, rate)
 
         closed = [e for e in entries if e.get("clock_out_at") and e.get("hours") is not None]
         total_hours = round(sum(float(e["hours"]) for e in closed), 2)
-        total_gross = round(total_hours * rate, 2)
+        total_gross = _gross_of(closed)
 
         # Week boundary helper (Sunday start, Saturday end — U.S. payroll standard)
         today = business_today()
@@ -168,6 +175,8 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         last_week_entries = [e for e in closed if _in_range(e, last_sunday, last_saturday)]
         this_week_hours = round(sum(float(e["hours"]) for e in this_week_entries), 2)
         last_week_hours = round(sum(float(e["hours"]) for e in last_week_entries), 2)
+        this_week_gross = _gross_of(this_week_entries)
+        last_week_gross = _gross_of(last_week_entries)
 
         # YTD — query independently of the `days` window so it's accurate even
         # for short windows
@@ -175,10 +184,10 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         ytd = await db.time_clock_entries.find(
             {"user_id": user["id"], "clock_in_at": {"$gte": ytd_start},
              "clock_out_at": {"$ne": None, "$exists": True}, "hours": {"$ne": None}},
-            {"_id": 0, "hours": 1},
+            {"_id": 0, "hours": 1, "pay_rate": 1, "user_id": 1},
         ).to_list(5000)
         ytd_hours = round(sum(float(r.get("hours") or 0) for r in ytd), 2)
-        ytd_gross = round(ytd_hours * rate, 2)
+        ytd_gross = _gross_of(ytd)
 
         # Live running shift (if any)
         live = None
@@ -194,7 +203,7 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
                     "entry_id": open_entry["id"],
                     "clock_in_at": open_entry["clock_in_at"],
                     "hours_so_far": hours_rounded,
-                    "gross_so_far": round(hours_rounded * rate, 2),
+                    "gross_so_far": round(hours_rounded * entry_rate(open_entry, rate), 2),
                 }
             except Exception:
                 pass
@@ -209,13 +218,13 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
                 "start": sunday.isoformat(),
                 "end": today.isoformat(),
                 "hours": this_week_hours,
-                "gross": _gross(this_week_hours),
+                "gross": this_week_gross,
             },
             "last_week": {
                 "start": last_sunday.isoformat(),
                 "end": last_saturday.isoformat(),
                 "hours": last_week_hours,
-                "gross": _gross(last_week_hours),
+                "gross": last_week_gross,
             },
             "ytd": {"year": today.year, "hours": ytd_hours, "gross": ytd_gross},
             "live": live,
@@ -356,20 +365,23 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         w.writerow([])
         w.writerow(["Date", "Clock-in", "Clock-out", "Break (min)", "Hours", "Gross ($)"])
         grand_h = 0.0
+        grand_gross = 0.0
         for e in entries:
             date_str = (e.get("clock_in_at") or "")[:10]
             hrs = float(e.get("hours") or 0)
+            shift_rate = entry_rate(e, rate)   # each shift at the rate it was worked at (audit #24)
             grand_h += hrs
+            grand_gross += hrs * shift_rate
             w.writerow([
                 date_str,
                 e.get("clock_in_at", ""),
                 e.get("clock_out_at", "") or "",
                 int(e.get("break_minutes") or 0),
                 f"{hrs:.2f}",
-                f"{hrs * rate:.2f}",
+                f"{hrs * shift_rate:.2f}",
             ])
         w.writerow([])
-        w.writerow(["TOTAL", "", "", "", f"{grand_h:.2f}", f"{grand_h * rate:.2f}"])
+        w.writerow(["TOTAL", "", "", "", f"{grand_h:.2f}", f"{grand_gross:.2f}"])
         buf.seek(0)
         fname = f"timecard-{name.replace(' ', '_')}-{business_today().isoformat()}.csv"
         return StreamingResponse(
@@ -401,6 +413,7 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         user_map = {u["id"]: u for u in users}
 
         per_user: Dict[str, Dict[str, Any]] = {}
+        raw_cost: Dict[str, float] = {}
         grand_hours = 0.0
         grand_cost = 0.0
         for e in entries:
@@ -412,11 +425,19 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
                 "hours": 0.0, "cost": 0.0, "entry_count": 0,
             })
             hrs = float(e.get("hours") or 0)
+            shift_rate = entry_rate(e, rate)   # each shift at the rate it was worked at (audit #24)
+            # The shift's own cost, so the table can show each row's pay without re-multiplying it
+            e["cost"] = entry_gross(e, rate)
             slot["hours"] = round(slot["hours"] + hrs, 2)
-            slot["cost"] = round(slot["cost"] + hrs * rate, 2)
+            slot["cost"] = round(slot["cost"] + e["cost"], 2)
+            raw_cost[e["user_id"]] = raw_cost.get(e["user_id"], 0.0) + hrs * shift_rate
             slot["entry_count"] += 1
             grand_hours += hrs
-            grand_cost += hrs * rate
+            grand_cost += hrs * shift_rate
+        for uid, slot in per_user.items():
+            # Effective rate for display: a blend when the employee's shifts were paid at different rates
+            if slot["hours"]:
+                slot["hourly_rate"] = round(raw_cost.get(uid, 0.0) / slot["hours"], 4)
         return {
             "start_date": start_date,
             "end_date": end_date,
@@ -774,6 +795,10 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
                     "created_at": now_iso(),
                     "corrected_via_request_id": cid,
                 }
+                # A whole shift added on approval is paid at the rate in force on approval (audit #24).
+                rate_now = stamp_rate((await db.users.find_one({"id": req["user_id"]}, {"_id": 0, "hourly_rate": 1}) or {}).get("hourly_rate"))
+                if rate_now is not None:
+                    row["pay_rate"] = rate_now
                 await db.time_clock_entries.insert_one(row)
 
         req.update(update)
