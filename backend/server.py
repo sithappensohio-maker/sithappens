@@ -3971,9 +3971,14 @@ async def _assert_capacity_available(
     *,
     exclude_booking_id: Optional[str] = None,
     meet_greet_minutes: int = 0,
+    check_days: bool = True,
 ) -> None:
     """Recount capacity while the matching Mongo lease is held. A Meet &
-    Greet being moved passes its length as `meet_greet_minutes`."""
+    Greet being moved passes its length as `meet_greet_minutes`. `check_days`
+    is False for a change that keeps the same dates and service (a kennel move):
+    it takes no new night or slot, so only the kennel itself is checked (audit #12)."""
+    if not check_days and body.service_type != "boarding":
+        return
     if body.service_type == "daycare":
         cap = max(0, int(settings.get("daycare_capacity", DAYCARE_CAPACITY) or 0))
         count = await _booking_days_count_filtered(body.date, "daycare", exclude_booking_id=exclude_booking_id)
@@ -3983,7 +3988,7 @@ async def _assert_capacity_available(
 
     if body.service_type == "boarding":
         cap = max(0, int(settings.get("boarding_capacity", 10) or 0))
-        for stay_day in _presence_dates(body.date, body.end_date):
+        for stay_day in (_presence_dates(body.date, body.end_date) if check_days else []):
             count = await _booking_days_count_filtered(stay_day, "boarding", exclude_booking_id=exclude_booking_id)
             if cap <= 0 or count >= cap:
                 raise _capacity_error(settings, body, f"Boarding is full on {pretty_date(stay_day)}. Please pick different dates.", resource="boarding", target_date=stay_day)
@@ -4069,7 +4074,8 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
         if moved and booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
             await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
             await prepaid_sessions.refuse_move(db, booking)   # audit #38
-            await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg)
+            dates_moved = any(merged.get(k) != booking.get(k) for k in ("date", "end_date", "time", "service_type", "service_id"))
+            await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg, check_days=dates_moved)
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
     finally:
         if owner:
