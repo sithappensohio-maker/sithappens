@@ -34594,6 +34594,9 @@ async def summary_range(
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(10000)
+    # A sole proprietor's own hours are a draw out of profit, not labor (audit #19).
+    owner_ids = await _get_owner_user_ids()
+    tc_entries = [e for e in tc_entries if e["user_id"] not in owner_ids]
     uids = list({e["user_id"] for e in tc_entries})
     rate_users = await db.users.find(
         {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1, "name": 1, "display_name": 1}
@@ -34611,6 +34614,7 @@ async def summary_range(
         {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
     ).to_list(50000)
     period_gross = pay_rate_domain.pay_by_user(tc_entries, live_rates, round_result=False)
+    pre = [e for e in pre if e["user_id"] not in owner_ids]
     pre_gross = pay_rate_domain.pay_by_user(pre, live_rates, round_result=False)
     labor_gross = 0.0
     labor_burden = 0.0
@@ -46487,12 +46491,14 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
                 hrs = 0
         shift_rate = pay_rate_domain.entry_rate(e, rate)   # each shift at the rate it was worked at (audit #24)
         cost = hrs * shift_rate
-        labor_cost += cost
-        labor_hours += hrs
-        raw_cost_by_user[e["user_id"]] = raw_cost_by_user.get(e["user_id"], 0.0) + cost
         if is_owner_u:
+            # A sole proprietor's draw comes out of profit: shown as a draw, never as labor (audit #19)
             owner_draw_today += cost
             owner_hours_today += hrs
+        else:
+            labor_cost += cost
+            labor_hours += hrs
+            raw_cost_by_user[e["user_id"]] = raw_cost_by_user.get(e["user_id"], 0.0) + cost
         slot = per_employee.setdefault(e["user_id"], {
             "user_id": e["user_id"],
             "name": u.get("display_name") or u.get("name") or "Unknown",

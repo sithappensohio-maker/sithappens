@@ -101,21 +101,24 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
         _business_day_utc_bounds,
         _business_range_utc_bounds,
         _compute_payroll_tax_on_gross,
+        _get_owner_user_ids,
         _get_payroll_tax_settings,
     )
     from domains.staff.pay_rate import pay_by_user   # each shift at the rate it was worked at (audit #24)
 
     tax = await _get_payroll_tax_settings()
+    # A sole proprietor's own hours are a draw out of profit, not payroll (audit #19).
+    owner_ids = await _get_owner_user_ids()
 
     # Step 4B-7 — labor is windowed by America/New_York business days (the
     # same bounds revenue uses), never naive UTC prefixes, so an Ohio
     # evening shift stays on the day it was worked.
     labor_start, labor_end = _business_range_utc_bounds(start_date, end_date)
-    period_entries = await db.time_clock_entries.find(
+    period_entries = [e for e in await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": labor_start, "$lt": labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
-    ).to_list(50000)
+    ).to_list(50000) if e["user_id"] not in owner_ids]
 
     uids = list({e["user_id"] for e in period_entries})
     if not uids:
@@ -142,12 +145,12 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     except Exception:
         end_year = date.today().year
     ytd_start = f"{end_year}-01-01"
-    pre_entries = await db.time_clock_entries.find(
+    pre_entries = [e for e in await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": _business_day_utc_bounds(ytd_start)[0], "$lt": labor_start},
          "clock_out_at": {"$ne": None, "$exists": True},
          "user_id": {"$in": uids}},
         {"_id": 0, "user_id": 1, "hours": 1, "pay_rate": 1},
-    ).to_list(100000)
+    ).to_list(100000) if e["user_id"] not in owner_ids]
     live_rates = {uid: float(u.get("hourly_rate") or 0) for uid, u in rate_map.items()}
     pre_gross = pay_by_user(pre_entries, live_rates, round_result=False)
     period_gross = pay_by_user(period_entries, live_rates, round_result=False)
