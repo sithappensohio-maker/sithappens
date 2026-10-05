@@ -1211,6 +1211,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 summary[c] = {"mode": "replace", "inserted": len(docs)}
             else:  # merge
                 upserts = 0
+                live_kept = 0
                 kept_live: List[str] = []
 
                 async def _collision(doc: dict) -> None:
@@ -1237,26 +1238,31 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                     chunk = keyed[start:start + 1000]
                     batch = [d for _f, d in chunk]
                     try:
-                        await db[c].bulk_write(
-                            [UpdateOne(f, {"$set": d}, upsert=True) for f, d in chunk], ordered=False)
+                        res = await db[c].bulk_write(
+                            [UpdateOne(f, backup_rules.merge_update(c, d), upsert=True) for f, d in chunk], ordered=False)
                         upserts += len(batch)
+                        live_kept += res.matched_count
                     except BulkWriteError as bwe:
                         errors = (bwe.details or {}).get("writeErrors") or []
                         if any(e.get("code") != 11000 for e in errors):
                             raise
                         failed = {e["index"] for e in errors}
                         upserts += len(batch) - len(failed)
+                        live_kept += int((bwe.details or {}).get("nMatched") or 0)
                         for i in sorted(failed):
                             await _collision(batch[i])
                     if progress:
                         await progress(c, index, len(todo), start + len(batch), False)
                 for doc in others:
                     try:
-                        await _merge_one(c, doc, is_string_id)
+                        live_kept += await _merge_one(c, doc, is_string_id)
                         upserts += 1
                     except DuplicateKeyError:
                         await _collision(doc)
                 summary[c] = {"mode": "merge", "upserted": upserts}
+                if backup_rules.protected_fields(c):
+                    # Rows that were already live: their money and state were kept, not rewritten (audit #8).
+                    summary[c]["live_rows_kept"] = live_kept
                 if other_copies:
                     summary[c]["skipped_other_copy"] = other_copies
                 if kept_live:
@@ -1276,8 +1282,9 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 return
         await db[c].create_index([(f, 1) for f in fields], name="restore_merge_" + "_".join(fields))
 
-    async def _merge_one(c: str, doc: dict, is_string_id: bool) -> None:
-        """Upsert one backed-up document on the key that identifies it."""
+    async def _merge_one(c: str, doc: dict, is_string_id: bool) -> int:
+        """Upsert one backed-up document on the key that identifies it. Returns 1 when the row was already
+        live, so its money and state were kept (audit #8), else 0."""
         if is_string_id and isinstance(doc.get("_id"), str):
             max_field = backup_rules.MERGE_MAX_FIELDS.get(c)
             if max_field and isinstance(doc.get(max_field), (int, float)):
@@ -1286,21 +1293,22 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 if rest:
                     update["$set"] = rest
                 await db[c].update_one({"_id": doc["_id"]}, update, upsert=True)
-                return
-            await db[c].update_one({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
-            return
+                return 0
+            res = await db[c].update_one({"_id": doc["_id"]}, backup_rules.merge_update(c, doc), upsert=True)
+            return int(res.matched_count)
         key = doc.get("id")
         if key:
-            await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
-            return
+            res = await db[c].update_one({"id": key}, backup_rules.merge_update(c, doc), upsert=True)
+            return int(res.matched_count)
         natural = backup_rules.MERGE_KEYS.get(c)
         if natural and all(doc.get(f) is not None for f in natural):
-            await db[c].update_one({f: doc[f] for f in natural}, {"$set": doc}, upsert=True)
-            return
+            res = await db[c].update_one({f: doc[f] for f in natural}, backup_rules.merge_update(c, doc), upsert=True)
+            return int(res.matched_count)
         # Nothing identifies this row. It's added unless an identical copy is
         # already there — merging the same backup twice used to double it.
         if not await db[c].find_one(doc, {"_id": 1}):
             await db[c].insert_one(doc)
+        return 0
 
     async def _take_over(c: str, doc: dict) -> bool:
         """Let the backed-up row replace a live row holding its natural key,
