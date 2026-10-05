@@ -35241,6 +35241,9 @@ async def _staff_readiness_summary(day: Optional[str] = None) -> Dict[str, Any]:
     employee_map = {e["id"]: e for e in employees}
 
     shifts = await db.shifts.find({"date": d}, {"_id": 0}).sort([("start_time", 1), ("end_time", 1)]).to_list(500)
+    # A deactivated employee's shift is not an expected shift, even if it was on the schedule before (audit #60).
+    deactivated_ids = {u["id"] for u in await db.users.find({"role": "employee", "active": False}, {"_id": 0, "id": 1}).to_list(2000)}
+    shifts = [sh for sh in shifts if sh.get("user_id") not in deactivated_ids]
 
     open_entries = await db.time_clock_entries.find(
         {"$or": [{"clock_out_at": None}, {"clock_out_at": ""}, {"clock_out_at": {"$exists": False}}]},

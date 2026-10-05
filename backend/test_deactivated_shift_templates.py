@@ -48,3 +48,23 @@ def test_a_deactivated_employees_template_creates_no_shift():
     assert res.status_code == 200, res.text
     assert run(server.db.shifts.count_documents({"user_id": gone["id"]})) == 0
     assert run(server.db.shifts.count_documents({"user_id": kept["id"]})) == 1
+
+
+def test_a_deactivated_employees_existing_shift_is_not_counted_in_readiness():
+    """Shifts already on the schedule stop counting once the employee is deactivated (audit #60)."""
+    admin = _user("admin")
+    gone = _user("employee", active=False)
+    kept = _user("employee", active=True)
+    for u in (gone, kept):
+        run(server.db.shifts.insert_one({"id": f"{TAG}-sh-{uuid.uuid4().hex[:6]}", "user_id": u["id"], "date": MONDAY.isoformat(),
+                                         "start_time": "08:00", "end_time": "12:00", "source": "manual", "status": "scheduled",
+                                         "tag": TAG}))
+
+    async def scenario():
+        return await _http.get(f"/api/admin/staff/readiness?date={MONDAY.isoformat()}", headers=_auth(admin))
+    res = run(scenario())
+    assert res.status_code == 200, res.text
+    body = res.json()
+    scheduled_ids = {row.get("user_id") for row in body["scheduled"]}
+    assert gone["id"] not in scheduled_ids, "a deactivated employee's shift is not on the readiness list"
+    assert kept["id"] in scheduled_ids, "an active employee's shift still is"
