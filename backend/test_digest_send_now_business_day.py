@@ -68,3 +68,25 @@ def test_send_now_on_a_wednesday_clears_this_weeks_monday_key(stub_job):
     _seed_key("trainer_monday_digest:2026-10-05")
     run(server.admin_force_monday_digest(ADMIN))
     assert run(server.db.notification_log.count_documents({"key": "trainer_monday_digest:2026-10-05"})) == 0
+
+
+def test_a_send_now_held_by_quiet_hours_is_reported_as_held_not_failed(monkeypatch):
+    """A brief held for Quiet Hours will go out when they end; it is not a failed send (review of 479e8c6)."""
+    from datetime import datetime, timedelta
+    import email_service
+    today = datetime.now(server.BUSINESS_TZ).date()
+    week_key = f"trainer_monday_digest:{(today - timedelta(days=today.weekday())).isoformat()}"
+
+    async def held_notify(data, **kw):
+        email_service.last_send_error = "Quiet hours active"
+        return False
+    monkeypatch.setattr(email_service, "notify_trainer_monday_digest", held_notify)
+    run(server.db.bookings.insert_one({"id": f"{TAG}-held", "date": today.isoformat(), "status": "approved",
+                                       "service_type": "daycare", "tag": TAG, "notes": TAG}))
+    try:
+        run(server.db.notification_log.delete_many({"key": week_key}))
+        out = run(server.admin_force_monday_digest(ADMIN))
+        assert out["sent"] == 0 and out["reason"] == "held_quiet_hours"
+    finally:
+        run(server.db.bookings.delete_many({"tag": TAG}))
+        run(server.db.notification_log.delete_many({"key": week_key}))

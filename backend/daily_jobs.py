@@ -777,6 +777,9 @@ async def run_trainer_monday_digest_job(db, *, manual_send_id: str | None = None
             send_key=f"{key}:send:{manual_send_id}" if manual_send_id else None)
         if ok:
             return {"sent": 1, "week_start": week_start, "week_end": week_end}
+        # Held for Quiet Hours is not a failure: the brief goes out when they end (review of 479e8c6).
+        if getattr(email_service, "last_send_error", None) == "Quiet hours active":
+            return {"sent": 0, "reason": "held_quiet_hours", "week_start": week_start}
         return {"sent": 0, "reason": "email_send_failed", "week_start": week_start}
     except Exception as exc:
         logger.warning("trainer_monday_digest failed: %s", exc)

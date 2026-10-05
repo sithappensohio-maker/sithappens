@@ -68,6 +68,7 @@ export function showMondayBriefResult(data) {
   if (data?.sent === 1) toast.success("Monday brief sent! Check the admin email.");
   else if (data?.reason === "nothing_to_report") toast.info("Nothing to report this week — no email sent.");
   else if (data?.skipped_already_sent) toast.info("The Monday brief already went out this week.");
+  else if (data?.reason === "held_quiet_hours") toast.info("Quiet Hours are on. The Monday brief will go out when they end.");
   else if (data?.reason === "email_send_failed") toast.error("Email send failed — check Resend domain verification.");
   else toast.error(`Result: ${JSON.stringify(data)}`);
 }

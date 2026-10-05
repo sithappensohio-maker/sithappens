@@ -47,3 +47,9 @@ test("a request that fails outright shows the server's reason", async () => {
   await flush();
   expect(toast.error).toHaveBeenCalledWith("Failed to send: Admins only");
 });
+
+test("a brief held for Quiet Hours says it will send when they end, not that it failed", () => {
+  showMondayBriefResult({ sent: 0, reason: "held_quiet_hours" });
+  expect(toast.info).toHaveBeenCalledWith(expect.stringContaining("Quiet Hours"));
+  expect(toast.error).not.toHaveBeenCalled();
+});
