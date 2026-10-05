@@ -1255,6 +1255,31 @@ async def queue_school_attention_email(event: dict, *, outbox_key: str) -> bool:
     )
 
 
+async def queue_admin_shop_order_needs_attention(order: dict) -> bool:
+    """A paid Shop order has a line that could not be fulfilled. The owner's new-order
+    email was sent at payment time, before fulfilment, so it always said "Needs attention:
+    No". This second alert says so, once per order (audit #73)."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping needs-attention alert for order %s", order.get("id"))
+        return False
+    order_id = order.get("id") or ""
+    order_number = order_id[:8].upper()
+    failed = [l for l in (order.get("lines") or []) if l.get("fulfillment_status") == "failed"]
+    names = ", ".join(str(l.get("name") or "item") for l in failed) or "an item"
+    subject = f"Shop order needs attention · Order #{order_number}"
+    html = (f"<p>Order #{order_number} is paid, but {names} could not be fulfilled automatically. "
+            "Please check it in the Shop before handing it over.</p>")
+    return await _queue_email(
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        subject=subject,
+        html=html,
+        outbox_key=f"shop:needs-attention:{order_id}",
+        on_success=None,
+        attachments=None,
+        error="queued_at_fulfilment_failure",
+    )
+
+
 async def queue_admin_new_shop_order(order: dict, client: dict | None = None) -> bool:
     """A client Shop order just became PAID — durably QUEUE the operator
     alert into email_outbox with a deterministic key, before any network

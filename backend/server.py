@@ -10879,10 +10879,18 @@ async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = D
     update = body.model_dump()
     update["updated_at"] = now_iso()
     update["updated_by"] = admin.get("name", "admin")
+    before = await db.announcements.find_one({"id": ann_id}, {"_id": 0, "published": 1, "email_broadcast_at": 1}) or {}
+    # A draft published later is emailed once, at the moment it goes live (audit #63).
+    # The mark stops a second publish from emailing it again; plain edits never email.
+    publishing_now = bool(update.get("published", True)) and not before.get("published", True) and not before.get("email_broadcast_at")
+    if publishing_now:
+        update["email_broadcast_at"] = update["updated_at"]
     r = await db.announcements.update_one({"id": ann_id}, {"$set": update})
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Announcement not found")
     doc = await db.announcements.find_one({"id": ann_id}, {"_id": 0})
+    if publishing_now:
+        asyncio.create_task(email_service.broadcast_announcement_email(doc))
     return doc
 
 
@@ -41978,6 +41986,8 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     fresh_lines = fresh_order.get("lines") or []
     order_fulfillment = "fulfilled" if all(l.get("fulfillment_status") in ("fulfilled", "refunded") for l in fresh_lines) else "needs_attention"
     await db.shop_orders.update_one({"id": order_id}, {"$set": {"fulfillment_status": order_fulfillment, "updated_at": now_iso()}})
+    if order_fulfillment == "needs_attention":   # the owner hears about it, not only the first email (audit #73)
+        await email_service.queue_admin_shop_order_needs_attention({**fresh_order, "lines": fresh_lines})
 
     # ── Step B5 — initialize pickup_status exactly once. Physical orders
     # start "preparing" (staff then walks it through ready_for_pickup ->
@@ -53208,6 +53218,23 @@ async def portal_marketing_email_preference(body: MarketingEmailPreferenceIn, us
         "marketing_email_opt_out_at": now_iso() if body.opted_out else None,
         "marketing_email_opt_out_source": "portal" if body.opted_out else None,
     }})
+    return {"opted_out": bool(body.opted_out)}
+
+
+@api.put("/admin/clients/{client_id}/marketing-email-preference")
+async def admin_marketing_email_preference(client_id: str, body: MarketingEmailPreferenceIn,
+                                           user: dict = Depends(require_admin_and_permission("manage_communications"))):
+    """Staff can see and change a family's marketing opt-out. A family that clicked
+    Unsubscribe is still blocked from bulk and marketing email; staff clear it here, as
+    the family's own choice (audit #38). The change is recorded with who made it."""
+    r = await db.clients.update_one({"id": client_id}, {"$set": {
+        "marketing_email_opt_out": bool(body.opted_out),
+        "marketing_email_opt_out_at": now_iso() if body.opted_out else None,
+        "marketing_email_opt_out_source": "staff" if body.opted_out else None,
+        "marketing_email_opt_out_by": (user.get("name") or user.get("email") or "staff") if body.opted_out else None,
+    }})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Client not found")
     return {"opted_out": bool(body.opted_out)}
 
 
