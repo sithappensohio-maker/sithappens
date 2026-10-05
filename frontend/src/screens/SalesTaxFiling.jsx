@@ -223,7 +223,7 @@ function PrimaryCard({ p, onDetails, onFile, onPay }) {
       </div>
       {p.needs_review && p.variance && (
         <div className="bg-purple-500/10 border border-purple-500/40 text-purple-300 rounded px-3 py-2 text-[12px]" data-testid="stt-primary-variance">
-          <b>Needs review:</b> filed tax liability {money(p.variance.filed_liability)} · current ledger liability {money(p.variance.current_liability)} · difference {money(p.variance.difference)}. {p.variance.message}
+          <b>Needs review:</b> filed tax liability {money(p.variance.filed_liability)} · ledger when filed {money(p.variance.ledger_at_filing ?? p.variance.filed_liability)} · current ledger liability {money(p.variance.current_liability)} · change since filing {money(p.variance.difference)}. {p.variance.message}
         </div>
       )}
       <div className="flex gap-2 flex-wrap">
@@ -620,7 +620,7 @@ function DetailsModal({ p, onClose }) {
       )}
       {p.needs_review && p.variance && (
         <div className="bg-purple-500/10 border border-purple-500/40 text-purple-300 rounded px-3 py-2 text-[12px]" data-testid="stt-details-variance">
-          <b>Needs review:</b> filed {money(p.variance.filed_liability)} vs current ledger {money(p.variance.current_liability)} ({money(p.variance.difference)}). {p.variance.message}
+          <b>Needs review:</b> filed {money(p.variance.filed_liability)}; ledger when filed {money(p.variance.ledger_at_filing ?? p.variance.filed_liability)} vs current ledger {money(p.variance.current_liability)} (change since filing {money(p.variance.difference)}). {p.variance.message}
         </div>
       )}
       <p className="text-[11px] text-shTextMuted italic">

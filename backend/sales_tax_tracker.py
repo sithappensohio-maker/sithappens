@@ -198,7 +198,9 @@ def derive_period_state(
             if abs(diff) >= 0.005:
                 state["needs_review"] = True
                 state["variance"] = {
-                    "filed_liability": round(float(baseline or 0), 2),
+                    # What was remitted (the typed figure), and the ledger it is compared against (review of 259975e).
+                    "filed_liability": round(float(snap["liability"] or 0), 2),
+                    "ledger_at_filing": round(float(baseline or 0), 2),
                     "current_liability": round(float(current_liability), 2),
                     "difference": diff,
                     "message": ("A transaction/refund dated in this previously "
