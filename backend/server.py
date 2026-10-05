@@ -864,6 +864,11 @@ class ClientOut(ClientIn):
     dogs: Optional[List[Dict[str, Any]]] = None  # lightweight [{id, name, breed}] for admin listing
     last_login_at: Optional[str] = None  # ISO timestamp of the client's most recent portal login
     login_count: int = 0  # total number of times this client has logged in
+    # Marketing opt-out, shown to staff so a family's silence has a reason (audit #38).
+    marketing_email_opt_out: bool = False
+    marketing_email_opt_out_at: Optional[str] = None
+    marketing_email_opt_out_source: Optional[str] = None
+    marketing_email_opt_out_by: Optional[str] = None
     # Sprint 110g — per-pool stamp of the most recent "low credit" email we
     # fired, so the idempotency guard can avoid spamming and the UI can show
     # "client was notified".

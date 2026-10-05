@@ -7,6 +7,7 @@ import TrophyWall from "./TrophyWall";
 import AdminClientPaymentPlans from "./AdminClientPaymentPlans";
 import { BOOKING_STATUS, INVOICE_STATUS } from "../lib/statusDefs";
 import Avatar from "./Avatar";
+import ClientMarketingOptOut from "./ClientMarketingOptOut";
 import BillFixModal from "./BillFixModal";
 import { friendsPaidFor } from "../lib/friendsFamily";
 
@@ -132,6 +133,7 @@ export default function ClientHub({
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary">Sit Happens · Client Record</p>
               <h3 className="sh-display text-xl sm:text-2xl text-white leading-none truncate mt-1">{client.name}</h3>
               <p className="text-[11px] text-shTextMuted font-medium truncate mt-1">{client.email || client.phone || "No contact on file"}</p>
+              <ClientMarketingOptOut client={client} canClear={can("manage_communications")} />
             </div>
           </div>
           <button onClick={onClose} className="relative w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-white hover:border-shPrimary/40 shrink-0 grid place-items-center" aria-label="Close"><i className="fas fa-times" /></button>
