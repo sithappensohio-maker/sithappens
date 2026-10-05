@@ -10995,6 +10995,9 @@ async def create_announcement(body: AnnouncementIn, admin: dict = Depends(requir
     doc["created_at"] = now_iso()
     doc["created_by"] = admin.get("name", "admin")
     doc["updated_at"] = doc["created_at"]
+    # A notice published on creation is emailed now, once. The mark stops a later unpublish and republish from emailing it again (audit #63).
+    if doc.get("published", True):
+        doc["email_broadcast_at"] = doc["created_at"]
     await db.announcements.insert_one(doc.copy())
     doc.pop("_id", None)
     # Sprint 110di-5 — every PUBLISHED announcement also fires an email

@@ -47,6 +47,19 @@ def test_publishing_a_draft_emails_it_once(sent):
     assert len(sent) == 1
 
 
+def test_a_notice_published_at_creation_is_not_emailed_again_after_a_republish(sent):
+    """Published on creation, then unpublished and republished: one email, the one at creation (audit #63)."""
+    async def go():
+        created = await server.create_announcement(_ann(True), ADMIN)
+        aid = created["id"]
+        await server.db.announcements.update_one({"id": aid}, {"$set": {"tag": TAG}})
+        await server.update_announcement(aid, _ann(False), ADMIN)
+        await server.update_announcement(aid, _ann(True), ADMIN)
+        await asyncio.sleep(0.05)
+    run(go())
+    assert len(sent) == 1
+
+
 def test_publishing_again_after_unpublishing_does_not_email_twice(sent):
     async def steps(aid):
         await server.update_announcement(aid, _ann(True), ADMIN)

@@ -99,8 +99,11 @@ export default function Announcements({ openCreateOnMount = false, onCreateConsu
           toast.success("Announcement posted.");
         }
       } else {
+        // A draft that is made visible is emailed once, in the background, the same rule the server applies (audit #63).
+        const before = items.find((x) => x.id === editing) || {};
+        const goesLive = form.published && before.published === false && !before.email_broadcast_at;
         await api.put(`/admin/announcements/${editing}`, form);
-        toast.success("Saved — clients won't be re-emailed for edits.");
+        toast.success(goesLive ? "Published — emailing clients once in the background." : "Saved — clients won't be re-emailed for edits.");
       }
       await load();
       cancel();
@@ -218,13 +221,13 @@ export default function Announcements({ openCreateOnMount = false, onCreateConsu
           {editing === "new" && !form.published && (
             <p className="text-[11px] text-shTextMuted bg-[var(--sh-card-base)]/60 border border-shBorder rounded px-3 py-2">
               <i className="fas fa-eye-slash mr-1.5"/>
-              Draft mode — not visible to clients and no emails sent.
+              Draft mode — not visible to clients yet. Making it visible later emails the announcement once, when it goes live.
             </p>
           )}
           {editing !== "new" && editing !== null && (
             <p className="text-[11px] text-shTextMuted bg-[var(--sh-card-base)]/60 border border-shBorder rounded px-3 py-2">
               <i className="fas fa-circle-info mr-1.5"/>
-              Editing an existing announcement — clients will see updates instantly in their portal, but no fresh email goes out.
+              Editing an existing announcement — clients see updates instantly in their portal. Edits don't send an email; only making a draft visible does, once.
             </p>
           )}
 
