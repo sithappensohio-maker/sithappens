@@ -30303,8 +30303,9 @@ async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
     INACTIVE_AFTER_DAYS = 7
     cutoff_iso = (today_d - timedelta(days=INACTIVE_AFTER_DAYS)).isoformat()
     # Compute streak/total for every client who has answered at least once.
+    # Staff practice scores stay off the family board, as they do on the admin board (audit #62).
     attempts = await db.trivia_attempts.find(
-        {}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
+        {"client_id": {"$not": {"$regex": "^staff:"}}}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
     ).to_list(50000)
     by_client: Dict[str, List[dict]] = {}
     for a in attempts:
@@ -30351,12 +30352,12 @@ async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
         ).to_list(len(cids))
         cmap = {c["id"]: (c.get("name") or "Anonymous").split(" ")[0] for c in clients}
         dogs = await db.dogs.find(
-            {"client_id": {"$in": cids}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
-            {"_id": 0, "client_id": 1, "name": 1},
+            {"owner_id": {"$in": cids}, "deleted_at": booking_guards.LIVE},
+            {"_id": 0, "owner_id": 1, "name": 1},
         ).to_list(2000)
         dmap: Dict[str, List[str]] = {}
         for d_ in dogs:
-            dmap.setdefault(d_["client_id"], []).append(d_.get("name") or "")
+            dmap.setdefault(d_["owner_id"], []).append(d_.get("name") or "")
         for r in rows:
             r["display_name"] = cmap.get(r["client_id"], "Player")
             r["dogs"] = [n for n in dmap.get(r["client_id"], []) if n][:3]
@@ -30731,14 +30732,14 @@ async def admin_trivia_leaderboard(_: dict = Depends(require_admin)):
         {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "trivia_milestones": 1},
     ).to_list(len(cids))
     cmap = {c["id"]: c for c in clients}
+    # Dogs belong to a family through owner_id, and only live ones count (audit #62).
     dogs = await db.dogs.find(
-        {"client_id": {"$in": cids},
-         "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
-        {"_id": 0, "client_id": 1, "name": 1},
+        {"owner_id": {"$in": cids}, "deleted_at": booking_guards.LIVE},
+        {"_id": 0, "owner_id": 1, "name": 1},
     ).to_list(5000)
     dmap: Dict[str, List[str]] = {}
     for d_ in dogs:
-        dmap.setdefault(d_["client_id"], []).append(d_.get("name") or "")
+        dmap.setdefault(d_["owner_id"], []).append(d_.get("name") or "")
     for r in rows:
         c = cmap.get(r["client_id"], {})
         r["name"] = c.get("name") or "Unknown"
