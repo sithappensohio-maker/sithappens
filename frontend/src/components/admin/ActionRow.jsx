@@ -32,6 +32,7 @@ export const ACTION_KIND_LABEL = {
   vaccine_expired: "Vaccine Expired",
   vaccine_expiring: "Vaccine Expiring",
   no_checkin: "Not Checked In",
+  serious_incident: "Serious Incident",
   low_credits: "Low Credits",
   booking_pending: "Booking Needs Approval",
   contact_inquiry: "New Inquiry",
