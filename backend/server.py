@@ -4010,10 +4010,13 @@ async def _assert_capacity_available(
     exact_service_id = (selected_service or {}).get("id") or body.service_id
     slot_capacity = max(1, int((selected_service or {}).get("capacity_per_slot") or 1))
     same_service_overlaps = 0
+    group_ctx = _booking_group_ctx.get()
     # Lessons, grooming, portraits and Meet & Greets share one pool (audit #34).
     for b in await time_pool.appointments(db, body.date, settings=settings, default_minutes=_get_default_duration, exclude_id=exclude_booking_id):
         if not _slot_overlaps(start, duration, b["start"], b["minutes"]):
             continue
+        if group_ctx and b.get("group_id") == group_ctx:
+            continue   # a dog in the same group shares the slot: the group is one unit of capacity (audit #11)
         if exact_service_id and b.get("service_id") == exact_service_id:
             same_service_overlaps += 1
             continue

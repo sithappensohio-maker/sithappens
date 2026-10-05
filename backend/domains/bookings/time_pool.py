@@ -67,7 +67,7 @@ async def appointments(db, day: str, *, settings: Optional[dict],
     defaults: Dict[str, int] = {}
     async for b in db.bookings.find(q, {"_id": 0, "id": 1, "time": 1, "duration_minutes": 1, "service_type": 1,
                                         "service_id": 1, "dog_id": 1, "dog_name": 1, "photo_special_id": 1,
-                                        "is_meet_greet": 1, "checked_out_at": 1}):
+                                        "is_meet_greet": 1, "checked_out_at": 1, "group_id": 1}):
         if b.get("checked_out_at"):
             continue          # gone home early: the time is free again
         start = _hhmm(b.get("time"))
