@@ -375,6 +375,13 @@ export function humanizeValidationMessage(loc, msg) {
   return field ? `${field}: ${text}` : text;
 }
 
+// The vaccine refusal behind a check-in, when the API sent one. The message is flattened into `detail`
+// for legacy renderers, so the structured object is read from `detail_object` (audit #41).
+export function vaccineWarningOf(err) {
+  const o = err?.response?.data?.detail_object;
+  return o?.code === "vaccine_warning" ? o : null;
+}
+
 export function formatErr(detail) {
   if (detail == null) return "Something went wrong.";
   if (typeof detail === "string") return detail;

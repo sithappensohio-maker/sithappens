@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, formatErr } from "../lib/api";
+import { api, formatErr, vaccineWarningOf } from "../lib/api";
 import { onRegisterChanged } from "../lib/registerBus";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
@@ -208,10 +208,11 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       // have since expired) and asks for explicit staff acknowledgement —
       // this used to be a silent no-op error on this screen.
       const detail = e.response?.data?.detail;
-      if (detail?.code === "vaccine_warning") {
+      const warn = vaccineWarningOf(e);
+      if (warn) {
         const ok = await confirm({
-          title: `Vaccine warning · ${detail.dog_name || "this dog"}`,
-          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          title: `Vaccine warning · ${warn.dog_name || "this dog"}`,
+          body: `${warn.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
           confirmText: "Check in anyway",
           destructive: true,
         });

@@ -9,7 +9,7 @@
 //
 // Sensitive admin data (income, P&L, settings, billing) is NOT reachable.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, formatErr } from "../lib/api";
+import { api, formatErr, vaccineWarningOf } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
 import AdminTabs from "../components/admin/AdminTabs";
@@ -332,10 +332,11 @@ function RosterTab() {
       // rabies) at the actual moment of check-in and asks staff to
       // explicitly confirm before proceeding on a warning.
       const detail = e.response?.data?.detail;
-      if (detail?.code === "vaccine_warning") {
+      const warn = vaccineWarningOf(e);
+      if (warn) {
         const ok = await confirm({
-          title: `Vaccine warning · ${detail.dog_name || row?.dog_name || "this dog"}`,
-          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          title: `Vaccine warning · ${warn.dog_name || row?.dog_name || "this dog"}`,
+          body: `${warn.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
           confirmText: "Check in anyway",
           destructive: true,
         });

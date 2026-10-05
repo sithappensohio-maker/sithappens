@@ -17,7 +17,7 @@
  * inside those embedded, unmodified components.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatErr } from "../lib/api";
+import { api, formatErr, vaccineWarningOf } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { printGiftCard } from "../lib/printGiftCard";
@@ -591,10 +591,11 @@ export default function Pos({ onOpenShopManager } = {}) {
       if (selectedClient?.id === row.client_id) refreshClientInvoice(selectedClient.id);
     } catch (e) {
       const detail = e.response?.data?.detail;
-      if (detail?.code === "vaccine_warning") {
+      const warn = vaccineWarningOf(e);
+      if (warn) {
         const ok = await confirm({
-          title: `Vaccine warning · ${detail.dog_name || row.dog_name}`,
-          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          title: `Vaccine warning · ${warn.dog_name || row.dog_name}`,
+          body: `${warn.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
           confirmText: "Check in anyway",
           destructive: true,
         });
