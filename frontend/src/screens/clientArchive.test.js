@@ -84,7 +84,7 @@ const click = async (el) => { await act(async () => { el.click(); }); await flus
 
 test("an archive the server refuses lists each visit with a way through, and never archives on its own", async () => {
   api.delete.mockRejectedValueOnce({ response: { status: 409, data: { detail: "The Sam Owner family can't be archived yet.", block: BLOCK } } });
-  await act(async () => { root.render(<Clients />); });
+  await act(async () => { root.render(<Clients can={() => true} />); });
   await flush();
   await click($("archive-client-c1"));
   expect(api.delete).toHaveBeenCalledWith("/clients/c1");
@@ -118,7 +118,7 @@ test("Try archiving again retries the same archive and closes the list when it g
   api.delete
     .mockRejectedValueOnce({ response: { status: 409, data: { detail: "blocked", block: BLOCK } } })
     .mockResolvedValueOnce({ data: { ok: true, soft_deleted: true } });
-  await act(async () => { root.render(<Clients />); });
+  await act(async () => { root.render(<Clients can={() => true} />); });
   await flush();
   await click($("archive-client-c1"));
   await click($("archive-blockers-retry"));
@@ -130,7 +130,7 @@ test("Try archiving again retries the same archive and closes the list when it g
 
 test("any other failure is said out loud, not swallowed", async () => {
   api.delete.mockRejectedValueOnce({ response: { status: 403, data: { detail: "Missing permission: delete_records" } } });
-  await act(async () => { root.render(<Clients />); });
+  await act(async () => { root.render(<Clients can={() => true} />); });
   await flush();
   await click($("archive-client-c1"));
   expect($("archive-blockers")).toBeNull();
@@ -139,7 +139,7 @@ test("any other failure is said out loud, not swallowed", async () => {
 
 test("Show archived lists archived families with the dogs Restore brings back, and Restore restores", async () => {
   api.post.mockResolvedValueOnce({ data: { ok: true, restored_dogs: ["Rex"], paused_schedules: 2, still_removed: [] } });
-  await act(async () => { root.render(<Clients />); });
+  await act(async () => { root.render(<Clients can={() => true} />); });
   await flush();
   await click($("client-show-archived"));
   expect(api.get).toHaveBeenCalledWith("/clients/page", { params: { q: "", page: 1, page_size: 100, archived: true } });
@@ -161,7 +161,7 @@ test("Show archived says when older families are beyond the newest page", async 
     if (String(path).startsWith("/communications")) return Promise.resolve({ data: { entries: [] } });
     return Promise.resolve({ data: [] });
   });
-  await act(async () => { root.render(<Clients />); });
+  await act(async () => { root.render(<Clients can={() => true} />); });
   await flush();
   await click($("client-show-archived"));
   expect($("archived-client-more").textContent).toContain("1 of 150");

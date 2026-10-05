@@ -42,8 +42,10 @@ const fmtCredits = (n) => {
 };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
-export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null, hubTarget = null, can = () => false, onAddDog = () => {}, onBookForClient = () => {} }) {
+export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null, hubTarget = null, can = () => false, onAddDog = () => {}, onBookForClient = () => {}, canEditClients = undefined }) {
   const confirm = useConfirm();
+  // Adding, editing and archiving a family needs clients_edit (audit #94). A screen that knows its rights passes canEditClients.
+  const canEdit = canEditClients !== undefined ? canEditClients : can("clients_edit");
   // Staff can finish a new client, but certificate photos they attach wait
   // for the owner's approval and a typed portal password stays the owner's
   // (audit #49). No auth provider (tests, previews) = not the owner.
@@ -452,7 +454,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         highlight="Where humans live."
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
         right={(
-          <button onClick={openNewClient} data-testid="add-client-button"
+          canEdit && <button onClick={openNewClient} data-testid="add-client-button"
                   className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black shadow-lg hover:brightness-105 transition">
             <i className="fas fa-plus mr-2"/>Add Client
           </button>
@@ -503,8 +505,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                         title="Email this client"
                         data-testid={`email-client-${c.id}`}><i className="fas fa-paper-plane" /></button>
               )}
-              <button onClick={()=>openEditClient(c)} className="text-shTextMuted hover:text-shText p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
-              <button onClick={()=>remove(c.id)} className="text-shTextMuted hover:text-red-400 p-2 -m-1" title="Archive this client" data-testid={`archive-client-${c.id}`}><i className="fas fa-trash" /></button>
+              {canEdit && <button onClick={()=>openEditClient(c)} className="text-shTextMuted hover:text-shText p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>}
+              {canEdit && <button onClick={()=>remove(c.id)} className="text-shTextMuted hover:text-red-400 p-2 -m-1" title="Archive this client" data-testid={`archive-client-${c.id}`}><i className="fas fa-trash" /></button>}
             </div>
             <div className="flex items-center gap-3 pr-16">
               <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shSecondary/40" alt={c.name} testid={`client-avatar-${c.id}`}/>

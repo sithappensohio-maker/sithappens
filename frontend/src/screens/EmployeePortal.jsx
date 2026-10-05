@@ -132,7 +132,7 @@ export default function EmployeePortal() {
         {tab === "clock" && <ClockTab />}
         {tab === "training" && canTraining && <div data-testid="emp-training"><Pipeline /></div>}
         {tab === "roster" && <RosterTab />}
-        {tab === "clients" && canClients && <Clients />}
+        {tab === "clients" && canClients && <Clients canEditClients={can("clients_edit")} />}
         {tab === "incidents" && canIncidents && <Incidents />}
         {tab === "tasks" && <MyTasksTab />}
         {tab === "schedule" && <MyScheduleTab />}
