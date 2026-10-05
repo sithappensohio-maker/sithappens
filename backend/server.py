@@ -17265,6 +17265,24 @@ class EnrollmentUpdate(BaseModel):
     target_completion_date: Optional[str] = None
 
 
+async def _release_dog_pointer_if_held(dog_id: str, enrollment_id: str) -> None:
+    """A course that has finished, been put on hold or withdrawn stops being the dog's front-desk
+    pointer (audit #67). The pointer moves to the dog's oldest other active staff-led course, or
+    clears. Only a pointer that still names this course moves, so a pointer already on another
+    course is never touched, and the update is conditioned on the pointer still naming this course."""
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "active_program_id": 1})
+    if (dog or {}).get("active_program_id") != enrollment_id:
+        return
+    other = await db.dog_programs.find_one(
+        {"dog_id": dog_id, "status": "active", "id": {"$ne": enrollment_id},
+         "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}},
+        {"_id": 0, "id": 1},
+        sort=[("created_at", 1), ("id", 1)],
+    )
+    await db.dogs.update_one({"id": dog_id, "active_program_id": enrollment_id},
+                             {"$set": {"active_program_id": (other or {}).get("id")}})
+
+
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}")
 async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpdate, user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
@@ -17299,18 +17317,8 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
         if body.status == "active":
             await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment_id}})
         elif body.status in ("completed", "on_hold", "withdrawn"):
-            # If this was the dog's active pointer, clear it so the run-sheet stops showing it
-            dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
-            if (dog or {}).get("active_program_id") == enrollment_id:
-                # If there's another active enrollment, point at it; otherwise null
-                # (excluding online_school — see the active_program_id invariant
-                # note above _auto_complete_if_satisfied's identical reassignment).
-                other = await db.dog_programs.find_one(
-                    {"dog_id": dog_id, "status": "active", "id": {"$ne": enrollment_id},
-                     "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}},
-                    {"_id": 0},
-                )
-                await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": (other or {}).get("id")}})
+            # The run sheet and front desk stop showing a course that is no longer active (audit #67).
+            await _release_dog_pointer_if_held(dog_id, enrollment_id)
     if body.trainer_notes is not None:
         update["trainer_notes"] = body.trainer_notes
     if body.target_completion_date is not None:
@@ -26136,6 +26144,11 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
     await db.dog_programs.update_one({"id": plan["enrollment_id"]}, {"$set": plan["set_doc"]})
     if "status" in plan["set_doc"]:
         await school_mirror.sync_one(db, plan["enrollment_id"])   # School HQ's copy follows (audit #54)
+        # The course is finished: the dog's front-desk pointer moves off it (audit #67). Released here, before the
+        # log and homework stages, so a retry after a later failure still finds it done; a replay after this write sees
+        # the pointer no longer names the course and does nothing.
+        await _assert_claim_owned(draft_id, claim_token)
+        await _release_dog_pointer_if_held(plan["dog_id"], plan["enrollment_id"])
 
     homework_created: List[str] = []  # newly created BY THIS CALL — the response's "what just happened"
     homework_conflicts: List[Dict[str, Any]] = []
