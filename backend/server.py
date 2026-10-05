@@ -6440,21 +6440,7 @@ async def _start_email_change(cid: str, user: dict, *, update_email_value: str) 
     return True
 
 
-class EmailChangeConfirmIn(BaseModel):
-    token: str = Field(min_length=10, max_length=200)
-
-
-@api.post("/portal/email-change/confirm")
-async def portal_confirm_email_change(body: EmailChangeConfirmIn):
-    """The new address is used only once the link sent to it is opened (audit #27)."""
-    row = await db.email_changes.find_one({"token_hash": _security_key(body.token)}, {"_id": 0})
-    if not row or (row.get("expires_at") or "") < datetime.now(timezone.utc).isoformat():
-        raise HTTPException(status_code=400, detail="This confirmation link has expired. Change your email again.")
-    new_email = row["new_email"]
-    await db.clients.update_one({"id": row["client_id"]}, {"$set": {"email": new_email}})
-    await db.users.update_one({"id": row["user_id"]}, {"$set": {"email": new_email}, "$inc": {"token_version": 1}})
-    await db.email_changes.delete_one({"client_id": row["client_id"]})
-    return {"ok": True, "email": new_email}
+from domains.clients.account_routes import EmailChangeConfirmIn, MarketingEmailPreferenceIn, register_client_account_routes  # noqa: E402,F401
 
 @api.post("/portal/gallery/mark-seen")
 async def portal_gallery_mark_seen(user: dict = Depends(get_current_user)):
@@ -28202,16 +28188,6 @@ def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:
 
 
 # -------- Today's Brain — Unified Admin Action Queue (Sprint 102) --------
-@api.post("/admin/incidents/{incident_id}/acknowledge")
-async def acknowledge_incident(incident_id: str, user: dict = Depends(require_admin_and_permission("incidents"))):
-    """The owner has read a serious incident; it leaves the Action Center (audit #35)."""
-    r = await db.incidents.update_one({"id": incident_id}, {"$set": {
-        "owner_acknowledged_at": now_iso(), "owner_acknowledged_by": user.get("name") or user.get("email") or "owner"}})
-    if r.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return {"ok": True}
-
-
 @api.get("/admin/today-brain")
 async def admin_today_brain(_: dict = Depends(require_admin)):
     """Single prioritized 'what needs my attention' feed for the admin
@@ -53313,10 +53289,6 @@ async def marketing_email_unsubscribe(token: str):
     return HTMLResponse("<html><body style='font-family:sans-serif;padding:32px'><h2>You're unsubscribed from marketing emails.</h2><p>Booking, payment, training, and other account/service messages can still be sent when needed.</p></body></html>")
 
 
-class MarketingEmailPreferenceIn(BaseModel):
-    opted_out: bool
-
-
 @api.put("/portal/marketing-email-preference")
 async def portal_marketing_email_preference(body: MarketingEmailPreferenceIn, user: dict = Depends(get_current_user)):
     if user.get("role") != "client" or not user.get("client_id"):
@@ -53326,23 +53298,6 @@ async def portal_marketing_email_preference(body: MarketingEmailPreferenceIn, us
         "marketing_email_opt_out_at": now_iso() if body.opted_out else None,
         "marketing_email_opt_out_source": "portal" if body.opted_out else None,
     }})
-    return {"opted_out": bool(body.opted_out)}
-
-
-@api.put("/admin/clients/{client_id}/marketing-email-preference")
-async def admin_marketing_email_preference(client_id: str, body: MarketingEmailPreferenceIn,
-                                           user: dict = Depends(require_admin_and_permission("manage_communications"))):
-    """Staff can see and change a family's marketing opt-out. A family that clicked
-    Unsubscribe is still blocked from bulk and marketing email; staff clear it here, as
-    the family's own choice (audit #38). The change is recorded with who made it."""
-    r = await db.clients.update_one({"id": client_id}, {"$set": {
-        "marketing_email_opt_out": bool(body.opted_out),
-        "marketing_email_opt_out_at": now_iso() if body.opted_out else None,
-        "marketing_email_opt_out_source": "staff" if body.opted_out else None,
-        "marketing_email_opt_out_by": (user.get("name") or user.get("email") or "staff") if body.opted_out else None,
-    }})
-    if r.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Client not found")
     return {"opted_out": bool(body.opted_out)}
 
 
@@ -55435,6 +55390,22 @@ _walk_in_callables = register_clients_routes(
     require_admin_and_permission=require_admin_and_permission, perms_for=lambda u: _perms_for(u),
 )
 create_walk_in = _walk_in_callables["create_walk_in"]
+
+# Client account and incident routes live in their domains (route freeze). The
+# names stay bound here for the suites that call them directly.
+from domains.operations.incident_routes import register_incident_routes  # noqa: E402
+
+_account_callables = register_client_account_routes(
+    api=api, db=db, now_iso=now_iso, require_admin_and_permission=require_admin_and_permission,
+    security_key=_security_key,
+)
+portal_confirm_email_change = _account_callables["portal_confirm_email_change"]
+admin_marketing_email_preference = _account_callables["admin_marketing_email_preference"]
+
+_incident_callables = register_incident_routes(
+    api=api, db=db, now_iso=now_iso, require_admin_and_permission=require_admin_and_permission,
+)
+acknowledge_incident = _incident_callables["acknowledge_incident"]
 
 # Photo Specials — reusable one-off portrait events (Halloween first, then
 # Christmas, Valentine's and the rest) sitting on top of ordinary photography
