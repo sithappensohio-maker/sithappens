@@ -57,7 +57,17 @@ export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate
   else if (cta.type === "open_screen" && cta.screen) onNavigate?.(cta.screen);
   else if (cta.type === "send_monday_digest") {
     api.post("/admin/homework/send-monday-digest")
-      .then(() => toast.success("Monday digest sent — check your admin email."))
+      .then(({ data }) => showMondayBriefResult(data))
       .catch((e) => toast.error("Failed to send: " + (e.response?.data?.detail || e.message)));
   }
+}
+
+// Tell the owner what "Send now" on the Monday brief did (audit #69). Used by the Today brain, the
+// Dashboard and the Homework screen, so the three cannot disagree about what a result means.
+export function showMondayBriefResult(data) {
+  if (data?.sent === 1) toast.success("Monday brief sent! Check the admin email.");
+  else if (data?.reason === "nothing_to_report") toast.info("Nothing to report this week — no email sent.");
+  else if (data?.skipped_already_sent) toast.info("The Monday brief already went out this week.");
+  else if (data?.reason === "email_send_failed") toast.error("Email send failed — check Resend domain verification.");
+  else toast.error(`Result: ${JSON.stringify(data)}`);
 }

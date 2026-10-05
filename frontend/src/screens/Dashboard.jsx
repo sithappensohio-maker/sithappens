@@ -30,6 +30,7 @@ import HuskyDogImage from "../components/brand/HuskyDogImage";
 import PageHero from "../components/PageHero";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
+import { showMondayBriefResult } from "../lib/todayBrain";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -600,7 +601,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         else if (t === "open_screen" && it.cta.screen) onNavigate(it.cta.screen);
         else if (t === "send_monday_digest") {
           api.post("/admin/homework/send-monday-digest")
-            .then(() => toast.success("Monday digest sent — check your admin email."))
+            .then(({ data }) => showMondayBriefResult(data))
             .catch((e) => toast.error("Failed to send: " + (e.response?.data?.detail || e.message)));
         }
       }} />

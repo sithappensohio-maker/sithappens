@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
+import { showMondayBriefResult } from "../lib/todayBrain";
 import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
 import HomeworkReportPanel from "../components/HomeworkReportPanel";
 import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
@@ -94,13 +95,7 @@ export default function Homework() {
     setMondayBusy(true);
     try {
       const { data } = await api.post("/admin/homework/send-monday-digest");
-      let msg;
-      if (data.sent === 1) msg = "Monday brief sent! Check the admin email.";
-      else if (data.reason === "nothing_to_report") msg = "Nothing to report this week — no email sent.";
-      else if (data.skipped_already_sent) msg = "Already sent this week. Run the dedup-clear and try again.";
-      else if (data.reason === "email_send_failed") msg = "Email send failed — check Resend domain verification.";
-      else msg = `Result: ${JSON.stringify(data)}`;
-      toast.success(msg);
+      showMondayBriefResult(data);
     } catch (e) {
       toast.error(`Failed: ${e.response?.data?.detail || e.message}`);
     } finally { setMondayBusy(false); }
