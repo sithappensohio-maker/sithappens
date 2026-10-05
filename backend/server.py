@@ -14548,7 +14548,7 @@ async def admin_force_monday_digest(_: dict = Depends(require_admin)):
     today = business_today()
     monday = today - timedelta(days=today.weekday())
     await db.notification_log.delete_many({"key": f"trainer_monday_digest:{monday.isoformat()}"})
-    return await run_trainer_monday_digest_job(db)
+    return await run_trainer_monday_digest_job(db, manual_send_id=uuid.uuid4().hex)
 
 
 @api.post("/admin/homework/send-weekly-digest")

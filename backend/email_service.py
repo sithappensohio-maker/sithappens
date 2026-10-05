@@ -1952,7 +1952,9 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     )
 
 
-async def notify_trainer_monday_digest(data: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
+async def notify_trainer_monday_digest(data: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None, send_key: str | None = None) -> bool:
+    # `send_key` is the provider's idempotency key for this send only; a manual re-send passes its own (review of 788d179).
+    # `delivery_key` is still the week's key, the one stamped as sent.
     """Monday-morning digest to the operator (admin email)."""
     if not ADMIN_NOTIFICATION_EMAIL:
         return False
@@ -2048,7 +2050,7 @@ async def notify_trainer_monday_digest(data: dict, *, delivery_key: str | None =
         fallback_intro="Here's your week ahead. Knock these out before the coffee gets cold.",
         fallback_subject=f"Monday brief · {week_start}",
         fallback_cta_text="Open Dashboard" if cta_url else "",
-        outbox_key=delivery_key,
+        outbox_key=send_key or delivery_key,
         on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
         queue_on_failure=bool(delivery_key),
     ))

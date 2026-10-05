@@ -18,7 +18,7 @@ ADMIN = {"id": f"{TAG}-admin", "role": "admin", "name": "QA", "email": "qa@test"
 
 @pytest.fixture()
 def stub_job(monkeypatch):
-    async def fake(_db):
+    async def fake(_db, **_kw):
         return {"sent": 0}
     monkeypatch.setattr(daily_jobs, "run_trainer_monday_digest_job", fake)
     yield monkeypatch
@@ -34,6 +34,32 @@ def test_send_now_on_the_monday_clears_that_monday_key(stub_job):
     _seed_key("trainer_monday_digest:2026-10-05")
     run(server.admin_force_monday_digest(ADMIN))
     assert run(server.db.notification_log.count_documents({"key": "trainer_monday_digest:2026-10-05"})) == 0
+
+
+def test_a_send_now_uses_its_own_provider_key_so_resend_does_not_drop_it(monkeypatch):
+    """Resend dedupes an idempotency key for 24 hours. A manual re-send reuses the week's key, so it can be
+    dropped while reporting success (review of 788d179). A manual send carries its own key; the week's
+    key is still the one stamped as sent."""
+    from datetime import datetime, timedelta
+    import email_service
+    today = datetime.now(server.BUSINESS_TZ).date()
+    week_key = f"trainer_monday_digest:{(today - timedelta(days=today.weekday())).isoformat()}"
+    seen = {}
+
+    async def fake_notify(data, **kw):
+        seen.update(kw)
+        return True
+    monkeypatch.setattr(email_service, "notify_trainer_monday_digest", fake_notify)
+    run(server.db.bookings.insert_one({"id": f"{TAG}-bk", "date": today.isoformat(), "status": "approved",
+                                       "service_type": "daycare", "tag": TAG, "notes": TAG}))
+    try:
+        run(server.db.notification_log.delete_many({"key": week_key}))
+        run(server.admin_force_monday_digest(ADMIN))
+        assert seen["delivery_key"] == week_key
+        assert seen["send_key"] and seen["send_key"] != week_key and seen["send_key"].startswith(week_key)
+    finally:
+        run(server.db.bookings.delete_many({"tag": TAG}))
+        run(server.db.notification_log.delete_many({"key": week_key}))
 
 
 def test_send_now_on_a_wednesday_clears_this_weeks_monday_key(stub_job):

@@ -614,7 +614,7 @@ async def run_homework_step_rollup_job(db) -> dict:
 
 
 
-async def run_trainer_monday_digest_job(db) -> dict:
+async def run_trainer_monday_digest_job(db, *, manual_send_id: str | None = None) -> dict:
     """Monday-morning digest to the admin/operator.
     Wraps the week ahead: streak leaders, stale review queue, unanswered
     questions, lost-the-streak nudge list, just-completed plans, vaccines
@@ -772,7 +772,9 @@ async def run_trainer_monday_digest_job(db) -> dict:
             "expiring_vax": expiring_vax[:8],
             "week_bookings": week_bookings,
             "week_revenue_forecast": week_revenue_forecast,
-        }, delivery_key=key, delivery_meta=meta)
+        }, delivery_key=key, delivery_meta=meta,
+            # A manual "Send now" gets its own provider key, so a re-send within 24h is not dropped (review of 788d179).
+            send_key=f"{key}:send:{manual_send_id}" if manual_send_id else None)
         if ok:
             return {"sent": 1, "week_start": week_start, "week_end": week_end}
         return {"sent": 0, "reason": "email_send_failed", "week_start": week_start}
