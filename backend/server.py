@@ -11323,6 +11323,9 @@ class IncidentOut(IncidentIn):
     reported_by: str
     created_at: str
     edit_history: List[IncidentEditHistoryEntry] = []
+    # Set when the owner has read a serious incident (audit #35). Without these the list drops them.
+    owner_acknowledged_at: Optional[str] = None
+    owner_acknowledged_by: Optional[str] = None
 
 @api.get("/incidents", response_model=List[IncidentOut])
 async def list_incidents(_: dict = Depends(require_admin_and_permission("incidents")), dog_id: Optional[str] = None, include_archived: bool = False):
@@ -28400,7 +28403,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
                 "title": f"{len(serious)} serious incident{'s' if len(serious) != 1 else ''} to review",
                 "subtitle": ", ".join(f"{i.get('dog_name') or '?'} · {str(i.get('type') or '').replace('_', ' ')}" for i in serious[:4]),
                 "ts": now_dt.isoformat(),
-                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "cta": {"type": "open_screen", "screen": "incidents"},
                 "icon": "fa-triangle-exclamation",
             })
     except Exception as e:

@@ -38,6 +38,10 @@ const emptyForm = {
   staff_involved: [], manager_reviewed: false, client_notified: false, internal_notes: "",
 };
 
+// A serious incident stays in the owner's Action Center until they mark it read (audit #35).
+// Same rule as the server's Action Center item: severe, or a bite or an injury.
+const isSerious = (i) => i.severity === "severe" || i.type === "bite" || i.type === "injury";
+
 export default function Incidents({ openCreateOnMount = false, onCreateConsumed = () => {}, presetDogId = null }) {
   const confirm = useConfirm();
   const [incidents, setIncidents] = useState([]);
@@ -54,6 +58,16 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
     setIncidents(iRes.data); setDogs(dRes.data);
   };
   useEffect(() => { load(); }, []);
+
+  const acknowledge = async (i) => {
+    try {
+      await api.post(`/admin/incidents/${i.id}/acknowledge`);
+      toast.success("Marked as read. It leaves the Action Center.");
+      load();
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't mark it as read.");
+    }
+  };
 
   const openNew = () => {
     if (dogs.length === 0) { toast.error("Add a dog first"); return; }
@@ -139,6 +153,7 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
                   {i.follow_up_required && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shAccent/15 text-shAccent"><i className="fas fa-flag mr-1"/>Follow-up</span>}
                   {i.manager_reviewed && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shPrimary/15 text-shPrimary"><i className="fas fa-user-check mr-1"/>Reviewed</span>}
                   {i.client_notified && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shSecondary/15 text-shSecondary"><i className="fas fa-bell mr-1"/>Client notified</span>}
+                  {i.owner_acknowledged_at && <span data-testid={`incident-read-${i.id}`} className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shPrimary/15 text-shPrimary"><i className="fas fa-eye mr-1"/>Read by owner</span>}
                 </div>
                 <p className="text-sm text-shText font-black uppercase tracking-tight">{i.dog_name} <span className="text-shTextMuted font-normal"> · {i.client_name}</span></p>
                 <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">{i.date}{i.time?` · ${i.time}`:""} · reported by {i.reported_by}</p>
@@ -160,6 +175,12 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
                 )}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
+                {isSerious(i) && !i.owner_acknowledged_at && (
+                  <button onClick={()=>acknowledge(i)} data-testid={`ack-incident-${i.id}`}
+                          className="text-[13px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shPrimary/15 text-shPrimary border border-shPrimary/30 whitespace-nowrap">
+                    Mark as read
+                  </button>
+                )}
                 <button onClick={()=>openEdit(i)} className="text-shTextMuted hover:text-shText p-2" data-testid={`edit-incident-${i.id}`}><i className="fas fa-edit text-sm" /></button>
                 <button onClick={()=>remove(i.id)} className="text-shTextMuted hover:text-red-400 p-2"><i className="fas fa-trash text-sm" /></button>
               </div>
