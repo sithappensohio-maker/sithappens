@@ -14388,8 +14388,7 @@ async def admin_force_monday_digest(_: dict = Depends(require_admin)):
     """Force-fire the trainer Monday digest now (bypasses dedup for this week).
     Use this to preview the email or re-send after fixing something."""
     from daily_jobs import run_trainer_monday_digest_job
-    from datetime import datetime, timezone as _tz
-    today = datetime.now(_tz.utc).date().isoformat()
+    today = business_today().isoformat()   # the Ohio day, not the UTC day (audit #69)
     await db.notification_log.delete_many({"key": {"$regex": f"^trainer_monday_digest:{today}$"}})
     return await run_trainer_monday_digest_job(db)
 
@@ -14399,9 +14398,9 @@ async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
     """Force-fire the homework weekly digest (ignores the once-per-week dedup).
     Useful for: testing, sending early, or re-sending after a fix."""
     from daily_jobs import run_homework_weekly_digest_job
-    from datetime import datetime, timedelta, timezone as _tz
-    # Bust the dedup keys for THIS week so the job re-sends.
-    today = datetime.now(_tz.utc).date()
+    from datetime import timedelta
+    # Bust the dedup keys for THIS week so the job re-sends. The Ohio day, not UTC (audit #69).
+    today = business_today()
     monday = today - timedelta(days=today.weekday())
     week_start = monday.isoformat()
     await db.notification_log.delete_many({"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
@@ -28289,15 +28288,20 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     except Exception as e:
         logger.warning("today-brain vaccines query failed: %s", e)
 
-    # 3. Dogs booked today not checked in (urgent if past 10 AM local-ish; using UTC hour as proxy)
+    # 3. Dogs booked today not checked in. Urgent from 10 AM on the business clock (audit #82),
+    #    and only for a dog whose drop-off time has already passed (an afternoon drop-off is not late yet).
     try:
-        hour_utc = now_dt.hour  # admin reads this dashboard mid-day; rough heuristic
-        if hour_utc >= 14:  # ~10 AM ET / 7 AM PT
+        local_now = now_local()
+        if local_now.hour >= 10:
+            now_hhmm = local_now.strftime("%H:%M")
             no_in = []
             async for b in db.bookings.find(
                 {"date": today_iso, "status": "approved", "checked_in_at": {"$in": [None, ""]}},
                 {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1, "dropoff_time": 1},
             ):
+                drop = (b.get("dropoff_time") or "").strip()
+                if drop and drop > now_hhmm:
+                    continue
                 no_in.append(b)
             if no_in:
                 items.append({
@@ -46556,7 +46560,7 @@ async def employee_create_incident(body: EmployeeIncidentIn, user: dict = Depend
         "client_id": dog["owner_id"],
         "client_name": (client or {}).get("name", ""),
         "date": business_today().isoformat(),
-        "time": now.strftime("%H:%M"),
+        "time": now_local().strftime("%H:%M"),   # the business's clock, not UTC (audit #34)
         "type": body.type,
         "severity": body.severity,
         "description": body.description.strip(),

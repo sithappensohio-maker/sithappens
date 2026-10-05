@@ -2752,9 +2752,15 @@ def _short_time(iso: str | None) -> str:
     if not iso:
         return ""
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%-I:%M %p")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        # The clock the family sees is the business's (Ohio), not UTC (audit #85).
+        local = dt.astimezone(ZoneInfo("America/New_York"))
+        hour = local.hour % 12 or 12
+        return f"{hour}:{local.minute:02d} {'AM' if local.hour < 12 else 'PM'}"
     except Exception:
         return ""
 

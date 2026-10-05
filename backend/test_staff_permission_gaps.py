@@ -283,9 +283,10 @@ def test_a_manager_restoring_a_config_file_keeps_the_live_permission_matrix():
                     d["staff_role_permissions"] = {"manager": {"settings": True, "audit_log": True}}
             file = {"kind": "config", "version": server.CONFIG_BACKUP_VERSION, "collections": {"settings": grab}}
 
+            # A manager may not replace the settings at all: the restore is refused (audit #89),
+            # so the live matrix stays exactly as it was.
             r = _call("POST", "/backup/restore-config", who["manager"], json_body=file)
-            assert r.status_code == 200, r.text
-            assert r.json()["summary"]["settings"]["staff_permissions"].startswith("kept")
+            assert r.status_code == 403, r.text
             live = run(server.db.settings.find_one({"id": "global"}))["staff_role_permissions"]
             assert live == {"trainer": {"incidents": True}}
             assert server._perms_for({"role": "employee", "staff_role": "manager"})["settings"] is False
