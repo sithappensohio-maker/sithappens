@@ -244,6 +244,10 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         NOT in the payload are left untouched. Anything outside the configured
         allow-list is silently ignored — so you can't accidentally wipe clients
         by uploading the wrong file."""
+        # Replacing the settings is the same right as exporting them, so it needs the same
+        # permission (audit #89: managers could replace every setting through Restore Config).
+        if not _perms_for(user).get("settings"):
+            raise HTTPException(status_code=403, detail="Missing permission: settings")
         if body.kind != "config":
             raise HTTPException(
                 status_code=400,
