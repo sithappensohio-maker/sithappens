@@ -132,6 +132,7 @@ export default function RunSheet() {
                       <div>
                         <h5 className="text-lg font-black text-shText uppercase tracking-tight">{b.dog_name}</h5>
                         <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">{d.breed || "—"} · {d.sex} · {d.fixed==="Yes"?"Fixed":"Intact"}</p>
+                        {b.status === "pending" && <p className="text-[12px] font-black uppercase tracking-widest text-shAccent mt-1" data-testid={`rs-pending-${b.id}`}>Awaiting approval</p>}
                       </div>
                       <div className="text-right text-xs">
                         <p className="text-shTextMuted"><span className="text-shTextMuted font-black uppercase text-[15px] tracking-widest">Owner</span> {b.client_name}</p>
