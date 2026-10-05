@@ -53404,6 +53404,11 @@ async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, A
                 vacs = d.get("vaccines") or []
                 if not vacs:
                     has_missing = True; break
+                if isinstance(vacs, dict):
+                    # A dog record keeps each vaccine as type -> date. A standard type with no date, or a past one, is missing (audit #39).
+                    if any(not str(vacs.get(t) or "")[:10] or str(vacs.get(t))[:10] < today for t in ("rabies", "dhpp", "bordetella")):
+                        has_missing = True; break
+                    continue
                 for v in vacs:
                     if not isinstance(v, dict):
                         continue
