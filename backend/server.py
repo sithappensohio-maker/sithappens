@@ -47345,8 +47345,22 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
         "client_name": client_name,
         "updated_at": now_iso(),
     }
-    await db.retail_sales.update_one({"id": sale_id}, {"$set": patch})
-    return {**existing, **patch}
+    # The tax slice follows the new amount, the same rule create uses (audit #20). Without an explicit choice,
+    # a sale that was taxed stays taxed; one that was not stays untaxed.
+    taxed_now = body.apply_tax if body.apply_tax is not None else bool(existing.get("tax_amount"))
+    tax_doc = await _build_retail_sale_doc(
+        date=body.date, description=body.description, amount=patch["amount"], payment_method=patch["payment_method"],
+        apply_tax=taxed_now)
+    tax_fields = {k: tax_doc[k] for k in ("tax_amount", "tax_rate_pct", "pre_tax_amount") if k in tax_doc}
+    stale = [k for k in ("tax_amount", "tax_rate_pct", "pre_tax_amount") if k not in tax_doc and k in existing]
+    update = {"$set": {**patch, **tax_fields}}
+    if stale:
+        update["$unset"] = {k: "" for k in stale}
+    await db.retail_sales.update_one({"id": sale_id}, update)
+    result = {**existing, **patch, **tax_fields}
+    for k in stale:
+        result.pop(k, None)
+    return result
 
 
 @api.delete("/retail-sales/{sale_id}")
