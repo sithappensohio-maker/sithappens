@@ -1508,6 +1508,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                       <p className="text-shTextMuted text-[12px]">
                         {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
                         {o.is_guest_order && o.client_email ? ` · ${o.client_email}` : ""}
+                        {o.client_phone ? <> · <a href={`tel:${o.client_phone}`} className="underline" data-testid={`shop-order-phone-${o.id}`}>{o.client_phone}</a></> : null}
                       </p>
                       <p className="text-[11px] text-shTextMuted mt-1">
                         {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}

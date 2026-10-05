@@ -1345,6 +1345,8 @@ async def queue_admin_new_shop_order(order: dict, client: dict | None = None) ->
     client_name = order.get("client_name") or (client or {}).get("name") or "—"
     rows = [
         ("Client", client_name),
+        # The buyer's phone, so staff can ring a guest about a pickup (audit #74).
+        ("Phone", (order.get("client_phone") or "").strip() or "—"),
         ("Order #", order_number),
         ("Total", f"${float(order.get('total') or 0):.2f}"),
         ("Items", items_label),
