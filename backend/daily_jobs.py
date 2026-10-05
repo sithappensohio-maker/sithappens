@@ -435,6 +435,16 @@ async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
     }
 
 
+DEFAULT_PRACTICE_REMINDER_TIME = "18:00"
+
+
+def practice_reminder_due(client: dict, now: datetime) -> bool:
+    """Has the time this client picked for the practice reminder come (business clock)?
+    A client who never saved a time gets the 18:00 default (audit #84)."""
+    chosen = str(client.get("homework_reminder_time") or DEFAULT_PRACTICE_REMINDER_TIME).strip()[:5]
+    return chosen <= now.strftime("%H:%M")
+
+
 async def run_homework_practice_reminder_job(db) -> dict:
     """Daily 'time to practice' nudge for clients who opted in and whose
     reminder window includes today. Skips clients whose only open day was
@@ -458,6 +468,9 @@ async def run_homework_practice_reminder_job(db) -> dict:
     attempted = 0
     errors: list = []
     async for client in cursor:
+        # Each client gets the reminder at the time they chose, on the sweep that runs through the day (audit #84)
+        if not practice_reminder_due(client, now):
+            continue
         # De-dup: one reminder per client per day
         key = f"hw_reminder:{client['id']}:{today_iso}"
         if await _already_notified(db, key):
@@ -813,7 +826,6 @@ async def maybe_run_daily(db, *, min_hour: int | None = None) -> dict | None:
         results = {}
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
-        results["hw_reminder"] = await run_homework_practice_reminder_job(db)
         results["hw_step_rollup"] = await run_homework_step_rollup_job(db)
         plan = daily_plan(_today_local())
         if plan["trainer_monday_digest"]:

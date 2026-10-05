@@ -102,7 +102,7 @@ def _tracker(cid, did, **extra):
 
 def test_practice_reminders_and_recaps_skip_archived_families_and_removed_dogs():
     dow = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][_today().weekday()]
-    with _families(homework_reminder_enabled=True, homework_reminder_days=[dow]) as (ids, dogs):
+    with _families(homework_reminder_enabled=True, homework_reminder_days=[dow], homework_reminder_time="00:00") as (ids, dogs):
         for hw_dog, cid in ((dogs["live"], ids["live"]), (dogs["archived"], ids["gone"])):
             _tracker(cid, hw_dog, section_logs=[])
         _tracker(ids["live"], dogs["removed"], title=f"{TAG} removed-dog plan", section_logs=[])

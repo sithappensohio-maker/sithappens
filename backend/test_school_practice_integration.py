@@ -65,7 +65,7 @@ def test_portal_streak_tile_counts_school_practice_days():
 
 def test_reminder_job_nudges_school_students_not_already_practiced_today():
     dow = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][_today().weekday()]
-    with _client_and_dog(homework_reminder_enabled=True, homework_reminder_days=[dow]) as (c, dog):
+    with _client_and_dog(homework_reminder_enabled=True, homework_reminder_days=[dow], homework_reminder_time="00:00") as (c, dog):
         hw = _school_hw(c, dog, [1, 2])  # practiced yesterday, not today
         with patch.object(daily_jobs.email_service, "notify_client_homework_reminder", new=AsyncMock(return_value=True)) as m:
             res = run(daily_jobs.run_homework_practice_reminder_job(server.db))

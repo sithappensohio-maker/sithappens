@@ -1230,11 +1230,13 @@ function IncidentLogModal({ onClose }) {
     if (description.trim().length < 3) { setErr("Add a short description"); return; }
     setBusy(true);
     try {
-      await api.post("/employee/incidents", {
+      const { data } = await api.post("/employee/incidents", {
         dog_id: dogId, type, severity, description,
         action_taken: actionTaken, photo, vet_required: vetRequired,
       });
-      setMsg("Incident logged — admin notified.");
+      setMsg(data?.owner_alerted
+        ? "Incident logged. The owner has been emailed."
+        : "Incident logged. It is in the incident list for the owner to review.");
       setTimeout(onClose, 1100);
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail));

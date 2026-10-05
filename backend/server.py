@@ -29304,6 +29304,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("trophy_recheck", _maybe_recheck_trophies_today),
         ("recurring_auto_extend", _maybe_auto_extend_recurring_today),
         ("auto_backup", _maybe_auto_backup_tick),
+        # Practice reminders go out at each client's chosen time, not all at the daily run (audit #84).
+        ("practice_reminders", lambda: _practice_reminders_due_now()),
         # Stock held by Shop checkouts nobody will pay for (audit #57).
         ("shop_abandoned_checkouts", lambda: shop_abandon.sweep()),
         # Blank PINs/codes in Audit Log entries saved before audit #7 (once; marker-gated).
@@ -29317,6 +29319,12 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("prepaid_session_close", lambda: prepaid_close.run_job()),  # finished program lessons use their credit (audit #38)
         ("school_enrollment_mirror_sync", lambda: _run_once_per_business_day(school_mirror.SYNC_JOB, lambda: school_mirror.sync(db))),  # School HQ's copy (audit #54)
     ]
+
+
+async def _practice_reminders_due_now() -> dict:
+    """Send the practice reminders whose chosen time has come (run on every scheduler tick)."""
+    import daily_jobs
+    return await daily_jobs.run_homework_practice_reminder_job(db)
 
 
 def _safe_parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -46585,6 +46593,10 @@ async def employee_create_incident(body: EmployeeIncidentIn, user: dict = Depend
     }
     await db.incidents.insert_one(doc)
     doc.pop("_id", None)
+    # Serious incidents email the owner (audit #35); the staff member is told which it was.
+    doc["owner_alerted"] = False
+    if email_service.incident_needs_owner_email(doc):
+        doc["owner_alerted"] = bool(await email_service.queue_admin_incident_alert(doc))
     return doc
 
 

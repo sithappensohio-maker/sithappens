@@ -237,7 +237,7 @@ def test_new_templates_default_to_auto_extend():
 def test_scheduler_jobs_and_status_endpoint():
     names = [n for n, _ in server._scheduler_jobs()]
     assert names == ["daily_jobs", "archive_bookings", "trophy_recheck", "recurring_auto_extend", "auto_backup",
-                     "shop_abandoned_checkouts", "audit_log_secret_scrub", "reopened_bill_rebuild",
+                     "practice_reminders", "shop_abandoned_checkouts", "audit_log_secret_scrub", "reopened_bill_rebuild",
                      "gift_card_funding_spread", "friends_family_group_bills", "shop_income_split", "archive_sync", "prepaid_session_close",
                      "school_enrollment_mirror_sync"]
     st = run(server.admin_scheduler_status(_admin_user()))

@@ -1255,6 +1255,31 @@ async def queue_school_attention_email(event: dict, *, outbox_key: str) -> bool:
     )
 
 
+async def queue_admin_incident_alert(incident: dict) -> bool:
+    """A serious incident (severe, a bite or an injury) logged by staff emails the owner
+    at once. Other incidents are recorded and not emailed (audit #35). One email per incident."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping incident alert for %s", incident.get("id"))
+        return False
+    inc_id = incident.get("id") or ""
+    dog = incident.get("dog_name") or "a dog"
+    kind = str(incident.get("type") or "incident").replace("_", " ")
+    subject = f"Incident logged · {dog} · {kind}"
+    html = (f"<p>Staff logged a {str(incident.get('severity') or '').lower()} {kind} for {dog} "
+            f"on {incident.get('date') or ''} at {incident.get('time') or ''}.</p>"
+            f"<p>{(incident.get('description') or '').strip()}</p>"
+            "<p>Please review it in the Incidents screen.</p>")
+    return await _queue_email(
+        to_email=ADMIN_NOTIFICATION_EMAIL, subject=subject, html=html,
+        outbox_key=f"incident:owner:{inc_id}", on_success=None, attachments=None,
+        error="queued_at_incident",
+    )
+
+
+def incident_needs_owner_email(incident: dict) -> bool:
+    return str(incident.get("severity") or "").lower() == "severe" or str(incident.get("type") or "") in ("bite", "injury")
+
+
 async def queue_admin_shop_order_needs_attention(order: dict) -> bool:
     """A paid Shop order has a line that could not be fulfilled. The owner's new-order
     email was sent at payment time, before fulfilment, so it always said "Needs attention:
