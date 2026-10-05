@@ -36,7 +36,7 @@ test("Withdraw Student requires a non-empty reason before calling the API", () =
 // ---------------------------------------------------------------------------
 
 test("Remove is presented as the zero-history path, distinct from Withdraw Student", () => {
-  expect(dogTrainingTabSrc).toMatch(/Only works for an enrollment with no checkpoint history yet — use Withdraw Student for one with real progress\./);
+  expect(dogTrainingTabSrc).toMatch(/Only works for an enrollment with no lesson progress or checkpoint history yet — use Withdraw Student for one with real progress\./);
   expect(dogTrainingTabSrc).toMatch(/api\.delete\(`\/school\/enrollments\/\$\{se\.id\}`\)/);
 });
 
