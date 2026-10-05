@@ -39313,19 +39313,38 @@ async def verify_pos_drawer_token(body: Dict[str, Any]):
     return {"ok": True, "workstation_id": claims.get("workstation_id")}
 
 
-async def _audit_retry_open(user: dict, workstation_id: Optional[str], **refs: Any) -> None:
+async def _audit_retry_open(user: dict, workstation_id: Optional[str], authorizer: Optional[dict], **refs: Any) -> None:
     """A Retry Open or reprint that re-opens the cash drawer is written to the drawer audit, like a manual open
-    (audit #48). It creates no money and no till entry."""
+    (audit #48), with the employee whose register PIN authorized it. It creates no money and no till entry."""
     await db.pos_drawer_audit.insert_one({
         "id": str(uuid.uuid4()),
         "user_id": user.get("id"), "user_name": user.get("name") or user.get("email"),
         "reason": "Retry open or reprint", "workstation_id": workstation_id,
-        "source": "retry_open", "created_at": now_iso(), **{k: v for k, v in refs.items() if v},
+        "source": "retry_open",
+        "authorized_by_id": (authorizer or {}).get("id"),
+        "authorized_by_name": (authorizer or {}).get("name") or (authorizer or {}).get("email") or "",
+        "created_at": now_iso(), **{k: v for k, v in refs.items() if v},
     })
 
 
+async def _authorize_drawer_reopen(request: Request, body: Optional[Dict[str, Any]]) -> dict:
+    """Reopening the drawer from a reprint or Retry Open needs the register PIN of the employee doing it, the
+    same as a No-Sale open (audit #48). That employee must be able to take payments. Returns them."""
+    pin = str((body or {}).get("pin") or "").strip()
+    if not pin:
+        raise HTTPException(status_code=400, detail="Enter your register PIN to open the drawer.")
+    await _enforce_rate_limit(request, "retry_open_pin", _client_ip(request), limit=10, window_seconds=300)
+    employee = await register_domain_services.find_user_by_register_pin(pin)
+    if not employee:
+        raise HTTPException(status_code=403, detail="PIN not recognized. Check the digits, or set your register PIN first.")
+    full = await db.users.find_one({"id": employee["id"]}, {"_id": 0})
+    if not _perms_for(full or employee).get("take_payments"):
+        raise HTTPException(status_code=403, detail="That employee can't take payments, so they can't open the drawer.")
+    return employee
+
+
 @api.post("/invoices/{invoice_id}/pos-tokens")
-async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str, Any]] = None, user: dict = Depends(require_employee_or_admin)):
+async def issue_pos_tokens_for_invoice(request: Request, invoice_id: str, body: Optional[Dict[str, Any]] = None, user: dict = Depends(require_employee_or_admin)):
     """On-demand hardware-action token (re)issuance for an existing invoice —
     used for reprints, and for retrying a failed hardware action right after
     checkout (the original token was already single-use-consumed the moment
@@ -39341,6 +39360,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
     workstation_id = body.get("workstation_id")
     payment_ids = body.get("payment_ids")
     actions = body.get("actions") or ["print_receipt"]
+    authorizer = await _authorize_drawer_reopen(request, body) if "open_drawer" in actions else None
     out = {}
     if "print_receipt" in actions and (refusal := await billing_tab_sync.receipt_refusal(invoice)):
         raise HTTPException(status_code=409, detail=refusal)
@@ -39352,7 +39372,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, invoice_id=invoice_id,
         )
-        await _audit_retry_open(user, workstation_id, invoice_id=invoice_id)
+        await _audit_retry_open(user, workstation_id, authorizer, invoice_id=invoice_id)
     return out
 
 
@@ -43508,7 +43528,7 @@ async def get_pos_sale(sale_id: str, user: dict = Depends(require_employee_or_ad
 
 
 async def issue_pos_tokens_for_sale(
-    sale_id: str, body: Optional[Dict[str, Any]] = None,
+    request: Request, sale_id: str, body: Optional[Dict[str, Any]] = None,
     user: dict = Depends(require_employee_or_admin),
 ):
     """On-demand hardware-action token (re)issuance for an existing POS sale
@@ -43523,6 +43543,7 @@ async def issue_pos_tokens_for_sale(
     body = body or {}
     workstation_id = body.get("workstation_id")
     actions = body.get("actions") or ["print_receipt"]
+    authorizer = await _authorize_drawer_reopen(request, body) if "open_drawer" in actions else None
     out = {}
     if "print_receipt" in actions:
         out["print_receipt_token"] = await _issue_pos_token(
@@ -43532,13 +43553,13 @@ async def issue_pos_tokens_for_sale(
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, pos_sale_id=sale_id,
         )
-        await _audit_retry_open(user, workstation_id, pos_sale_id=sale_id)
+        await _audit_retry_open(user, workstation_id, authorizer, pos_sale_id=sale_id)
     return out
 
 
 @api.post("/clients/{client_id}/ledger/{ledger_id}/pos-tokens")
 async def issue_pos_tokens_for_ledger_row(
-    client_id: str, ledger_id: str, body: Optional[Dict[str, Any]] = None,
+    request: Request, client_id: str, ledger_id: str, body: Optional[Dict[str, Any]] = None,
     user: dict = Depends(require_employee_or_admin),
 ):
     """On-demand hardware-action token (re)issuance for a tab/account
@@ -43552,6 +43573,7 @@ async def issue_pos_tokens_for_ledger_row(
     body = body or {}
     workstation_id = body.get("workstation_id")
     actions = body.get("actions") or ["print_receipt"]
+    authorizer = await _authorize_drawer_reopen(request, body) if "open_drawer" in actions else None
     out = {}
     if "print_receipt" in actions:
         out["print_receipt_token"] = await _issue_pos_token(
@@ -43561,7 +43583,7 @@ async def issue_pos_tokens_for_ledger_row(
         out["open_drawer_token"] = await _issue_pos_token(
             action="open_drawer", workstation_id=workstation_id, ledger_id=ledger_id,
         )
-        await _audit_retry_open(user, workstation_id, ledger_id=ledger_id)
+        await _audit_retry_open(user, workstation_id, authorizer, ledger_id=ledger_id)
     return out
 
 
