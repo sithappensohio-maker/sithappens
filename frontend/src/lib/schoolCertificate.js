@@ -313,3 +313,16 @@ export function printSchoolCertificate({
   }
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
+
+// The final assessment the certificate names its trainer from. HQ checkpoints carry the grader as
+// graded_by_name (audit #71); an in-person checkpoint may carry trainer_name.
+export function finalAssessmentSummary(checkpoints) {
+  const final = (checkpoints || []).find((c) =>
+    c?.rubric_snapshot?.assessment_type === "final_assessment" && String(c.graded_by_name || c.trainer_name || "").trim());
+  if (!final) return null;
+  return {
+    trainer_name: String(final.graded_by_name || final.trainer_name).trim(),
+    handler_overall: final.handler_overall,
+    dog_overall: final.dog_overall,
+  };
+}

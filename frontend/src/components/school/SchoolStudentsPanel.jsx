@@ -11,7 +11,7 @@ import HomeworkReportPanel from "../HomeworkReportPanel";
 import TrainingSessionWorkspace from "../TrainingSessionWorkspace";
 import VisibilityBadge from "../training/VisibilityBadge";
 import ProgressRing from "../training/ProgressRing";
-import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../lib/schoolCertificate";
+import { finalAssessmentSummary, printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../lib/schoolCertificate";
 import { useAuth } from "../../lib/auth";
 import TrainerAssignField from "./TrainerAssignField";
 
@@ -119,7 +119,6 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
   const certificateTemplate=resolveSchoolCertificateTemplate(snap.name||"School course",certificateConfig);
   const printCurrentCertificate=()=>{
     const passed=(data?.checkpoints||[]).filter(c=>c.outcome==="advance");
-    const trainerCheckpoint=(data?.checkpoints||[]).find(c=>c.trainer_name)||null;
     printSchoolCertificate({
       clientName:data?.client?.name||"", dogName:data?.dog?.name||"Dog", programName:snap.name||"School course",
       schoolEnrollmentId:studentId, certificateConfig,
@@ -128,7 +127,7 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
         total_modules:(snap.modules||[]).length,
         total_lessons:(snap.modules||[]).reduce((n,m)=>n+(m.lessons||[]).filter(l=>l.active!==false).length,0),
         checkpoints_passed:passed.length,
-        final_assessment:trainerCheckpoint?{trainer_name:trainerCheckpoint.trainer_name,handler_overall:trainerCheckpoint.handler_overall,dog_overall:trainerCheckpoint.dog_overall}:null,
+        final_assessment:finalAssessmentSummary(data?.checkpoints),
       },
     });
   };
