@@ -22136,9 +22136,10 @@ async def _finish_school_advancement(
     exact same logical advancement (Online School Phase 2's grading resume
     step relies on this). Shared by the client's own portal_school_advance
     and the trainer grading state machine."""
-    if is_final and _school_delivery_mode(se, enrollment) == "hybrid":
-        # Owner rule (2026-09-26): a hybrid client moves through the lessons
-        # themselves, but only the owner or the trainer graduates the dog.
+    if is_final and _school_delivery_mode(se, enrollment) in ("hybrid", "in_person"):
+        # Owner rule (2026-09-26): a hybrid or in-person client moves through the lessons
+        # themselves, but only the owner or the trainer graduates the dog (audit #29: an
+        # in-person final checkpoint used to graduate the dog straight away).
         # Finishing the last lesson flags it ready to graduate; the program
         # stays active until they confirm it.
         ts = now_iso()
@@ -54831,6 +54832,7 @@ _DOG_MERGE_REF_COLLECTIONS: List[Tuple[str, str]] = [
     ("client_files", "dog_id"),
     ("review_requests", "dog_id"),
     ("recurring_templates", "dog_id"), ("waitlist", "dog_id"),   # never left on a removed record (audit #36)
+    ("school_enrollments", "dog_id"),   # the Online School course follows the dog (audit #28)
 ]
 
 
