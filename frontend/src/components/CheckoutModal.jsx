@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isFriendsFamily, isFriendsDog } from "../lib/friendsFamily";
 import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
+import { useOptionalPromptDialog } from "../lib/promptCtx";
+import { askRegisterPin } from "../lib/registerPin";
 import { todayISO } from "../lib/date";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
@@ -32,6 +34,7 @@ const fmtBtDay = (iso) => {
 };
 
 function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDay, onLateDayQuestion, onLateDayUndo }) {
+  const promptDialog = useOptionalPromptDialog();
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
   useEditLock(true);
@@ -398,9 +401,16 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // needs a FRESH token from the server, never the already-spent one.
   const retryHardware = async (action) => {
     if (!hwInvoiceId) return;
+    const payload = { actions: [action] };
+    if (action === "open_drawer") {
+      // Opening the drawer from a reprint needs the employee's register PIN (audit #48).
+      const pin = await askRegisterPin(promptDialog);
+      if (!pin) return;
+      payload.pin = pin;
+    }
     setHwBusy(true);
     try {
-      const { data } = await api.post(`/invoices/${hwInvoiceId}/pos-tokens`, { actions: [action] });
+      const { data } = await api.post(`/invoices/${hwInvoiceId}/pos-tokens`, payload);
       if (action === "open_drawer") {
         const result = await posOpenDrawer(data.open_drawer_token);
         setHwResult(prev => ({ ...prev, drawerToken: data.open_drawer_token, drawer: result }));

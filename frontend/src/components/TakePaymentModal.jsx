@@ -19,11 +19,14 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { useOptionalPromptDialog } from "../lib/promptCtx";
+import { askRegisterPin } from "../lib/registerPin";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 import ReceiptLogo from "./ReceiptLogo";
 
 export default function TakePaymentModal({ onClose, onSuccess, presetClientId }) {
+  const promptDialog = useOptionalPromptDialog();
   const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState(presetClientId || "");
   const [clientQuery, setClientQuery] = useState("");
@@ -89,12 +92,19 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
 
   const retryHardware = async (action) => {
     if (!hwInvoiceId && !hwLedgerId) return;
+    const payload = { actions: [action] };
+    if (action === "open_drawer") {
+      // Opening the drawer from a reprint needs the employee's register PIN (audit #48).
+      const pin = await askRegisterPin(promptDialog);
+      if (!pin) return;
+      payload.pin = pin;
+    }
     setHwBusy(true);
     try {
       const url = hwInvoiceId
         ? `/invoices/${hwInvoiceId}/pos-tokens`
         : `/clients/${clientId}/ledger/${hwLedgerId}/pos-tokens`;
-      const { data } = await api.post(url, { actions: [action] });
+      const { data } = await api.post(url, payload);
       if (action === "open_drawer") {
         const result = await posOpenDrawer(data.open_drawer_token);
         setHwResult(prev => ({ ...prev, drawerToken: data.open_drawer_token, drawer: result }));

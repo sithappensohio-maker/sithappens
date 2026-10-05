@@ -40,6 +40,8 @@ import {
 } from "../lib/posAgent";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { useConfirm } from "../lib/useConfirm";
+import { useOptionalPromptDialog } from "../lib/promptCtx";
+import { askRegisterPin } from "../lib/registerPin";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
 import { creditPackStaffLine, pickupActionToast } from "../lib/shopPolish";
 import {
@@ -57,6 +59,7 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 export default function Pos({ onOpenShopManager } = {}) {
   const { can } = useAuth();
   const confirm = useConfirm();
+  const promptDialog = useOptionalPromptDialog();
   const canBookingEdit = can("booking_edit");
   // Walk-in intake creates an owner + dog, so it follows clients_edit — the
   // same permission the Client Hub uses — rather than booking_edit.
@@ -701,9 +704,16 @@ export default function Pos({ onOpenShopManager } = {}) {
 
   const retryHardware = async (action) => {
     if (!saleResult?.pos_sale_id) return;
+    const payload = { actions: [action] };
+    if (action === "open_drawer") {
+      // Opening the drawer from a reprint needs the employee's register PIN (audit #48).
+      const pin = await askRegisterPin(promptDialog);
+      if (!pin) return;
+      payload.pin = pin;
+    }
     setHwBusy((b) => ({ ...b, [action]: true }));
     try {
-      const { data } = await api.post(`/pos/sales/${saleResult.pos_sale_id}/pos-tokens`, { actions: [action] });
+      const { data } = await api.post(`/pos/sales/${saleResult.pos_sale_id}/pos-tokens`, payload);
       const token = action === "print_receipt" ? data.print_receipt_token : data.open_drawer_token;
       const result = action === "print_receipt" ? await posPrintReceipt(token) : await posOpenDrawer(token);
       if (result.ok) toast.success(action === "print_receipt" ? "Receipt sent" : "Drawer opened");

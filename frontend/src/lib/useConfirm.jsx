@@ -6,9 +6,9 @@
  * the app shell instead.
  */
 import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { PromptCtx } from "./promptCtx";
 
 const ConfirmCtx = createContext(null);
-const PromptCtx = createContext(null);
 
 export function ConfirmProvider({ children }) {
   const [state, setState] = useState(null); // { kind, opts }
@@ -120,6 +120,7 @@ function PromptDialog({
   cancelText = "Cancel",
   tone = "info",
   icon = "fa-pen",
+  inputType = "text",
   onConfirm,
   onCancel,
 }) {
@@ -135,6 +136,9 @@ function PromptDialog({
         {body && <p className="text-[14px] text-shTextMuted leading-relaxed mb-4 whitespace-pre-wrap">{body}</p>}
         <input
           autoFocus
+          type={inputType}
+          autoComplete="off"
+          inputMode={inputType === "password" ? "numeric" : undefined}
           value={value}
           placeholder={placeholder}
           onChange={(e)=>setValue(e.target.value)}
