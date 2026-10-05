@@ -8,6 +8,16 @@ from typing import Dict, List
 
 from . import services as training_services
 
+def video_awaiting_review(log: dict) -> bool:
+    """A practice video the trainer still has to review: the same logs the Practice Review queue lists
+    (server _practice_pending_log_match). A photo, an admin-logged or rest entry, or a video already
+    reviewed does not count (audit #70)."""
+    fv = log.get("field_values") or {}
+    return (bool(fv.get("__video_id")) and log.get("review_status") is None
+            and log.get("logged_by_role") != "admin" and not log.get("is_rest_day")
+            and log.get("submission_status") not in ("approved", "needs_redo", "rest"))
+
+
 async def build_training_today(
     *, db, user: dict, business_today,
     staff_school_delivery_channels, school_delivery_channels,
@@ -183,7 +193,7 @@ async def build_training_today(
         for h in hw_rows:
             for l in (h.get("section_logs") or []):
                 fv = l.get("field_values") or {}
-                if fv.get("__video_id") or fv.get("__photo"):
+                if video_awaiting_review(l):
                     media_awaiting += 1
                 # UI Phase 5 — same __difficulty/__could_not_complete keys
                 # GET /admin/homework/pending-reviews already surfaces per-day
