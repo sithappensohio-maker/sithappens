@@ -54,7 +54,13 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         open_entry = await db.time_clock_entries.find_one(
             {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
         )
-        return {"open": open_entry}
+        # Hours already worked today, for the clock tile (audit #61). Same window as employee_me.
+        today = business_today().isoformat()
+        today_entries = await db.time_clock_entries.find(
+            {"user_id": user["id"], "clock_in_at": {"$gte": f"{today}T00:00:00"}}, {"_id": 0, "hours": 1, "clock_out_at": 1},
+        ).to_list(50)
+        today_hours = round(sum(float(e.get("hours") or 0) for e in today_entries if e.get("clock_out_at")), 2)
+        return {"open": open_entry, "today_hours": today_hours}
 
     @api.post("/time-clock/clock-in")
     async def time_clock_in(body: ClockInIn, user: dict = Depends(require_employee_or_admin)):
