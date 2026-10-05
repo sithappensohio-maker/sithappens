@@ -45338,17 +45338,20 @@ async def _tax_center_payload(year: int, as_of: Optional[date] = None) -> Dict[s
 
     # ── Upcoming tax dates — authoritative deadline builders only ───────────
     upcoming: List[Dict[str, Any]] = []
-    for r in _quarter_due_dates(yr):
-        if r["due"] >= today_iso:
-            upcoming.append({"date": r["due"], "jurisdiction": "federal",
-                             "label": f"Federal estimated tax — installment {r['quarter']} (1040-ES)"})
-    for r in _ohio_quarter_due_dates(yr):
-        if r["due"] >= today_iso:
-            upcoming.append({"date": r["due"], "jurisdiction": "ohio",
-                             "label": f"Ohio estimated tax — installment {r['quarter']} (IT 1040ES)"})
-            if sd_applicable == "yes":
-                upcoming.append({"date": r["due"], "jurisdiction": "ohio_school_district",
-                                 "label": f"School-district estimated tax — installment {r['quarter']} (SD 100ES)"})
+    # The prior tax year's 4th installment is due January 15 of this year, so it stays on the list until then (audit #18).
+    for tax_yr in (yr - 1, yr):
+        ty = "" if tax_yr == yr else f" (tax year {tax_yr})"
+        for r in _quarter_due_dates(tax_yr):
+            if r["due"] >= today_iso:
+                upcoming.append({"date": r["due"], "jurisdiction": "federal",
+                                 "label": f"Federal estimated tax — installment {r['quarter']} (1040-ES){ty}"})
+        for r in _ohio_quarter_due_dates(tax_yr):
+            if r["due"] >= today_iso:
+                upcoming.append({"date": r["due"], "jurisdiction": "ohio",
+                                 "label": f"Ohio estimated tax — installment {r['quarter']} (IT 1040ES){ty}"})
+                if sd_applicable == "yes":
+                    upcoming.append({"date": r["due"], "jurisdiction": "ohio_school_district",
+                                     "label": f"School-district estimated tax — installment {r['quarter']} (SD 100ES){ty}"})
     for s in (sales.get("periods") or []):
         due = s.get("effective_due_date")
         if due and due >= today_iso and s.get("status") in ("open", "ready_to_file", "filed_payment_pending"):
