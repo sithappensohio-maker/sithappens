@@ -1,6 +1,6 @@
 import { Toaster, toast } from "sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
 import { addRecent } from "./lib/recentlyOpened";
@@ -35,6 +35,7 @@ import BulkEmail from "./screens/BulkEmail";
 import ClientMessages from "./screens/ClientMessages";
 import Announcements from "./screens/Announcements";
 import Claim from "./screens/Claim";
+import ConfirmEmail from "./screens/ConfirmEmail";
 import ShareCertificate from "./screens/ShareCertificate";
 import PublicShop from "./screens/PublicShop";
 import GuestOrderStatus from "./screens/GuestOrderStatus";
@@ -912,6 +913,11 @@ function ClaimRoute() {
   return <Claim token={token} />;
 }
 
+function ConfirmEmailRoute() {
+  const [params] = useSearchParams();
+  return <ConfirmEmail token={params.get("token") || ""} />;
+}
+
 function CertificateShareRoute() {
   const { token = "" } = useParams();
   return <ShareCertificate token={token} />;
@@ -942,6 +948,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/claim/:token" element={<ErrorBoundary><ClaimRoute /></ErrorBoundary>} />
+      <Route path="/confirm-email" element={<ErrorBoundary><ConfirmEmailRoute /></ErrorBoundary>} />
       <Route path="/share/cert/:token" element={<ErrorBoundary><CertificateShareRoute /></ErrorBoundary>} />
       <Route path="/" element={<AppProviders><RootGate /></AppProviders>} />
       <Route path="/login" element={<AppProviders><LoginRoute /></AppProviders>} />

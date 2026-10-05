@@ -17,6 +17,8 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
   const [err, setErr] = useState("");
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [passwordJustSet, setPasswordJustSet] = useState(false);
+  // Set once the new address is saved as pending: the change waits for the link sent to it.
+  const [pendingEmail, setPendingEmail] = useState("");
 
   const save = async () => {
     setErr("");
@@ -37,8 +39,15 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
     }
     setSaving(true);
     try {
-      await api.put("/portal/me", { ...form, email: em });
+      const { data } = await api.put("/portal/me", { ...form, email: em });
       onSaved?.();
+      // The new address is used only after the family opens the link sent to it (audit #27).
+      if (data?.email_change_pending) {
+        setPendingEmail(em);
+        setForm((f) => ({ ...f, email: client?.email || "" }));
+        setSaving(false);
+        return;
+      }
       onClose();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
     setSaving(false);
@@ -70,6 +79,18 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
           </div>
         )}
 
+        {pendingEmail && (
+          <div className="border border-shSecondary/40 rounded-xl p-4 mb-4" style={{ background: "rgba(0,169,224,0.08)" }} data-testid="pp-email-pending">
+            <p className="text-[13px] font-bold uppercase tracking-widest text-shSecondary mb-1">
+              <i className="fas fa-envelope mr-1.5"/>Confirm your new email
+            </p>
+            <p className="text-[12px] text-shTextMuted leading-relaxed">
+              We sent a link to <strong className="break-all">{pendingEmail}</strong>. Your email changes once you open that link.
+              Your other details are saved, and sign-in and receipts use your current address until then.
+            </p>
+          </div>
+        )}
+
         <div className="space-y-4">
           {[
             { k: "name", label: "Full Name *", placeholder: "", type: "text" },
@@ -94,10 +115,16 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
           {err && <div className="text-[14px] text-shDanger bg-shDanger/10 rounded p-3 uppercase font-bold">{err}</div>}
 
           <div className="flex justify-end gap-3 pt-2">
-            <PremiumButton variant="ghost" onClick={onClose}>Cancel</PremiumButton>
-            <PremiumButton variant="primary" onClick={save} disabled={saving} data-testid="pp-submit">
-              {saving ? "Saving…" : "Save Profile"}
-            </PremiumButton>
+            {pendingEmail ? (
+              <PremiumButton variant="primary" onClick={onClose} data-testid="pp-done">Done</PremiumButton>
+            ) : (
+              <>
+                <PremiumButton variant="ghost" onClick={onClose}>Cancel</PremiumButton>
+                <PremiumButton variant="primary" onClick={save} disabled={saving} data-testid="pp-submit">
+                  {saving ? "Saving…" : "Save Profile"}
+                </PremiumButton>
+              </>
+            )}
           </div>
         </div>
       </div>
