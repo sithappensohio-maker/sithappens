@@ -3772,6 +3772,36 @@ def _service_hours_for_date(settings: dict, service_type: str, target_date: date
     return dict(row or {})
 
 
+def _timed_booking_refusal(
+    start_local: datetime, now_business: datetime, svc_rules: dict, selected_service: Optional[dict],
+    service_type: str, *, explicit_start: bool = True,
+) -> Optional[tuple]:
+    """(code, message, action) when the time rules refuse a booking starting at `start_local`, else None.
+
+    The booking POST and the public time grid both read this, so a slot the grid
+    offers is one the booking accepts (audit #46). The date-in-the-past check stays
+    with the caller, and admins skip these rules altogether.
+    """
+    req_date = start_local.date()
+    today = now_business.date()
+    if explicit_start and start_local <= now_business:
+        return ("time_in_past", "That time has already passed. Please pick a later time.", "pick_time")
+    if svc_rules.get("same_day") is False and req_date == today:
+        return ("same_day_not_allowed", f"{service_type.title()} can't be booked for today online. Please pick tomorrow or later, or call Sit Happens about today.", "pick_date")
+    label = (selected_service or {}).get("name") or service_type.title()
+    min_lead = svc_rules.get("min_lead_hours")
+    if isinstance(min_lead, (int, float)) and min_lead > 0:
+        hours_lead = (start_local - now_business).total_seconds() / 3600.0
+        if hours_lead < float(min_lead):
+            return ("notice_too_short", f"{label} needs at least {int(min_lead)} hours' notice. Please pick a later date or time.", "pick_date")
+    max_adv = svc_rules.get("max_advance_days")
+    if isinstance(max_adv, (int, float)) and max_adv > 0:
+        if (req_date - today).days > int(max_adv):
+            last_day = today + timedelta(days=int(max_adv))
+            return ("too_far_ahead", f"{label} can only be booked up to {int(max_adv)} days ahead. Please pick a date on or before {pretty_date(last_day.isoformat())}.", "pick_date")
+    return None
+
+
 def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
     """Resolve the actual booking start in America/New_York.
 
@@ -4203,22 +4233,9 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         if req_date < today:
             raise BookingBlocked(400, "That date has already passed. Please pick today or a later date.", code="date_in_past", action="pick_date")
         has_explicit_start = bool((body.time or "").strip() or (body.dropoff_time or "").strip())
-        if has_explicit_start and booking_start_local <= now_business:
-            raise BookingBlocked(400, "That time has already passed. Please pick a later time.", code="time_in_past", action="pick_time")
-        if svc_rules.get("same_day") is False and req_date == today:
-            raise BookingBlocked(400, f"{body.service_type.title()} can't be booked for today online. Please pick tomorrow or later, or call Sit Happens about today.", code="same_day_not_allowed", action="pick_date")
-        min_lead = svc_rules.get("min_lead_hours")
-        if isinstance(min_lead, (int, float)) and min_lead > 0:
-            hours_lead = (booking_start_local - now_business).total_seconds() / 3600.0
-            if hours_lead < float(min_lead):
-                label = (selected_service or {}).get("name") or body.service_type.title()
-                raise BookingBlocked(400, f"{label} needs at least {int(min_lead)} hours' notice. Please pick a later date or time.", code="notice_too_short", action="pick_date")
-        max_adv = svc_rules.get("max_advance_days")
-        if isinstance(max_adv, (int, float)) and max_adv > 0:
-            if (req_date - today).days > int(max_adv):
-                label = (selected_service or {}).get("name") or body.service_type.title()
-                last_day = today + timedelta(days=int(max_adv))
-                raise BookingBlocked(400, f"{label} can only be booked up to {int(max_adv)} days ahead. Please pick a date on or before {pretty_date(last_day.isoformat())}.", code="too_far_ahead", action="pick_date")
+        refusal = _timed_booking_refusal(booking_start_local, now_business, svc_rules, selected_service, body.service_type, explicit_start=has_explicit_start)
+        if refusal:
+            raise BookingBlocked(400, refusal[1], code=refusal[0], action=refusal[2])
 
     # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
     # book regular services; admin can override by passing the booking through
@@ -5853,6 +5870,14 @@ async def list_time_slots(
     # and Meet & Greets (audit #34) — to see if each candidate slot overlaps one.
     existing = await time_pool.appointments(db, date_str, settings=settings, default_minutes=_get_default_duration)
 
+    # The time rules the booking itself applies (audit #46), so a greyed slot is one Book would refuse.
+    try:
+        grid_date = date.fromisoformat(date_str)
+    except ValueError:
+        grid_date = None
+    svc_rules = _booking_flow_rules_for(settings, service_type, service_id)
+    now_business = datetime.now(BUSINESS_TZ)
+
     # Generate candidate slots: open → close every 30 min.
     candidates: List[Dict[str, Any]] = []
     for total in range(open_min, close_min, 30):
@@ -5861,6 +5886,17 @@ async def list_time_slots(
             continue
         hh, mm = divmod(total, 60)
         label = f"{hh:02d}:{mm:02d}"
+        if grid_date is not None and user.get("role") != "admin":
+            refusal = _timed_booking_refusal(
+                datetime(grid_date.year, grid_date.month, grid_date.day, hh, mm, tzinfo=BUSINESS_TZ),
+                now_business, svc_rules, selected, service_type,
+            )
+            if refusal:
+                candidates.append({
+                    "time": label, "available": False, "blocked_by": refusal[0],
+                    "capacity": slot_capacity, "booked": 0, "seats_left": 0,
+                })
+                continue
         blocked_by = None
         same_service_used = 0
         for b in existing:
