@@ -188,11 +188,17 @@ def derive_period_state(
         # Post-filing variance: recompute vs the frozen snapshot. Never
         # rewrite the snapshot — surface the drift for human review.
         if current_liability is not None and "liability" in snap:
-            diff = round(float(current_liability) - float(snap["liability"] or 0), 2)
+            # Ledger against ledger: the typed remittance is not what drift is measured from, so a typed figure
+            # that differed from the ledger at filing does not flag forever. Filings made before the ledger
+            # figure was stored fall back to the typed one (audit #54).
+            baseline = snap.get("ledger_liability_at_filing")
+            if baseline is None:
+                baseline = snap["liability"]
+            diff = round(float(current_liability) - float(baseline or 0), 2)
             if abs(diff) >= 0.005:
                 state["needs_review"] = True
                 state["variance"] = {
-                    "filed_liability": round(float(snap["liability"] or 0), 2),
+                    "filed_liability": round(float(baseline or 0), 2),
                     "current_liability": round(float(current_liability), 2),
                     "difference": diff,
                     "message": ("A transaction/refund dated in this previously "

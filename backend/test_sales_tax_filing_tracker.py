@@ -251,6 +251,29 @@ def test_lm_snapshot_immutable_variance_flagged():
     assert filing["snapshot"]["liability"] == 300.0  # untouched
 
 
+def test_a_typed_figure_that_differs_from_the_ledger_at_filing_is_not_drift():
+    """Drift is measured ledger against ledger. A typed remittance that differed from the
+    ledger when it was filed is not a change to the period (audit #54)."""
+    p = stt.period_for_date("monthly", date(2026, 7, 10))
+    filing = {"id": "f3", "filed_date": "2026-08-10", "is_zero_return": False,
+              "snapshot": {"liability": 290.0, "ledger_liability_at_filing": 300.0, "amount_to_remit": 290.0},
+              "payments": [{"amount": 290.0}]}
+    st = stt.derive_period_state(p, filing, date(2026, 8, 16), "2026-07-01", current_liability=300.0)
+    assert not st["needs_review"] and st["variance"] is None
+    st2 = stt.derive_period_state(p, filing, date(2026, 8, 16), "2026-07-01", current_liability=295.0)
+    assert st2["needs_review"]
+    assert st2["variance"]["filed_liability"] == 300.0 and st2["variance"]["difference"] == -5.0
+
+
+def test_a_legacy_filing_without_the_ledger_figure_keeps_its_typed_check():
+    p = stt.period_for_date("monthly", date(2026, 7, 10))
+    filing = {"id": "f4", "filed_date": "2026-08-10", "is_zero_return": False,
+              "snapshot": {"liability": 300.0, "amount_to_remit": 300.0},
+              "payments": [{"amount": 300.0}]}
+    st = stt.derive_period_state(p, filing, date(2026, 8, 16), "2026-07-01", current_liability=290.0)
+    assert st["needs_review"] and st["variance"]["filed_liability"] == 300.0
+
+
 # ── Due-date override: statutory preserved, adjusted distinct ───────────────
 def test_due_date_override_distinct_from_statutory():
     p = stt.period_for_date("monthly", date(2026, 7, 10))
