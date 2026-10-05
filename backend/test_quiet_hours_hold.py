@@ -87,6 +87,8 @@ def _booking(client, **over):
     doc = {"id": str(uuid.uuid4()), "client_id": client["id"], "client_name": client["name"], "dog_name": f"{TAG} Rex",
            "service_type": "daycare", "date": "2026-10-05", "status": "approved", "tag": TAG, "created_at": server.now_iso()}
     doc.update(over)
+    if doc["status"] in ("checked_out", "completed"):   # a finished visit has been checked out (audit #79)
+        doc.setdefault("checked_out_at", "2026-10-05T21:00:00+00:00")
     run(server.db.bookings.insert_one(dict(doc)))
     return doc
 

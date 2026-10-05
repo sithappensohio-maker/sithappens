@@ -9694,6 +9694,9 @@ async def _maybe_send_report_card_email(booking: dict) -> dict:
         return {"sent": False, "attempted": False, "reason": "already attempted"}
     if (booking.get("service_type") or "").lower() == "training":
         return {"sent": False, "attempted": False, "reason": "training visit"}
+    # The report goes out at checkout. A note saved mid-visit must not send it or stamp it as attempted (audit #79).
+    if not booking.get("checked_out_at"):
+        return {"sent": False, "attempted": False, "reason": "not checked out"}
     rc = booking.get("report_card") or {}
     feedings = booking.get("feeding_log") or []
     meds = booking.get("medication_log") or []
