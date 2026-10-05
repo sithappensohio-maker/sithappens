@@ -5746,6 +5746,9 @@ async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
     latest_date = (now_local + timedelta(days=max_advance_days)).date()
     if the_date > latest_date or the_date < now_local.date():
         return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
+    # A holiday or vacation closes the public form too, as it closes every client booking (audit #44).
+    if the_date.isoformat() in set(settings.get("closed_dates") or []):
+        return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
 
     day_key = DEFAULT_DAYS[the_date.weekday()]
     hours_row = (mg.get("hours") or {}).get(day_key) or {}
