@@ -559,6 +559,9 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         if end < start:
             raise HTTPException(status_code=400, detail="end_date must be after start_date")
         templates = await db.shift_templates.find({"active": True}, {"_id": 0}).to_list(500)
+        # A deactivated employee's templates make no shifts (audit #60).
+        off = {u["id"] async for u in db.users.find({"role": "employee", "active": False}, {"_id": 0, "id": 1})}
+        templates = [t for t in templates if t.get("user_id") not in off]
         created = 0
         skipped = 0
         d = start
