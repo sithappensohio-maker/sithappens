@@ -4139,6 +4139,8 @@ async def _dog_conflicting_booking(
     whose date range overlaps the given one. Scoped to matching service
     types only — a dog boarding while also having a same-day grooming
     appointment is normal and must stay allowed."""
+    if not dog_id:
+        return None   # a Meet & Greet has no dog, so it cannot duplicate another dog's visit (audit review e29207d)
     new_days = set(_dates_in_range(date, end_date))
     q: Dict[str, Any] = {
         "dog_id": dog_id,
@@ -48956,6 +48958,9 @@ async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_
             })
         except HTTPException as exc:
             if isinstance(exc.detail, dict) and exc.detail.get("code") in ("capacity_full", "capacity_busy"):
+                continue
+            # A same-service stay that runs over this day is a skipped week, as a booking that starts on it is (review of e29207d).
+            if (getattr(exc, "block", None) or {}).get("code") == "duplicate_booking":
                 continue
             raise
         return {"ok": True, "booking": updated, "from": bk["date"], "to": iso}

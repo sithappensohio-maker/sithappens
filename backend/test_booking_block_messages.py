@@ -190,6 +190,23 @@ def test_duplicate_booking_reads_plainly():
         assert "status:" not in e.detail and pretty_date(day) in e.detail and "My Bookings" in e.detail
 
 
+def test_moving_a_meet_and_greet_onto_a_day_with_another_is_not_a_duplicate():
+    """Meet & Greets have no dog, so two of them on one day are not one dog's duplicate visit (review of e29207d)."""
+    d1 = _future_weekday()
+    d2 = _future_weekday(min_days=12)
+    tag = f"TEST_MG_DUP_{uuid.uuid4().hex[:6]}"
+    base = {"dog_id": "", "dog_name": "Waffles", "client_id": tag, "service_type": "other", "status": "approved",
+            "is_meet_greet": True, "duration_minutes": 30, "notes": tag, "created_at": server.now_iso()}
+    existing = {**base, "id": f"{tag}-a", "date": d1, "time": "10:00"}
+    moving = {**base, "id": f"{tag}-b", "date": d2, "time": "09:00"}
+    run(server.db.bookings.insert_many([dict(existing), dict(moving)]))
+    try:
+        run(server._update_booking_with_capacity(moving, {"date": d1, "time": "14:00"}))
+        assert run(server.db.bookings.find_one({"id": moving["id"]}, {"_id": 0}))["date"] == d1
+    finally:
+        run(server.db.bookings.delete_many({"notes": tag}))
+
+
 def test_moving_a_visit_onto_a_same_service_day_is_refused():
     """A move (reschedule or edit) gets the same duplicate check as a new booking (audit #43)."""
     d1 = _future_weekday()

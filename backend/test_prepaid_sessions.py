@@ -189,6 +189,17 @@ def test_next_week_skips_a_holiday_from_the_real_settings():
         assert out["to"] == _day(17), "the holiday a week out is skipped"
 
 
+def test_a_stay_that_covers_the_next_week_is_skipped_not_a_stop():
+    """A same-service stay that began earlier and runs over the next week's day skips that week (review of e29207d)."""
+    with _program_family() as f:
+        b = _session(f, date=_day(3))
+        stay = _session(f, date=_day(9), service_type="training", end_date=_day(12), is_prepaid_program_session=False,
+                        id=f"{TAG}-stay-{uuid.uuid4().hex[:6]}", notes="Board and train stay")
+        out = run(server.reschedule_prepaid_session(b["id"], ADMIN))
+        assert out["to"] == _day(17), "the week covered by the stay is skipped, the next one is used"
+        assert _get(stay["id"])["date"] == _day(9), "the stay itself is not moved"
+
+
 # ─────────────────────────── its price stays the program's
 
 def test_its_price_and_payment_cannot_be_changed_or_stripped_from_income():
