@@ -3948,7 +3948,7 @@ async def _active_capacity_bookings(service_type: str, *, exclude_booking_id: Op
     the ceiling silently under-count capacity once the business had that
     many rows on file."""
     q: Dict[str, Any] = {
-        "service_type": service_type,
+        **_service_type_clause(service_type),
         "status": {"$in": ["pending", "approved", "completed"]},
         "$and": [{"$or": [{"checked_out_at": {"$in": [None, ""]}}, {"checked_out_at": {"$exists": False}}]}],
     }
@@ -4614,6 +4614,14 @@ async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, uploaded_at: str 
     return await reject_vaccine_cert(db, dog_id, vaccine, uploaded_at or None)
 
 
+def _service_type_clause(service_type: str) -> Dict[str, Any]:
+    """The rows that take up a service's capacity. A residential Board & Train dog sleeps in
+    a boarding kennel, so it counts as boarding as well (audit #45)."""
+    if service_type == "boarding":
+        return {"$or": [{"service_type": "boarding"}, {"service_type": "training", "end_date": {"$nin": [None, ""]}}]}
+    return {"service_type": service_type}
+
+
 async def _booking_days_count_filtered(target_date: str, service_type: str, *, exclude_booking_id: Optional[str] = None) -> int:
     """Dogs occupying `service_type` capacity on `target_date`. The query is
     date-bounded (rows overlapping the day) and streamed — the old version
@@ -4622,7 +4630,7 @@ async def _booking_days_count_filtered(target_date: str, service_type: str, *, e
     seeing some of today's dogs."""
     query: Dict[str, Any] = {
         "status": {"$in": ["approved", "pending", "completed"]},
-        "service_type": service_type,
+        **_service_type_clause(service_type),
         **_overlapping_stay_query(target_date, target_date),
     }
     if exclude_booking_id:
