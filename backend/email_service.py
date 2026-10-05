@@ -537,17 +537,16 @@ async def _apply_outbox_success(action: dict | None) -> None:
         if tl.get("id") and tl.get("client_id"):
             await _db.client_communications.update_one(
                 {"id": tl["id"]}, {"$setOnInsert": {**tl, "type": "email", "occurred_at": now}}, upsert=True)
-        if action.get("campaign") and action.get("who"):
-            # The family has this message, so a repeat send of the same message skips them (audit #40).
-            marker = f"{action['campaign']}:{action['who']}"
-            await _db.bulk_email_deliveries.update_one(
-                {"id": marker},
-                {"$setOnInsert": {"id": marker, "campaign": action["campaign"], "who": action["who"],
-                                  "history_id": action.get("history_id"), "sent_at": now}},
-                upsert=True)
+        await _mark_campaign_delivered(action, now)
         if action.get("history_id"):
             await _db.bulk_email_history.update_one({"id": action["history_id"], "queued_count": {"$gt": 0}},
                                                     {"$inc": {"success_count": 1, "queued_count": -1}})
+    elif kind == "announcement_sent":
+        # One family has the announcement now (audit #88): its marker stops a repeat, and the count is real.
+        await _mark_campaign_delivered(action, now)
+        if action.get("announcement_id"):
+            await _db.announcement_broadcasts.update_one({"id": action["announcement_id"], "queued_count": {"$gt": 0}},
+                                                         {"$inc": {"sent_count": 1, "queued_count": -1}})
     elif kind == "report_card_sent":
         # A Day-in-Pictures email that waited for Quiet Hours: stamped only while
         # it is still the visit's latest attempt (a Re-send replaces it).
@@ -735,6 +734,10 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
             if action.get("type") == "bulk_email_sent" and action.get("history_id"):
                 await _db.bulk_email_history.update_one({"id": action["history_id"], "queued_count": {"$gt": 0}},
                                                         {"$inc": {"queued_count": -1}})
+            if action.get("type") == "announcement_sent" and action.get("announcement_id"):
+                # Cancelled before it went: unpublished, expired, or the family unsubscribed first (audit #88).
+                await _db.announcement_broadcasts.update_one({"id": action["announcement_id"], "queued_count": {"$gt": 0}},
+                                                             {"$inc": {"queued_count": -1, "cancelled_count": 1}})
             continue
         ok = await _send(
             row.get("to_email") or "",
@@ -3391,11 +3394,20 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
 # an email on file. Best-effort, fire-and-forget: failures per-recipient just
 # log and move on so one bad address can't choke the whole blast.
 async def broadcast_announcement_email(announcement: dict) -> dict:
-    """Email every client (with `email` set) about a freshly-published portal
-    announcement. Returns `{sent, skipped}` counts so callers can surface a
-    quick summary."""
+    """Queue one email per family for a freshly-published portal announcement (audit #88).
+
+    Each family gets its own outbox row, so the broadcast survives a restart and the
+    email worker sends it, honouring Quiet Hours and the family's unsubscribe. The
+    announcement_broadcasts row counts what really went out: sent, cancelled (the
+    announcement was unpublished or expired, or the family unsubscribed first) and
+    failed to queue. A family that already has it, or is waiting for it, is skipped,
+    so a resumed fan-out never mails anyone twice. Returns `{sent, skipped, queued}`
+    so callers can surface a quick summary."""
+    ann_id = announcement.get("id") or ""
+    if _db is None:
+        return {"sent": 0, "skipped": 0, "queued": 0, "reason": "db not bound"}
     title = (announcement.get("title") or "").strip() or "Update from Sit Happens"
-    body  = (announcement.get("body") or "").strip()
+    body = (announcement.get("body") or "").strip()
     image = announcement.get("image") or ""
     portal_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
 
@@ -3404,7 +3416,6 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
     # Uses the shared escaper rather than a hand-rolled one, so there is a
     # single place where "what counts as escaped" is decided.
     body_html_safe = TrustedHtml(_h(body).replace("\n", "<br/>"))
-
     image_html = (
         f"<div style='margin:12px 0;'><img src='{_safe_url(image)}' alt='' "
         f"style='max-width:100%;border-radius:10px;border:1px solid #e2e8f0;'/></div>"
@@ -3415,37 +3426,104 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
         f"{image_html}{_h(body_html_safe)}</div>"
     )
 
-    sent = skipped = queued = 0
-    if _db is None:
-        return {"sent": 0, "skipped": 0, "reason": "db not bound"}
-    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True},
-                               "deleted_at": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "name": 1, "email": 1})   # never an archived family (audit #36)
-    async for c in cursor:
+    campaign = f"announcement:{ann_id}"
+    families = [c async for c in _db.clients.find(
+        {"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True},
+         "deleted_at": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "name": 1, "email": 1})]   # never an archived family (audit #36)
+    reached = {row["who"] async for row in _db.bulk_email_deliveries.find({"campaign": campaign}, {"_id": 0, "who": 1})}
+    prefix = f"announcement:{ann_id}:"
+    waiting = {row["key"][len(prefix):] async for row in _db.email_outbox.find(
+        {"key": {"$regex": "^" + re.escape(prefix)}}, {"_id": 0, "key": 1})}
+
+    todo: list = []
+    skipped = 0
+    for c in families:
         addr = (c.get("email") or "").strip()
-        if not addr:
+        who = str(c.get("id") or "")
+        if not addr or not who:
             skipped += 1
             continue
-        first = (c.get("name") or "there").split(" ")[0]
-        ok = await _dispatch(
-            slug="announcement_broadcast",
-            to_email=addr,
-            ctx={"first_name": first, "client_name": c.get("name", ""), "title": title},
-            rows=[],
-            cta_url=portal_url,
-            body_html=body_html,
-            fallback_subject=f"📣 {title}",
-            fallback_title=f"📣 {title}",
-            fallback_intro=f"Hi {first} — quick update from the Sit Happens team:",
-            fallback_cta_text="Open Portal" if portal_url else "",
-            # Held for Quiet Hours: not if it's unpublished, expired, or they unsubscribe first.
-            hold_guard={"kind": "announcement", "announcement_id": announcement.get("id"), "client_id": c.get("id")}
-            if announcement.get("id") and c.get("id") else None,
-        )
-        if ok:
-            sent += 1
-        elif last_send_held_key:
-            queued += 1
-        else:
+        if who in reached or who in waiting:
             skipped += 1
-    logger.info("Announcement '%s' broadcast — sent=%s queued=%s skipped=%s", title, sent, queued, skipped)
-    return {"sent": sent, "skipped": skipped, "queued": queued}
+            continue
+        todo.append((c, addr, who))
+
+    now = _utc_now_iso()
+    await _db.announcement_broadcasts.update_one(
+        {"id": ann_id},
+        {"$set": {"status": "queueing", "title": title, "updated_at": now},
+         "$inc": {"queued_count": len(todo)},
+         "$setOnInsert": {"id": ann_id, "announcement_id": ann_id, "sent_count": 0, "cancelled_count": 0,
+                          "failed_count": 0, "started_at": now}},
+        upsert=True)
+
+    failed = 0
+    for n, (c, addr, who) in enumerate(todo, 1):
+        try:
+            first = (c.get("name") or "there").split(" ")[0]
+            subject, html = await _render(
+                slug="announcement_broadcast",
+                ctx={"first_name": first, "client_name": c.get("name", ""), "title": title},
+                rows=[], cta_url=portal_url, body_html=body_html, show_install=True,
+                fallback_subject=f"📣 {title}", fallback_title=f"📣 {title}",
+                fallback_intro=f"Hi {first} — quick update from the Sit Happens team:",
+                fallback_cta_text="Open Portal" if portal_url else "",
+            )
+            queued = await _queue_email(
+                to_email=addr, subject=subject, html=html,
+                outbox_key=f"{prefix}{who}",
+                on_success={"type": "announcement_sent", "announcement_id": ann_id, "campaign": campaign, "who": who},
+                attachments=None, error="queued_for_background_send",
+                # Held for Quiet Hours: not if it's unpublished, expired, or they unsubscribe first.
+                guard={"kind": "announcement", "announcement_id": ann_id, "client_id": c.get("id")} if ann_id and c.get("id") else None,
+            )
+            if not queued:
+                raise RuntimeError("the email could not be queued")
+        except Exception as exc:
+            failed += 1
+            logger.error("Announcement %s: could not queue the email for %s: %s", ann_id, addr, exc)
+        if n % 50 == 0:
+            await _db.announcement_broadcasts.update_one({"id": ann_id}, {"$set": {"updated_at": _utc_now_iso()}})
+
+    done = _utc_now_iso()
+    update: dict = {"$set": {"status": "queued", "finished_at": done, "updated_at": done}}
+    if failed:
+        update["$inc"] = {"queued_count": -failed, "failed_count": failed}
+    await _db.announcement_broadcasts.update_one({"id": ann_id}, update)
+    logger.info("Announcement '%s' broadcast — queued=%s skipped=%s failed=%s", title, len(todo) - failed, skipped, failed)
+    return {"sent": 0, "skipped": skipped, "queued": len(todo) - failed, "failed": failed}
+
+
+async def resume_stalled_broadcasts() -> dict:
+    """A fan-out a restart cut short is picked up again (audit #88). A broadcast still
+    'queueing' with no progress for ten minutes is run again; families it already
+    queued or delivered are skipped, so nothing goes out twice. A broadcast whose
+    announcement was unpublished meanwhile is stopped."""
+    if _db is None:
+        return {"resumed": 0}
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    stalled = [b async for b in _db.announcement_broadcasts.find(
+        {"status": "queueing", "updated_at": {"$lt": cutoff}}, {"_id": 0, "announcement_id": 1})]
+    resumed = 0
+    for b in stalled:
+        ann = await _db.announcements.find_one({"id": b["announcement_id"]}, {"_id": 0})
+        if ann and ann.get("published", True):
+            await broadcast_announcement_email(ann)
+            resumed += 1
+        else:
+            await _db.announcement_broadcasts.update_one({"id": b["announcement_id"]}, {"$set": {"status": "stopped", "updated_at": _utc_now_iso()}})
+    return {"resumed": resumed}
+
+
+async def _mark_campaign_delivered(action: dict, now: str) -> None:
+    """A family has this message now: a repeat of the same campaign skips them (audit #40, #88)."""
+    if not (action.get("campaign") and action.get("who")):
+        return
+    marker = f"{action['campaign']}:{action['who']}"
+    await _db.bulk_email_deliveries.update_one(
+        {"id": marker},
+        {"$setOnInsert": {"id": marker, "campaign": action["campaign"], "who": action["who"],
+                          "history_id": action.get("history_id"), "sent_at": now}},
+        upsert=True)
+
+

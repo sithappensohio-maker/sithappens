@@ -22,6 +22,17 @@ const fmtDate = (iso) => {
 
 const emptyForm = () => ({ title: "", body: "", image: "", pinned: false, expires_on: "", published: true });
 
+// What the email broadcast really did for an announcement (audit #88): emailed, still waiting, retrying,
+// cancelled before it went, or never queued. Shown to staff so a silent failure is visible.
+export const broadcastSummary = (s) => {
+  const parts = [`${s.sent || 0} emailed`];
+  if (s.queued) parts.push(`${s.queued} waiting`);
+  if (s.retrying) parts.push(`${s.retrying} retrying`);
+  if (s.cancelled) parts.push(`${s.cancelled} cancelled`);
+  if (s.failed) parts.push(`${s.failed} couldn't be queued`);
+  return parts.join(" · ");
+};
+
 export default function Announcements({ openCreateOnMount = false, onCreateConsumed = () => {} }) {
   const confirm = useConfirm();
   const [items, setItems] = useState([]);
@@ -262,6 +273,11 @@ export default function Announcements({ openCreateOnMount = false, onCreateConsu
                 {a.body && <p className="text-[13px] text-shTextMuted mt-1 whitespace-pre-wrap line-clamp-4">{a.body}</p>}
                 {a.expires_on && (
                   <p className="text-[11px] text-shTextMuted mt-2 italic">Auto-hides after {a.expires_on}</p>
+                )}
+                {a.email_broadcast_status && (
+                  <p className="text-[11px] text-shTextMuted mt-2" data-testid={`announcement-broadcast-${a.id}`}>
+                    Email: {broadcastSummary(a.email_broadcast_status)}
+                  </p>
                 )}
               </div>
               {a.image && (

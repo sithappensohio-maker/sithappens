@@ -10907,6 +10907,18 @@ async def list_admin_announcements(_: dict = Depends(require_admin_and_permissio
     # Newest first, with pinned floated to top.
     items.sort(key=lambda a: a.get("created_at") or "", reverse=True)
     items.sort(key=lambda a: not a.get("pinned"))
+    # What the email broadcast really did for each announcement (audit #88): delivered, cancelled, failed, retrying.
+    rows = {r["id"]: r async for r in db.announcement_broadcasts.find({"id": {"$in": [a.get("id") for a in items]}}, {"_id": 0})}
+    retrying: Dict[str, int] = {}
+    async for o in db.email_outbox.find({"key": {"$regex": "^announcement:"}, "attempts": {"$gt": 0}}, {"_id": 0, "key": 1}):
+        ann_id = o["key"].split(":")[1]
+        retrying[ann_id] = retrying.get(ann_id, 0) + 1
+    for a in items:
+        r = rows.get(a.get("id"))
+        if r:
+            a["email_broadcast_status"] = {"status": r.get("status"), "queued": r.get("queued_count", 0),
+                                           "sent": r.get("sent_count", 0), "cancelled": r.get("cancelled_count", 0),
+                                           "failed": r.get("failed_count", 0), "retrying": retrying.get(a["id"], 0)}
     return items
 
 
@@ -29104,7 +29116,7 @@ BACKUP_COLLECTIONS = [
     "client_communications", "client_message_threads",
     "bulk_email_templates", "bulk_email_history", "bulk_email_deliveries",
     "help_requests",
-    "announcements", "announcement_reads",
+    "announcements", "announcement_reads", "announcement_broadcasts",
     "review_requests",
     "training_tips",
     "program_enrollments", "training_session_log",
@@ -29395,6 +29407,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("auto_backup", _maybe_auto_backup_tick),
         # Practice reminders go out at each client's chosen time, not all at the daily run (audit #84).
         ("practice_reminders", lambda: _practice_reminders_due_now()),
+        # An announcement fan-out a restart cut short is picked up again; families it reached are skipped (audit #88).
+        ("announcement_broadcast_resume", lambda: email_service.resume_stalled_broadcasts()),
         # Stock held by Shop checkouts nobody will pay for (audit #57).
         ("shop_abandoned_checkouts", lambda: shop_abandon.sweep()),
         # Blank PINs/codes in Audit Log entries saved before audit #7 (once; marker-gated).
