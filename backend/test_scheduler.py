@@ -108,7 +108,9 @@ def test_daily_plan_catch_up_windows():
     thu = daily_jobs.daily_plan(mon + timedelta(days=3))
     assert thu["trainer_monday_digest"] is False and thu["hw_weekly_digest_as_of"] is None
     sun = daily_jobs.daily_plan(mon + timedelta(days=6))
-    assert sun["hw_weekly_digest_as_of"] == mon + timedelta(days=6)
+    assert sun["hw_weekly_digest_as_of"] is None, "Sunday's run is too early for the week's practice (audit #87)"
+    next_mon = daily_jobs.daily_plan(mon + timedelta(days=7))
+    assert next_mon["hw_weekly_digest_as_of"] == mon + timedelta(days=6), "Monday's catch-up sends the whole week"
     assert daily_jobs.daily_plan(date(2026, 10, 1))["pl_monthly"] is True
     assert daily_jobs.daily_plan(date(2026, 10, 7))["pl_monthly"] is True
     assert daily_jobs.daily_plan(date(2026, 10, 8))["pl_monthly"] is False
@@ -237,7 +239,7 @@ def test_new_templates_default_to_auto_extend():
 def test_scheduler_jobs_and_status_endpoint():
     names = [n for n, _ in server._scheduler_jobs()]
     assert names == ["daily_jobs", "archive_bookings", "trophy_recheck", "recurring_auto_extend", "auto_backup",
-                     "practice_reminders", "shop_abandoned_checkouts", "audit_log_secret_scrub", "reopened_bill_rebuild",
+                     "practice_reminders", "announcement_broadcast_resume", "shop_abandoned_checkouts", "audit_log_secret_scrub", "reopened_bill_rebuild",
                      "gift_card_funding_spread", "friends_family_group_bills", "shop_income_split", "archive_sync", "prepaid_session_close",
                      "school_enrollment_mirror_sync"]
     st = run(server.admin_scheduler_status(_admin_user()))

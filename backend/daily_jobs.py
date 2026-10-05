@@ -792,8 +792,10 @@ def daily_plan(today: date) -> Dict[str, Any]:
       - monthly P&L: the 1st, or any day through the 7th until sent
     """
     wd = today.weekday()
+    # Sunday's run goes out before Sunday's practice is logged, so the week's digest waits for Monday's
+    # catch-up, which covers the whole week that just ended (audit #87).
     if wd == 6:
-        hw_as_of: date | None = today
+        hw_as_of: date | None = None
     elif wd in (0, 1):
         hw_as_of = today - timedelta(days=wd + 1)  # the Sunday that just passed
     else:
