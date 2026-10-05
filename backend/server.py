@@ -50244,12 +50244,18 @@ async def mark_installment_paid(
         raise HTTPException(404, "Installment not found")
     if target["status"] == "paid":
         raise HTTPException(400, "Installment already paid")
-    target["status"] = "paid"
-    target["paid_at"] = now_iso()
-    target["paid_method"] = body.method
-    target["paid_by_admin_id"] = current.get("id")
+    # Claim the installment in one atomic update: only a row still "due" matches, so
+    # two taps (or two staff) cannot both mark it paid and write two income rows (audit #69).
+    claim_set = {"installments.$.status": "paid", "installments.$.paid_at": now_iso(),
+                 "installments.$.paid_method": body.method, "installments.$.paid_by_admin_id": current.get("id")}
     if body.notes:
-        target["notes"] = body.notes
+        claim_set["installments.$.notes"] = body.notes
+    claim = await db.payment_plans.update_one(
+        {"id": plan_id, "installments": {"$elemMatch": {"id": inst_id, "status": "due"}}},
+        {"$set": claim_set},
+    )
+    if claim.matched_count == 0:
+        raise HTTPException(400, "Installment already paid")
 
     # Sprint 110do — cash-basis income recognition. Every marked-paid installment
     # writes a real income row so the P&L + Income screen reflect actual cash
@@ -50277,18 +50283,23 @@ async def mark_installment_paid(
         "program_id": p.get("program_id"),
         "program_name": p.get("program_name"),
     }
-    await db.retail_sales.insert_one(income_doc)
-    target["income_event_id"] = income_id
-
-    # Plan auto-completes when every installment is paid
+    try:
+        await db.retail_sales.insert_one(income_doc)
+    except Exception:
+        # Put the installment back to due, so the client's money is not recorded as paid with no income row.
+        await db.payment_plans.update_one(
+            {"id": plan_id, "installments": {"$elemMatch": {"id": inst_id, "status": "paid", "income_event_id": {"$exists": False}}}},
+            {"$set": {"installments.$.status": "due"}, "$unset": {"installments.$.paid_at": "", "installments.$.paid_method": "", "installments.$.paid_by_admin_id": ""}},
+        )
+        raise
+    await db.payment_plans.update_one({"id": plan_id, "installments.id": inst_id},
+                                      {"$set": {"installments.$.income_event_id": income_id}})
+    # Plan auto-completes when every installment is paid (read after the claim, so other installments are current)
+    installments = (await db.payment_plans.find_one({"id": plan_id}, {"_id": 0}))["installments"]
     new_status = p["status"]
     if all(i["status"] in ("paid", "waived") for i in installments):
         new_status = "completed"
-
-    await db.payment_plans.update_one(
-        {"id": plan_id},
-        {"$set": {"installments": installments, "status": new_status}},
-    )
+    await db.payment_plans.update_one({"id": plan_id}, {"$set": {"status": new_status}})
 
     # Confirm with the client
     client = await db.clients.find_one({"id": p["client_id"]}, {"_id": 0}) or {}
@@ -50345,20 +50356,32 @@ async def reverse_installment_payment(
     if inst.get("status") != "paid":
         raise HTTPException(409, "Installment is not in paid status")
 
+    # The money goes back out TODAY, as a refund on today's register. The original
+    # income row stays where it was, so a closed day does not change (audit #69).
+    # The refund's id is derived from the original row, so a retry cannot refund twice.
+    today = business_today().isoformat()
+    paid_method = inst.get("paid_method") or "cash"
+    await _require_register_day_open(today)
+    await _require_drawer_open_for_cash(paid_method)
     income_id = inst.get("income_event_id")
-    deleted_count = 0
-    if income_id:
-        res = await db.retail_sales.delete_one({"id": income_id})
-        deleted_count = res.deleted_count
+    refund_id = f"{income_id}:rev" if income_id else f"{plan_id}:{inst_id}:rev"
+    amount = round(float(inst.get("amount") or 0), 2)
+    await db.retail_sales.update_one({"id": refund_id}, {"$setOnInsert": {
+        "id": refund_id, "date": today, "description": f"Refund · payment plan reversal · {p.get('client_name') or ''}".strip(),
+        "amount": -amount, "category": "Refund", "payment_method": paid_method, "source_kind": "payment_plan_reversal",
+        "reversed_retail_sales_id": income_id, "payment_plan_id": plan_id, "installment_id": inst_id,
+        "tax_amount": 0.0, "pre_tax_amount": -amount, "created_at": now_iso(),
+        "created_by": current.get("id"), "notes": (body.notes if body else "") or "Admin reversal",
+    }}, upsert=True)
 
-    # Snapshot the reversal for audit (preserves who, when, how much, and the
-    # original income_event_id even though the row is gone).
+    # Snapshot the reversal for audit: who, when, how much, and which row was refunded.
     reversal_note = {
         "reversed_at": now_iso(),
         "reversed_by_admin_id": current.get("id"),
-        "reversed_amount": float(inst.get("amount") or 0),
-        "deleted_income_event_id": income_id,
-        "deleted_income_rows": deleted_count,
+        "reversed_amount": amount,
+        "original_income_event_id": income_id,
+        "refund_row_id": refund_id,
+        "refund_date": today,
         "reason": (body.notes if body else "") or "Admin reversal",
     }
     history = inst.get("reversal_history") or []
@@ -52473,6 +52496,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "clients_view": True, "clients_edit": True,
         "dogs_view": True, "dogs_edit": True,
         "booking_edit": True,
+        "care_complete": True,   # logs feeding, meds and potty as it always has; the owner can take it off in the matrix (audit #25 decision)
         "messages": True,
         "take_payments": True,
         "sell_credits": True,

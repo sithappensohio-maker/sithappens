@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addDaysISO, todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
@@ -52,7 +52,21 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [clientId, plansFromParent]);
 
-  const markPaid = async (planId, instId, method) => {
+  // One request per installment at a time: a second tap while the first is in flight
+  // does nothing, so the server never sees two mark-paid or two reversal requests (audit #69).
+  const inFlight = useRef(new Set());
+  const [busy, setBusy] = useState({});
+  const once = async (key, fn) => {
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    setBusy(b => ({ ...b, [key]: true }));
+    try { await fn(); } finally {
+      inFlight.current.delete(key);
+      setBusy(b => ({ ...b, [key]: false }));
+    }
+  };
+
+  const markPaid = (planId, instId, method) => once(`mark-${instId}`, async () => {
     try {
       await api.post(`/admin/payment-plans/${planId}/installments/${instId}/mark-paid`,
                      { method });
@@ -61,12 +75,12 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Failed");
     }
-  };
+  });
 
-  const reversePayment = async (planId, instId) => {
+  const reversePayment = (planId, instId) => once(`rev-${instId}`, async () => {
     const ok = await confirm({
       title: "Reverse this payment?",
-      body: "This removes the payment from your P&L and returns the installment to Due.",
+      body: "This refunds the payment today, on today's register. The original day is not changed, and the installment returns to Due.",
       confirmText: "Reverse Payment",
       tone: "danger",
     });
@@ -74,12 +88,12 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
     try {
       await api.post(`/admin/payment-plans/${planId}/installments/${instId}/reverse-payment`,
                      { notes: "Manual reversal" });
-      toast.success("Payment reversed — P&L updated");
+      toast.success("Payment reversed — refund recorded today");
       load();
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Reversal failed");
     }
-  };
+  });
 
   const cancelPlan = async (planId) => {
     const ok = await confirm({
@@ -115,7 +129,7 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
         <p className="text-shTextMuted text-xs italic">No plans yet.</p>
       ) : (
         <div className="space-y-2">
-          {plans.map(p => <AdminPlanRow key={p.id} plan={p} onMarkPaid={markPaid} onCancel={cancelPlan} onReverse={reversePayment} />)}
+          {plans.map(p => <AdminPlanRow key={p.id} plan={p} busy={busy} onMarkPaid={markPaid} onCancel={cancelPlan} onReverse={reversePayment} />)}
         </div>
       )}
 
@@ -130,7 +144,7 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   );
 }
 
-function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
+function AdminPlanRow({ plan, busy = {}, onMarkPaid, onCancel, onReverse }) {
   const sm = STATUS_META[plan.status] || STATUS_META.active;
   return (
     <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3" data-testid={`admin-plan-row-${plan.id}`}>
@@ -162,7 +176,7 @@ function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
             {i.status === "due" && plan.status === "active" && (
               <div className="flex gap-1">
                 {["cash", "card", "venmo", "check"].map(m => (
-                  <button key={m} onClick={() => onMarkPaid(plan.id, i.id, m)}
+                  <button key={m} onClick={() => onMarkPaid(plan.id, i.id, m)} disabled={!!busy[`mark-${i.id}`]}
                           data-testid={`mark-paid-${i.id}-${m}`}
                           className="text-[10px] font-black uppercase tracking-widest text-shPrimary border border-shPrimary/40 rounded px-1.5 py-0.5 hover:bg-shPrimary/20">
                     {m}
@@ -173,9 +187,9 @@ function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
             {i.status === "paid" && (
               <div className="flex items-center gap-2">
                 <i className="fas fa-check-circle text-shPrimary text-xs" />
-                <button onClick={() => onReverse(plan.id, i.id)}
+                <button onClick={() => onReverse(plan.id, i.id)} disabled={!!busy[`rev-${i.id}`]}
                         data-testid={`reverse-payment-${i.id}`}
-                        title="Reverse this payment — removes it from your P&L"
+                        title="Reverse this payment — refunds it today on today's register"
                         className="text-[10px] font-black uppercase tracking-widest text-red-400 border border-red-400/30 rounded px-1.5 py-0.5 hover:bg-red-500/15 hover:text-red-300">
                   <i className="fas fa-rotate-left mr-1" />Reverse
                 </button>
