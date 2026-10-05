@@ -161,7 +161,7 @@ def build(server_globals: dict) -> dict:
         settings = await _g("get_settings")()
         base_amount = max(
             0.0,
-            round(float(booking.get("estimated_price") or 0) - _g("_booking_addon_total_from")(booking), 2),
+            round(float(booking.get("estimated_price") or 0) - _g("_booking_estimate_addon_total_from")(booking), 2),
         )
         boarding_auto = await _g("_boarding_auto_base")(booking, settings)
         if boarding_auto > 0:

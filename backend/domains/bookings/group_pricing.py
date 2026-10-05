@@ -77,7 +77,9 @@ def row_patch(quote: Dict[str, Any], bk: dict, idx: int, count: int) -> Dict[str
     now_iso = _g("now_iso")
     q, units, service_type, md_cfg = quote["q"], quote["units"], quote["service_type"], quote["md_cfg"]
     addon_total = 0.0
-    for ao in (bk.get("add_ons") or []):
+    for ao in (bk.get("add_ons") or []):   # the estimate holds the add-ons booked with the stay (audit #77)
+        if ao.get("added_after_booking"):
+            continue
         addon_total += float(ao.get("price") or 0) * int(ao.get("qty") or 1)
     is_extra = idx > 0
     row_base = quote["extra_base"] if is_extra else quote["full_base"]

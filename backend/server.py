@@ -6590,6 +6590,8 @@ async def check_in(
             body.addon_service_ids,
             booking.get("service_type") or "",
         )
+        for ao in new_addons:   # added after booking: not in the booked estimate (audit #77)
+            ao["added_after_booking"] = True
         update["add_ons"] = list(booking.get("add_ons") or []) + new_addons
     # Atomic conditional write — the filter re-asserts checked_in_at is
     # still unset at write time, so a double-click or a network-retry racing
@@ -6645,6 +6647,8 @@ async def attach_booking_addons(
         body.addon_service_ids,
         booking.get("service_type") or "",
     )
+    for ao in new_addons:   # added after booking: not in the booked estimate (audit #77)
+        ao["added_after_booking"] = True
     merged = list(booking.get("add_ons") or []) + new_addons
     await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": merged}})
     booking["add_ons"] = merged
@@ -6730,6 +6734,21 @@ def _multi_dog_discount_config_for(settings: dict, service_type: str) -> Optiona
 def _discount_amount_for_extra_dogs(raw_additional_dog_base: float, cfg: Optional[Dict[str, Any]], additional_dogs: int = 1) -> float:
     """Facade; canonical discount math lives in domains.pricing."""
     return pricing_domain_services.discount_amount_for_extra_dogs(raw_additional_dog_base, cfg, additional_dogs)
+
+
+def _booking_estimate_addon_total_from(booking: dict) -> float:
+    """Add-ons the booked estimate already includes: the ones booked with the stay.
+    Add-ons added at check-in or later are not in the estimate, so they must not be
+    taken off the stay's base (audit #77)."""
+    total = 0.0
+    for ao in (booking.get("add_ons") or []):
+        if ao.get("added_after_booking"):
+            continue
+        try:
+            total += float(ao.get("line_total") if ao.get("line_total") is not None else (float(ao.get("price") or 0) * int(ao.get("qty") or 1)))
+        except Exception:
+            continue
+    return round(total, 2)
 
 
 def _booking_addon_total_from(booking: dict) -> float:
@@ -8940,8 +8959,8 @@ async def _check_out_locked(
                 elif credit_value > 0:
                     svc_value = float(credit_value)
                 else:
-                    svc_value = credit_cover.zero_lot_base(booking, _booking_addon_total_from(booking)) or await _resolve_service_value(float(credit_value))
-                update.update(credit_cover.priced(svc_value, credit_value, body.base_price is not None, credit_cover.zero_lot_base(booking, _booking_addon_total_from(booking))))
+                    svc_value = credit_cover.zero_lot_base(booking, _booking_estimate_addon_total_from(booking)) or await _resolve_service_value(float(credit_value))
+                update.update(credit_cover.priced(svc_value, credit_value, body.base_price is not None, credit_cover.zero_lot_base(booking, _booking_estimate_addon_total_from(booking))))
                 update["payment_status"] = "paid"
                 update["payment_method"] = "credits"
                 update["paid_at"] = ts
@@ -9010,7 +9029,7 @@ async def _check_out_locked(
             # `estimated_price` includes booking-time add-ons, so subtract those
             # here because the add-on section below adds them as locked line items.
             snap_total = float(booking.get("estimated_price") or 0)
-            snap_addons = _booking_addon_total_from(booking)
+            snap_addons = _booking_estimate_addon_total_from(booking)
             snap_base = max(0.0, round(snap_total - snap_addons, 2))
 
             # Recompute the boarding base from the current rule so stale
@@ -9106,7 +9125,7 @@ async def _check_out_locked(
         if modifier_base <= 0:
             modifier_base = max(
                 0.0,
-                round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
+                round(float(booking.get("estimated_price") or 0) - _booking_estimate_addon_total_from(booking), 2),
             )
         boarding_auto = await _boarding_auto_base(booking, settings)
         if boarding_auto > 0:

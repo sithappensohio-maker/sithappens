@@ -283,7 +283,7 @@ async def boarding_fields(booking: dict, *, today: str, ts: str, original: Optio
     # Same factor checkout's boarding auto-price applies, so the stored
     # estimate and the charged amount agree.
     factor = _g("_group_row_price_factor")({**booking, **fields})
-    fields["estimated_price"] = round(full_base * factor + _g("_booking_addon_total_from")(booking), 2)
+    fields["estimated_price"] = round(full_base * factor + _g("_booking_estimate_addon_total_from")(booking), 2)
     fields["_quote"] = {
         "service_name": q.get("service_name"), "nights": units, "unit_price": q.get("unit_price"),
         "late_pickup_daycare_fee": q.get("late_pickup_daycare_fee"),

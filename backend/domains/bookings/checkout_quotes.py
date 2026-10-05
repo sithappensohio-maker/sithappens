@@ -239,7 +239,7 @@ async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -
         # catches an existing override being edited to a new amount after
         # the booking was made, not just a brand-new override appearing.
         return booking
-    addons = _g("_booking_addon_total_from")(booking)
+    addons = _g("_booking_estimate_addon_total_from")(booking)   # only what the estimate holds (audit #77)
     old_base = max(0.0, round(float(booking.get("estimated_price") or 0) - addons, 2))
     units = old_base / old_unit
     new_base = round(new_unit * units, 2)
