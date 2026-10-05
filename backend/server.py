@@ -43257,6 +43257,24 @@ async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_
     return priced
 
 
+async def _replay_completed_pos_sale(body: PosSaleIn) -> Optional[dict]:
+    """A retry of a register sale that already completed. Its stock has gone out, so the cart can no longer
+    price; replay the finished sale when the retried cart is the same as the saved one (audit #47)."""
+    claim = await db.pos_sale_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+    if not claim or claim.get("status") != "completed" or not claim.get("pos_sale_id"):
+        return None
+    sale = await db.pos_sales.find_one({"id": claim["pos_sale_id"]}, {"_id": 0})
+    if not sale or sale.get("client_id") != body.client_id:
+        return None
+    wanted = sorted((li.kind, li.product_id or li.pack_id or li.program_id, float(li.qty)) for li in body.lines)
+    saved = sorted((li.get("kind"), li.get("product_id") or li.get("pack_id") or li.get("program_id"), float(li.get("qty") or 0))
+                   for li in (sale.get("line_items") or []))
+    if wanted != saved:
+        return None
+    return {"ok": True, "sale": sale, "pos_sale_id": sale["id"], "replayed": True,
+            "pos_print_receipt_token": None, "pos_open_drawer_token": None}
+
+
 async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
     """Completes ONE Front Desk checkout — retail products, custom lines,
     credit packs, AND training programs, in any combination — as a single
@@ -43288,7 +43306,14 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     _require_take_payments(user)
     can_price = bool(_perms_for(user).get("pricing"))
 
-    priced, catalog_caches = await _price_pos_cart(body.lines, body.discount, can_price=can_price, client_id=body.client_id)
+    try:
+        priced, catalog_caches = await _price_pos_cart(body.lines, body.discount, can_price=can_price, client_id=body.client_id)
+    except HTTPException:
+        # A retry of a sale that went through: its stock is already out, so the cart is refused here. Replay it instead.
+        replay = await _replay_completed_pos_sale(body)
+        if replay is None:
+            raise
+        return replay
     product_cache = catalog_caches["products"]
     total = priced["total"]
 
