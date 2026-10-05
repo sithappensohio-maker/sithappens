@@ -50,3 +50,16 @@ def test_the_admin_board_names_the_dogs_and_leaves_out_staff():
     rows = {r["client_id"]: r for r in run(server.admin_trivia_leaderboard(ADMIN))["players"]}
     assert staff not in rows
     assert rows[cid]["dogs"] == ["Rex"]
+
+
+def test_an_archived_family_is_not_on_the_family_board():
+    """A family that has left (archived) is not on the public board (review of 8ddb64f)."""
+    cid, _staff = _seed_family()
+    gone = f"{TAG}-gone-{uuid.uuid4().hex[:6]}"
+    run(server.db.clients.insert_one({"id": gone, "name": "Left Family", "email": f"{gone}@example.com", "tag": TAG,
+                                      "deleted_at": server.now_iso()}))
+    run(server.db.trivia_attempts.insert_one({"id": f"{TAG}-g-{uuid.uuid4().hex[:6]}", "client_id": gone,
+                                              "date": server.business_today().isoformat(), "correct": True, "tag": TAG}))
+    out = run(server.portal_trivia_leaderboard(user={"id": f"{TAG}-u", "role": "client", "client_id": cid}))
+    assert gone not in {r["client_id"] for r in out["top"]}
+    assert out["me"]["client_id"] == cid

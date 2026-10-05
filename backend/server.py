@@ -30351,6 +30351,12 @@ async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
             "total_correct": total,
             "last_played": last_played,
         })
+    # A family that has left (archived) is not on the public board; the caller's own row always stays (review of 8ddb64f).
+    if rows:
+        live_ids = {c["id"] for c in await db.clients.find(
+            {"id": {"$in": [r["client_id"] for r in rows]}, "deleted_at": booking_guards.LIVE},
+            {"_id": 0, "id": 1}).to_list(len(rows))}
+        rows = [r for r in rows if r["client_id"] in live_ids or r["client_id"] == cid]
     # Attach dog name(s) (anonymized — first names only)
     if rows:
         cids = [r["client_id"] for r in rows]
