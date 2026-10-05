@@ -5842,20 +5842,19 @@ async def list_time_slots(
     day_closed = False
     settings = await get_settings()
     try:
-        the_date = date.fromisoformat(date_str)
-        dow = DEFAULT_DAYS[the_date.weekday()]
-        svc_hrs = (settings.get("service_hours") or {}).get(service_type)
-        if isinstance(svc_hrs, dict) and isinstance(svc_hrs.get(dow), dict):
-            day_cfg = svc_hrs[dow]
-            if day_cfg.get("closed"):
-                day_closed = True
-            else:
-                o = _hhmm_to_min(day_cfg.get("open") or "")
-                c = _hhmm_to_min(day_cfg.get("close") or "")
-                if o is not None:
-                    open_min = o
-                if c is not None:
-                    close_min = c
+        # The same day row booking uses, so a service with no row of its own follows the business day (review of a223e53).
+        day_cfg = _service_hours_for_date(settings, service_type, date.fromisoformat(date_str))
+        if day_cfg.get("mode") == "24_7":
+            open_min, close_min = 0, 24 * 60
+        elif day_cfg.get("closed"):
+            day_closed = True
+        else:
+            o = _hhmm_to_min(day_cfg.get("open") or "")
+            c = _hhmm_to_min(day_cfg.get("close") or "")
+            if o is not None:
+                open_min = o
+            if c is not None:
+                close_min = c
     except Exception:
         pass
 

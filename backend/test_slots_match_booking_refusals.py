@@ -74,3 +74,30 @@ def test_tomorrow_is_bookable_under_the_default_rules(settings):
     tomorrow = _today_ohio() + timedelta(days=1)
     slots = _slots(tomorrow, {"role": "client", "id": "client-t"})
     assert slots["09:00"]["available"] is True
+
+
+def _stub_settings(monkeypatch, settings):
+    async def _stub():
+        return settings
+    monkeypatch.setattr(server, "get_settings", _stub)
+
+
+def test_a_day_with_no_service_row_follows_the_business_closure(monkeypatch):
+    """With no training row for a day, the grid uses the business day, as booking does (review of a223e53)."""
+    d = _today_ohio() + timedelta(days=14)
+    dow = server.DEFAULT_DAYS[d.weekday()]
+    _stub_settings(monkeypatch, {"service_hours": {"training": {}},
+                                 "business_hours": {dow: {"closed": True}}, "booking_flow_controls": {}})
+    out = run(server.list_time_slots(date_str=d.isoformat(), service_type="training", user={"role": "client", "id": "c"}))
+    assert out["closed"] is True and out["slots"] == []
+
+
+def test_a_day_with_no_service_row_offers_only_the_business_hours(monkeypatch):
+    d = _today_ohio() + timedelta(days=14)
+    dow = server.DEFAULT_DAYS[d.weekday()]
+    _stub_settings(monkeypatch, {"service_hours": {"training": {}},
+                                 "business_hours": {dow: {"closed": False, "open": "10:00", "close": "12:00"}},
+                                 "booking_flow_controls": {}})
+    out = run(server.list_time_slots(date_str=d.isoformat(), service_type="training", user={"role": "client", "id": "c"}))
+    times = [s["time"] for s in out["slots"]]
+    assert times and times[0] == "10:00" and times[-1] < "12:00"
