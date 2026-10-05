@@ -3238,8 +3238,21 @@ async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin_a
     if body.owner_id != existing.get("owner_id"):
         client_archive.refuse_if_archived(await db.clients.find_one({"id": body.owner_id}, {"_id": 0, "name": 1, "deleted_at": 1}))
     update = body.model_dump()
+    old_owner = existing.get("owner_id")
     await db.dogs.update_one({"id": dog_id}, {"$set": update})
     existing.update(update)
+    if body.owner_id != old_owner:
+        # A dog moved to another family takes its coming visits with it. Past visits and
+        # balances stay with the family they were booked under (audit #26).
+        new_client = await db.clients.find_one({"id": body.owner_id}, {"_id": 0, "name": 1}) or {}
+        await db.bookings.update_many(
+            {"dog_id": dog_id, "client_id": old_owner,
+             "date": {"$gte": business_today().isoformat()},
+             "status": {"$nin": ["completed", "cancelled", "rejected"]},
+             "checked_out_at": {"$in": [None, ""]}},
+            {"$set": {"client_id": body.owner_id, "client_name": new_client.get("name") or "",
+                      "moved_from_client_id": old_owner, "owner_moved_at": now_iso()}},
+        )
     try:  # the dog's care plan changed: today's visits follow it from NOW (domains/bookings/care.py)
         await care_domain.sync_dog(dog_id)
     except Exception as e:
@@ -6387,11 +6400,58 @@ async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_curre
         update["email"] = em.lower()
     else:
         update["email"] = ""
+    # A new email is not used until the client confirms it from a link sent to that address,
+    # so nobody can type someone else's address and take the account over (audit #27).
+    current = await db.clients.find_one({"id": cid}, {"_id": 0, "email": 1}) or {}
+    email_change_pending = False
+    if update["email"] and update["email"] != (current.get("email") or "").lower():
+        update.pop("email")
+        email_change_pending = await _start_email_change(cid, user, update_email_value=em.lower())
     await db.clients.update_one({"id": cid}, {"$set": update})
     # also keep user.name in sync
     await db.users.update_one({"id": user["id"]}, {"$set": {"name": body.name}})
     client = await db.clients.find_one({"id": cid}, PORTAL_CLIENT_PROJECTION)
-    return {"client": client}
+    return {"client": client, "email_change_pending": email_change_pending}
+
+
+async def _start_email_change(cid: str, user: dict, *, update_email_value: str) -> bool:
+    """Store a pending email change and send the confirmation link to the NEW address."""
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.email_changes.update_one(
+        {"client_id": cid},
+        {"$set": {"client_id": cid, "user_id": user["id"], "new_email": update_email_value,
+                  "token_hash": _security_key(token), "created_at": now.isoformat(),
+                  "expires_at": (now + timedelta(hours=24)).isoformat()}},
+        upsert=True,
+    )
+    link = f"{email_service.APP_PUBLIC_URL}/confirm-email?token={token}" if email_service.APP_PUBLIC_URL else f"/confirm-email?token={token}"
+    await email_service._queue_email(
+        to_email=update_email_value,
+        subject="Confirm your new Sit Happens email",
+        html=f"<p>Confirm this address to use it to sign in to Sit Happens: <a href=\"{link}\">Confirm email</a></p>"
+             "<p>If you did not ask for this, ignore this email.</p>",
+        outbox_key=f"email-change:{cid}:{_security_key(token)[:16]}",
+        on_success=None, attachments=None, error="queued_at_email_change",
+    )
+    return True
+
+
+class EmailChangeConfirmIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+@api.post("/portal/email-change/confirm")
+async def portal_confirm_email_change(body: EmailChangeConfirmIn):
+    """The new address is used only once the link sent to it is opened (audit #27)."""
+    row = await db.email_changes.find_one({"token_hash": _security_key(body.token)}, {"_id": 0})
+    if not row or (row.get("expires_at") or "") < datetime.now(timezone.utc).isoformat():
+        raise HTTPException(status_code=400, detail="This confirmation link has expired. Change your email again.")
+    new_email = row["new_email"]
+    await db.clients.update_one({"id": row["client_id"]}, {"$set": {"email": new_email}})
+    await db.users.update_one({"id": row["user_id"]}, {"$set": {"email": new_email}, "$inc": {"token_version": 1}})
+    await db.email_changes.delete_one({"client_id": row["client_id"]})
+    return {"ok": True, "email": new_email}
 
 @api.post("/portal/gallery/mark-seen")
 async def portal_gallery_mark_seen(user: dict = Depends(get_current_user)):
