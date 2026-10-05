@@ -383,6 +383,12 @@ export function vaccineWarningOf(err) {
 }
 
 export function formatErr(detail) {
+  // Many callers pass the whole Axios error, not its detail. Show the server's message from it,
+  // never the Axios wording such as "Request failed with status code 404" (audit #92).
+  if (detail?.isAxiosError || detail?.response) {
+    const inner = detail.response?.data?.detail;
+    return inner == null ? "Something went wrong." : formatErr(inner);
+  }
   if (detail == null) return "Something went wrong.";
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) return detail.map((e) => e?.msg || JSON.stringify(e)).join(" ");
