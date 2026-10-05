@@ -52077,9 +52077,8 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     ).to_list(2000) if dog_ids else []
     dog_map = {d["id"]: d for d in dogs_rows}
 
-    # Required vaccines from settings — used for the vaccine-warning flag
+    # The vaccines a stay needs come from its own service, the same as booking and check-in (audit #81).
     settings = await get_settings()
-    required = settings.get("required_vaccines", ["rabies"])
 
     # Bulk-load recent open incidents
     inc_rows = await db.incidents.find(
@@ -52090,9 +52089,9 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     for r in inc_rows:
         open_incidents_by_dog[r["dog_id"]] = open_incidents_by_dog.get(r["dog_id"], 0) + 1
 
-    def _vaccine_warning(dog: Dict[str, Any]) -> bool:
+    def _vaccine_warning(dog: Dict[str, Any], service_type: Optional[str]) -> bool:
         vacc = dog.get("vaccines") or {}
-        for v in required:
+        for v in _required_vaccines_for_service(settings, service_type):
             expires = vacc.get(v)
             # tolerate both flat string and {expires} nested dict
             if isinstance(expires, dict):
@@ -52135,7 +52134,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
             "breed": dog.get("breed") or "",
             "safety_flags": flags,
             "warnings": {
-                "vaccine_lapsed":      _vaccine_warning(dog),
+                "vaccine_lapsed":      _vaccine_warning(dog, b.get("service_type")),
                 "has_feeding_plan":    has_feeding,
                 "has_med_plan":        has_meds,
                 "med_overdue":         med_overdue,

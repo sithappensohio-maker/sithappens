@@ -44,6 +44,51 @@ def _card(bid):
 
 def teardown_module(_m):
     run(server.db.bookings.delete_many({"id": {"$regex": f"^{TAG}"}}))
+    run(server.db.dogs.delete_many({"id": {"$regex": f"^{TAG}"}}))
+
+
+def _dog(vaccines):
+    dog_id = f"{TAG}-dog-{uuid.uuid4().hex[:4]}"
+    run(server.db.dogs.insert_one({"id": dog_id, "name": "Rex", "vaccines": vaccines}))
+    return dog_id
+
+
+def _with_vaccine_rules(monkeypatch, *, required, per_service=None):
+    """Swap in settings with the given global and per-service vaccine lists; everything else stays as it is."""
+    base = run(server.get_settings())
+    day_to_day = dict(base.get("day_to_day") or {})
+    compliance = dict(day_to_day.get("compliance") or {})
+    compliance["vaccines_per_service"] = per_service or {}
+    day_to_day["compliance"] = compliance
+    settings = {**base, "required_vaccines": required, "day_to_day": day_to_day}
+
+    async def _stub():
+        return settings
+
+    monkeypatch.setattr(server, "get_settings", _stub)
+
+
+def test_a_boarding_dog_is_not_flagged_for_a_daycare_only_vaccine(monkeypatch):
+    # Bordetella is required for daycare, not boarding; the global list asks for it too.
+    _with_vaccine_rules(monkeypatch, required=["rabies", "bordetella"],
+                        per_service={"boarding": ["rabies"], "daycare": ["rabies", "bordetella"]})
+    dog = _dog({"rabies": _day(60)})
+    b = _stay(dog_id=dog)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is False
+
+
+def test_a_daycare_lapse_is_flagged_when_the_global_list_omits_it(monkeypatch):
+    _with_vaccine_rules(monkeypatch, required=["rabies"], per_service={"daycare": ["rabies", "bordetella"]})
+    dog = _dog({"rabies": _day(60), "bordetella": "2020-01-01"})
+    b = _stay(dog_id=dog, service_type="daycare", date=_day(0), end_date=None)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is True
+
+
+def test_a_lapsed_global_vaccine_is_still_flagged_when_no_service_overrides_it(monkeypatch):
+    _with_vaccine_rules(monkeypatch, required=["rabies"])
+    dog = _dog({"rabies": "2020-01-01"})
+    b = _stay(dog_id=dog)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is True
 
 
 def test_a_stay_picked_up_early_on_an_earlier_day_is_off_the_board():
