@@ -34113,6 +34113,10 @@ _INCOME_REVERSAL_KINDS = frozenset({
     "stripe_refund",         # reverses a stripe_online_payment/shop_order income row
 })
 
+# Register rows that take money back. Their amounts are negative by design, so the register
+# report does not flag them as negative sales (audit #52). Wider than _INCOME_REVERSAL_KINDS.
+_REGISTER_REVERSAL_KINDS = frozenset(_INCOME_REVERSAL_KINDS | {"pos_sale_return", "stripe_dispute_loss", "payment_plan_reversal"})
+
 
 # ── Step 4B-5 — the ONE canonical Finance income taxonomy ───────────────────
 # Weekly summary, range summary, and the P&L all classify retail_sales rows
@@ -36449,7 +36453,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
     for r in retail:
         amt = float(r.get("amount") or 0)
         kind = r.get("source_kind") or "manual_sale"
-        if amt < 0 and kind != "refund":
+        if amt < 0 and kind not in _REGISTER_REVERSAL_KINDS:
             alerts.append({"date": r.get("date"), "severity": "warn", "type": "negative_sale", "message": f"Negative register sale is not marked as a refund: {r.get('description') or r.get('id')}"})
         if kind == "refund" and not (r.get("notes") or r.get("description")):
             alerts.append({"date": r.get("date"), "severity": "warn", "type": "refund_missing_reason", "message": "Refund row has no reason/description."})
@@ -36483,7 +36487,8 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
         "incoming_sources": incoming_sources,
         "totals": totals,
         "closeouts": sorted(closeout_rows, key=lambda x: ((x.get("date") or ""), (x.get("created_at") or "")), reverse=True),
-        "alerts": alerts[:100],
+        # Danger first, so the cap cannot push a danger alert off the report (audit #52). Stable within a severity.
+        "alerts": sorted(alerts, key=lambda a: 0 if a.get("severity") == "danger" else 1)[:100],
         "activity": recent_activity,
         "explain": {
             "register_first": "These totals use the same Register/POS sources shown on the dashboard: booking payments on the date collected, retail/manual sales, credit-pack sales, refunds, expenses, till adjustments, and closeouts.",
