@@ -121,13 +121,13 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   };
 
   // Case A only — a mistaken/test enrollment with zero checkpoint history.
-  // The server itself refuses this once real checkpoint history exists
+  // The server itself refuses this once there is lesson progress or checkpoint history
   // (409, pointing staff at Withdraw Student instead), so this stays safe
   // even if clicked on a history-bearing row by mistake.
   const schoolUnenroll = async (enrollment) => {
     const ok = await confirm({
       title: `Remove ${dogName} from Online School?`,
-      body: `${(enrollment.program_snapshot || {}).name || "This program"} will be permanently removed. Only works for an enrollment with no checkpoint history yet — use Withdraw Student for one with real progress.`,
+      body: `${(enrollment.program_snapshot || {}).name || "This program"} will be permanently removed. Only works for an enrollment with no lesson progress or checkpoint history yet — use Withdraw Student for one with real progress.`,
       confirmText: "Remove", tone: "danger",
     });
     if (!ok) return;

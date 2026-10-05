@@ -19851,6 +19851,15 @@ async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(
             detail="This enrollment has checkpoint history and cannot be removed. Use Withdraw Student instead — it preserves training history.",
         )
     enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
+    # A course with lesson progress, or a session logged against it, is kept: removing it would take the progress
+    # with it. Withdraw Student stops it and keeps the history (audit #31).
+    progressed = bool(enrollment) and _school_lesson_counts(enrollment)["lessons_completed"] > 0
+    logged = await db.training_session_log.count_documents({"enrollment_id": se["enrollment_id"]}) > 0
+    if progressed or logged:
+        raise HTTPException(
+            status_code=409,
+            detail="This course has lesson progress and cannot be removed. Use Withdraw Student instead — it keeps the training history.",
+        )
     if enrollment and enrollment.get("delivery_channel") != "online_school":
         raise HTTPException(status_code=409, detail="Refusing to remove — the linked enrollment is not an Online School enrollment.")
     if enrollment:
