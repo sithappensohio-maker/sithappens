@@ -537,6 +537,14 @@ async def _apply_outbox_success(action: dict | None) -> None:
         if tl.get("id") and tl.get("client_id"):
             await _db.client_communications.update_one(
                 {"id": tl["id"]}, {"$setOnInsert": {**tl, "type": "email", "occurred_at": now}}, upsert=True)
+        if action.get("campaign") and action.get("who"):
+            # The family has this message, so a repeat send of the same message skips them (audit #40).
+            marker = f"{action['campaign']}:{action['who']}"
+            await _db.bulk_email_deliveries.update_one(
+                {"id": marker},
+                {"$setOnInsert": {"id": marker, "campaign": action["campaign"], "who": action["who"],
+                                  "history_id": action.get("history_id"), "sent_at": now}},
+                upsert=True)
         if action.get("history_id"):
             await _db.bulk_email_history.update_one({"id": action["history_id"], "queued_count": {"$gt": 0}},
                                                     {"$inc": {"success_count": 1, "queued_count": -1}})

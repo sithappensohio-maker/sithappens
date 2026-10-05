@@ -29102,7 +29102,7 @@ BACKUP_COLLECTIONS = [
     "waitlist",
     "intake_form_templates", "intake_submissions",
     "client_communications", "client_message_threads",
-    "bulk_email_templates", "bulk_email_history",
+    "bulk_email_templates", "bulk_email_history", "bulk_email_deliveries",
     "help_requests",
     "announcements", "announcement_reads",
     "review_requests",
@@ -29173,6 +29173,7 @@ BACKUP_EXCLUDED = {
     "system_runs": "cron-job audit, not needed for recovery",
     "trivia_daily": "one-row daily cache, regenerated on the next portal visit",
     "auth_rate_limits": "short-lived sign-in throttle counters",
+    "email_changes": "a pending new-email confirmation link; it expires within hours, and a restore must not revive an old link",
     "sale_action_claims": "a short lock held while a refund, return or void runs on one sale; empty when idle",
     "capacity_locks": "short-lived booking locks",
     "pos_action_tokens": "short-lived print / cash-drawer tokens",
@@ -53478,6 +53479,128 @@ def _bulk_email_render(body: str, ctx: Dict[str, str]) -> str:
     return out
 
 
+def _bulk_email_message(subj: str, body_text: str, r: Dict[str, Any]) -> Tuple[str, str, str]:
+    """The subject, text and HTML one family gets from a bulk email, merge tags filled in for them."""
+    ctx = {
+        "client_first_name": r.get("first_name") or "there",
+        "client_name": r.get("name") or "",
+        "dog_names": r.get("dog_names") or "your pup",
+    }
+    rendered_subj = _bulk_email_render(subj, ctx)
+    rendered_body = _bulk_email_render(body_text, ctx)
+    # Lightweight HTML body — wrap rendered text in the existing brand
+    # wrapper. The body is PLAIN TEXT an admin typed (that is why it is
+    # split on newlines into paragraphs), and the merge tags have just
+    # dropped a client's own name into it, so it is escaped on the way
+    # into the markup.
+    text_paragraphs = "".join(f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{email_service._h(p)}</p>"
+                              for p in rendered_body.split("\n") if p.strip())
+    try:
+        html = email_service._wrap(  # type: ignore
+            title=rendered_subj,
+            intro="",
+            rows=[],
+            show_install=False,
+            body_html=text_paragraphs or f"<p>{email_service._h(rendered_body)}</p>",
+        )
+    except Exception:
+        html = f"<html><body>{text_paragraphs or email_service._h(rendered_body)}</body></html>"
+    unsubscribe_url = _marketing_unsubscribe_url(r.get("id") or "", r["email"])
+    unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{email_service._safe_url(unsubscribe_url)}' style='color:#777'>Unsubscribe</a></div>"
+    html = html.replace("</body>", unsubscribe_html + "</body>") if "</body>" in html else html + unsubscribe_html
+    return rendered_subj, rendered_body, html
+
+
+# Bulk campaigns still being queued. Held here so the event loop keeps them alive.
+_BULK_ENQUEUE_TASKS: set = set()
+
+
+def _bulk_campaign_key(subj: str, body_text: str) -> str:
+    """Names one message. The same subject and text sent again is recognised as the same campaign (audit #40)."""
+    return hashlib.sha256(f"{subj}\n{body_text}".encode("utf-8")).hexdigest()[:24]
+
+
+def _bulk_who(r: Dict[str, Any]) -> str:
+    """The family a bulk email is for: the client id, or a stable hash of the address when there is none."""
+    return str(r.get("id") or hashlib.sha256((r.get("email") or "").lower().encode("utf-8")).hexdigest()[:24])
+
+
+async def _start_bulk_campaign(recipients: List[Dict[str, Any]], subj: str, body_text: str, user: dict, *,
+                               filters: List[str], manual_selection: bool) -> Dict[str, Any]:
+    """A bulk send goes out in the background (audit #40). Each family gets one outbox row, so the
+    send survives a restart and the email worker delivers it. A family this exact message has already
+    reached, or that is still waiting for it, is skipped rather than emailed twice."""
+    campaign = _bulk_campaign_key(subj, body_text)
+    reached = {row["who"] async for row in db.bulk_email_deliveries.find({"campaign": campaign}, {"_id": 0, "who": 1})}
+    prefix = f"bulk:{campaign}:"
+    waiting = {row["key"][len(prefix):] async for row in db.email_outbox.find({"key": {"$regex": "^" + re.escape(prefix)}}, {"_id": 0, "key": 1})}
+    fresh = [r for r in recipients if _bulk_who(r) not in reached and _bulk_who(r) not in waiting]
+    started = now_iso()
+    record = {
+        "id": str(uuid.uuid4()),
+        "subject": subj,
+        "body": body_text,
+        "filters": filters,
+        "manual_selection": manual_selection,
+        "recipient_count": len(recipients),
+        "success_count": 0,
+        "queued_count": len(fresh),
+        "fail_count": 0,
+        "failed": [],
+        "skipped_already_sent": len(recipients) - len(fresh),
+        "campaign": campaign,
+        "status": "queueing" if fresh else "queued",
+        "test_only": False,
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or user.get("email"),
+        "started_at": started,
+        "finished_at": None if fresh else started,
+    }
+    await db.bulk_email_history.insert_one(dict(record))
+    if fresh:
+        await db.bulk_email_deliveries.create_index("campaign")
+        task = asyncio.create_task(_enqueue_bulk_campaign(record["id"], fresh, subj, body_text, campaign, user))
+        _BULK_ENQUEUE_TASKS.add(task)
+        task.add_done_callback(_BULK_ENQUEUE_TASKS.discard)
+    return record
+
+
+async def _enqueue_bulk_campaign(history_id: str, fresh: List[Dict[str, Any]], subj: str, body_text: str,
+                                 campaign: str, user: dict) -> None:
+    """Put one outbox row per family. A family that could not be queued is counted as failed on the history row."""
+    failures: List[Dict[str, str]] = []
+    try:
+        for r in fresh:
+            who = _bulk_who(r)
+            try:
+                rendered_subj, rendered_body, html = _bulk_email_message(subj, body_text, r)
+                queued = await email_service._queue_email(
+                    to_email=r["email"], subject=rendered_subj, html=html,
+                    outbox_key=f"bulk:{campaign}:{who}",
+                    on_success={"type": "bulk_email_sent", "history_id": history_id, "campaign": campaign, "who": who,
+                                "client_id": r.get("id"), "timeline": {
+                                    "id": str(uuid.uuid4()), "client_id": r.get("id"), "client_name": r.get("name") or "",
+                                    "summary": f"[Bulk] {rendered_subj}", "details": rendered_body,
+                                    "follow_up_required": False, "follow_up_date": None, "created_by_id": user.get("id"),
+                                    "created_by_name": user.get("name") or user.get("email"), "bulk_email_id": history_id}},
+                    attachments=None, error="queued_for_background_send",
+                    guard={"kind": "marketing", "client_id": r["id"]} if r.get("id") else None,
+                )
+                if not queued:
+                    raise RuntimeError("the email could not be queued")
+            except Exception as e:
+                failures.append({"client_id": r.get("id") or "", "email": r.get("email") or "", "error": str(e)[:200]})
+        bad = len(failures)
+        update: Dict[str, Any] = {"$set": {"status": "queued", "finished_at": now_iso()}}
+        if bad:
+            update["$inc"] = {"queued_count": -bad, "fail_count": bad}
+            update["$set"]["failed"] = failures[:50]
+        await db.bulk_email_history.update_one({"id": history_id}, update)
+    except Exception as e:
+        logger.error("Bulk campaign %s stopped while queueing: %s", history_id, e)
+        await db.bulk_email_history.update_one({"id": history_id}, {"$set": {"status": "error", "finished_at": now_iso(), "error": str(e)[:200]}})
+
+
 @api.post("/admin/bulk-email/send")
 async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_admin_and_permission("manage_communications"))):
     subj = (body.subject or "").strip()
@@ -53515,6 +53638,11 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
     if body.test_only:
         recipients = recipients[:1]
 
+    if len(recipients) > 1:
+        # A bulk send goes out in the background, so a long list never holds the request (audit #40).
+        return await _start_bulk_campaign(recipients, subj, body.body, user,
+                                          filters=body.filters or [], manual_selection=body.client_ids is not None)
+
     # Build a sent record up front so the UI can show "Sending…" history.
     history_id = str(uuid.uuid4())
     started_at = now_iso()
@@ -53522,33 +53650,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
     success = queued = 0
     failures: List[Dict[str, str]] = []
     for r in recipients:
-        ctx = {
-            "client_first_name": r.get("first_name") or "there",
-            "client_name": r.get("name") or "",
-            "dog_names": r.get("dog_names") or "your pup",
-        }
-        rendered_subj = _bulk_email_render(subj, ctx)
-        rendered_body = _bulk_email_render(body.body, ctx)
-        # Lightweight HTML body — wrap rendered text in the existing brand
-        # wrapper. The body is PLAIN TEXT an admin typed (that is why it is
-        # split on newlines into paragraphs), and the merge tags have just
-        # dropped a client's own name into it, so it is escaped on the way
-        # into the markup.
-        text_paragraphs = "".join(f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{email_service._h(p)}</p>"
-                                  for p in rendered_body.split("\n") if p.strip())
-        try:
-            html = email_service._wrap(  # type: ignore
-                title=rendered_subj,
-                intro="",
-                rows=[],
-                show_install=False,
-                body_html=text_paragraphs or f"<p>{email_service._h(rendered_body)}</p>",
-            )
-        except Exception:
-            html = f"<html><body>{text_paragraphs or email_service._h(rendered_body)}</body></html>"
-        unsubscribe_url = _marketing_unsubscribe_url(r.get("id") or "", r["email"])
-        unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{email_service._safe_url(unsubscribe_url)}' style='color:#777'>Unsubscribe</a></div>"
-        html = html.replace("</body>", unsubscribe_html + "</body>") if "</body>" in html else html + unsubscribe_html
+        rendered_subj, rendered_body, html = _bulk_email_message(subj, body.body, r)
         try:
             ok = await email_service._send(r["email"], rendered_subj, html,  # type: ignore
                                            hold_guard={"kind": "marketing", "client_id": r.get("id")} if r.get("id") else None,

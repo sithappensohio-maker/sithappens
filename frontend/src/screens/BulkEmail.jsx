@@ -340,7 +340,8 @@ export default function BulkEmail() {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-black text-shPrimary">{h.success_count}/{h.recipient_count} ✓</p>
-                    {h.queued_count > 0 && <p className="text-[11px] text-shAccent" data-testid="bulk-history-queued">{h.queued_count} queued for quiet hours</p>}
+                    {h.queued_count > 0 && <p className="text-[11px] text-shAccent" data-testid="bulk-history-queued">{h.queued_count} waiting to send</p>}
+                    {h.skipped_already_sent > 0 && <p className="text-[11px] text-shTextMuted" data-testid="bulk-history-skipped">{h.skipped_already_sent} skipped · already had this message</p>}
                     {h.fail_count > 0 && <p className="text-[11px] text-red-400">{h.fail_count} failed</p>}
                   </div>
                 </div>

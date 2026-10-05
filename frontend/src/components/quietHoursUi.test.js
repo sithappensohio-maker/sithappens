@@ -32,6 +32,10 @@ describe("what the bulk email screen says", () => {
     [{ success_count: 1, queued_count: 2, recipient_count: 3 }, false, "Sent 1, 2 of 3 queued — they go out when quiet hours end"],
     [{ success_count: 1, recipient_count: 1 }, true, "Test email sent to 1/1."],
     [{ success_count: 0, queued_count: 1, recipient_count: 1 }, true, "Test email queued — it goes out when quiet hours end."],
+    [{ status: "queueing", queued_count: 3, skipped_already_sent: 0, recipient_count: 3 }, false, "3 emails queued to send in the background."],
+    [{ status: "queued", queued_count: 1, skipped_already_sent: 0, recipient_count: 1 }, false, "1 email queued to send in the background."],
+    [{ status: "queueing", queued_count: 1, skipped_already_sent: 2, recipient_count: 3 }, false, "1 email queued to send in the background. 2 already had this message and were skipped."],
+    [{ status: "queued", queued_count: 0, skipped_already_sent: 3, recipient_count: 3 }, false, "Nothing new to send — all 3 families already had this message."],
   ])("%j test=%s", (data, testOnly, message) => {
     expect(bulkSendMessage(data, testOnly)).toBe(message);
   });

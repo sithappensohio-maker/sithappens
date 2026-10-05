@@ -16,8 +16,19 @@ export function bulkSendMessage(data, testOnly) {
   const sent = data?.success_count || 0;
   const queued = data?.queued_count || 0;
   const total = data?.recipient_count || 0;
+  const skipped = data?.skipped_already_sent || 0;
   if (testOnly) {
     return queued ? "Test email queued — it goes out when quiet hours end." : `Test email sent to ${sent}/${total}.`;
+  }
+  // A bulk send is queued and the email worker sends it in the background (audit #40).
+  if (data?.status) {
+    if (!queued) {
+      return skipped
+        ? `Nothing new to send — all ${skipped} ${skipped === 1 ? "family" : "families"} already had this message.`
+        : "Nothing to send.";
+    }
+    const note = skipped ? ` ${skipped} already had this message and ${skipped === 1 ? "was" : "were"} skipped.` : "";
+    return `${queued} ${queued === 1 ? "email" : "emails"} queued to send in the background.${note}`;
   }
   if (!queued) return `Sent ${sent} / ${total} emails`;
   return `${sent ? `Sent ${sent}, ` : ""}${queued} of ${total} queued — they go out when quiet hours end`;
