@@ -26,7 +26,7 @@ const PHASE_LABEL = {
 
 function jobMessage(j) {
   if (j.status === "done") {
-    const summary = Object.entries(j.summary || {}).map(([k, v]) => `${k}: ${v.inserted ?? v.upserted}${v.kept_live ? ` (${v.kept_live} kept as-is)` : ""}`).join(" · ");
+    const summary = Object.entries(j.summary || {}).map(([k, v]) => `${k}: ${v.inserted ?? v.upserted}${v.kept_live ? ` (${v.kept_live} kept as-is)` : ""}${v.live_rows_kept ? ` (${v.live_rows_kept} already live, money and status kept)` : ""}`).join(" · ");
     // Merge keeps a live record when a newer one already holds the same key
     // (the same booking's invoice, the same sale key) — say so.
     const keptNote = j.kept_live ? ` ${j.kept_live} backed-up record(s) were kept as they are now, because a newer record already uses the same key.` : "";
@@ -142,7 +142,7 @@ export default function FullRestorePanel() {
   };
 
   const startRestore = async (name, totalDocs, label) => {
-    const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data";
+    const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data (keeping current money and booking status)";
     const count = totalDocs != null ? `${totalDocs} records` : "the records";
     if (!(await confirm({ title: restoreMode === "replace" ? "Replace ALL data?" : "Merge into current data?", body: `This will ${verb} ${count} from ${label}.\n\nA safety snapshot of your CURRENT state will be auto-saved to /app/backups/ before anything is touched — you can roll back from there if needed.`, confirmText: restoreMode === "replace" ? "Yes, replace everything" : "Yes, merge", tone: "danger" }))) return;
     setBusy(true); setMsg("");
@@ -236,7 +236,7 @@ export default function FullRestorePanel() {
             <label className={`cursor-pointer rounded p-3 border ${restoreMode==="merge"?"bg-shSecondary/10 border-shSecondary/50":"bg-[var(--sh-card-base)] border-shBorder"}`}>
               <input type="radio" name="mode" checked={restoreMode==="merge"} disabled={busy} onChange={()=>setRestoreMode("merge")} className="mr-2 accent-shSecondary" data-testid="mode-merge" />
               <span className="text-sm font-black text-shText uppercase tracking-tight">Merge (safer)</span>
-              <p className="text-[14px] text-shTextMuted mt-1">Adds & updates by ID. Anything not in the backup stays untouched.</p>
+              <p className="text-[14px] text-shTextMuted mt-1">Adds and updates by ID. Money, credits, payments and booking status already in the app are kept as they are now, so an older backup cannot undo them. Anything not in the backup stays untouched.</p>
             </label>
             <label className={`cursor-pointer rounded p-3 border ${restoreMode==="replace"?"bg-red-500/10 border-red-500/50":"bg-[var(--sh-card-base)] border-shBorder"}`}>
               <input type="radio" name="mode" checked={restoreMode==="replace"} disabled={busy} onChange={()=>setRestoreMode("replace")} className="mr-2 accent-red-500" data-testid="mode-replace" />
