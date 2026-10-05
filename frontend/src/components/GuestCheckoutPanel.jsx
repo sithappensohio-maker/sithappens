@@ -185,7 +185,7 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
 
             <div className="space-y-2">
               <label className="block text-[11px] font-black uppercase tracking-widest text-shTextMuted">
-                Email for your receipt
+                Email for your order
               </label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
                      data-testid="guest-checkout-email" autoComplete="email" inputMode="email"
@@ -208,8 +208,8 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
                 </>
               )}
               <p className="text-[11px] text-shTextMuted">
-                No account is created. We use this to send your receipt — and, if you bought one,
-                the gift card. You&apos;ll pay on Stripe&apos;s secure checkout; Sit Happens never
+                No account is created. We use this for your order, and, if you bought one, the gift
+                card. A receipt is emailed only if the shop has automatic receipts turned on. You&apos;ll pay on Stripe&apos;s secure checkout; Sit Happens never
                 sees your card details.
               </p>
             </div>
