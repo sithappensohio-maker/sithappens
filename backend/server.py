@@ -28139,6 +28139,16 @@ def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:
 
 
 # -------- Today's Brain — Unified Admin Action Queue (Sprint 102) --------
+@api.post("/admin/incidents/{incident_id}/acknowledge")
+async def acknowledge_incident(incident_id: str, user: dict = Depends(require_admin_and_permission("incidents"))):
+    """The owner has read a serious incident; it leaves the Action Center (audit #35)."""
+    r = await db.incidents.update_one({"id": incident_id}, {"$set": {
+        "owner_acknowledged_at": now_iso(), "owner_acknowledged_by": user.get("name") or user.get("email") or "owner"}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"ok": True}
+
+
 @api.get("/admin/today-brain")
 async def admin_today_brain(_: dict = Depends(require_admin)):
     """Single prioritized 'what needs my attention' feed for the admin
@@ -28325,6 +28335,29 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
                 })
     except Exception as e:
         logger.warning("today-brain no-checkin query failed: %s", e)
+
+    # 3b. Serious incidents (severe, a bite or an injury) the owner has not acknowledged (audit #35).
+    #     The item clears when the owner acknowledges the incident.
+    try:
+        serious = [inc async for inc in db.incidents.find(
+            {"owner_acknowledged_at": {"$in": [None, ""]},
+             "date": {"$gte": (business_today() - timedelta(days=14)).isoformat()},
+             "$or": [{"severity": "severe"}, {"type": {"$in": ["bite", "injury"]}}]},
+            {"_id": 0, "id": 1, "dog_name": 1, "type": 1, "severity": 1},
+        )]
+        if serious:
+            items.append({
+                "id": f"serious-incident:{today_iso}:{len(serious)}",
+                "kind": "serious_incident",
+                "priority": "urgent",
+                "title": f"{len(serious)} serious incident{'s' if len(serious) != 1 else ''} to review",
+                "subtitle": ", ".join(f"{i.get('dog_name') or '?'} · {str(i.get('type') or '').replace('_', ' ')}" for i in serious[:4]),
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-triangle-exclamation",
+            })
+    except Exception as e:
+        logger.warning("today-brain serious-incident query failed: %s", e)
 
     # 4. Low credits (warn) — any client with any pool ≤ 2
     try:
