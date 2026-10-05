@@ -5030,6 +5030,10 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
     update["service_id"] = selected_service.get("id")
     update["service_name"] = selected_service.get("name")
     update["weekdays"] = sorted(set(int(w) for w in update["weekdays"] if 0 <= int(w) <= 6))
+    # Auto-renew is kept unless the edit says otherwise: the portal's form does not send it, and the default
+    # would switch it back on with every edit (audit #10).
+    if "auto_extend" not in body.model_fields_set:
+        update.pop("auto_extend", None)
     await db.recurring_templates.update_one({"id": template_id}, {"$set": update})
     existing.update(update)
     return existing if user.get("role") == "admin" else renewal_misses.client_safe(existing)
