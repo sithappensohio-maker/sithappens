@@ -155,9 +155,9 @@ export default function ClientHub({
                 <button onClick={onBook} data-testid="hub-action-book" className="min-h-[44px] px-3 py-2 rounded bg-shGreen text-black text-[12px] font-black uppercase tracking-widest">New Booking</button>
                 {can("take_payments") && <button onClick={onTakePayment} data-testid="hub-action-take-payment" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Take Payment</button>}
                 {can("sell_credits") && <button onClick={onSellPack} data-testid="hub-action-sell-pack" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Sell Prepaid Visits</button>}
-                <button onClick={onAddDog} data-testid="hub-action-add-dog" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Add Dog</button>
+                {can("dogs_edit") && onAddDog && <button onClick={onAddDog} data-testid="hub-action-add-dog" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Add Dog</button>}
                 <button onClick={() => setTab("messages")} data-testid="hub-action-message" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Send Message</button>
-                <button onClick={onEditClient} data-testid="hub-action-edit" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Edit Client</button>
+                {can("clients_edit") && onEditClient && <button onClick={onEditClient} data-testid="hub-action-edit" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Edit Client</button>}
               </div>
 
               {ff?.waiting_for_bill && (
