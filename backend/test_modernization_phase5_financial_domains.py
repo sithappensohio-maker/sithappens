@@ -121,7 +121,8 @@ def test_server_financial_helpers_are_facades_and_file_keeps_shrinking():
     assert len(text.splitlines()) <= 56300
     assert "return await pricing_domain_services.resolve_client_price(" in text
     assert "return await pricing_domain_services.resolve_addon_snapshots(" in text
-    assert "return await pricing_domain_services.quote_base_service_price(" in text
+    # The base-price quote moved from server.py to domains/bookings/checkout_quotes.py (it still delegates to pricing).
+    assert "return await pricing_domain_services.quote_base_service_price(" in (ROOT / "domains" / "bookings" / "checkout_quotes.py").read_text()
     assert "return await pos_domain_services.build_register_catalog(client_id)" in text
     assert "return await pos_domain_services.price_pos_cart(" in text
     assert "return await bookings_domain_services.resolve_base_service_for_booking(body, user)" in text
@@ -131,7 +132,8 @@ def test_server_financial_helpers_are_facades_and_file_keeps_shrinking():
     assert "return await bookings_domain_services.check_out(booking_id, body, user)" in text
     assert "return await pos_domain_services.create_sale(body, user)" in text
     assert "async def _create_booking_impl(" in text
-    assert "async def _check_out_endpoint_impl(" in text
+    # The group checkout endpoint moved from server.py to domains/bookings/checkout_group.py.
+    assert "async def _check_out_endpoint_impl(" in (ROOT / "domains" / "bookings" / "checkout_group.py").read_text()
     assert "async def _create_pos_sale_impl(" in text
 
 
