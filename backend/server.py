@@ -36160,8 +36160,8 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     # linked to a pos_sale is bucketed from the sale's real tenders
     # instead: positive rows add the tenders once per sale, pos_sale_void
     # rows subtract them once per sale (voids are all-or-nothing per the
-    # one-void-per-sale invariant, and always land on the same open
-    # business day). Rows whose pos_sales doc is missing fall back to the
+    # one-void-per-sale invariant, and each lands on the day it was made).
+    # Rows whose pos_sales doc is missing fall back to the
     # old per-row label so historical/foreign rows keep their previous
     # behavior. Source subtotals and the activity feed still use each
     # row's own amount — only the payment-METHOD buckets (and therefore
@@ -43776,14 +43776,16 @@ class PosSaleVoidIn(BaseModel):
 
 async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     """Reverses a completed Front Desk checkout — exactly once, and only
-    while its business day is still open. Mirrors void_payment's exact
+    while today's register is still open. Mirrors void_payment's exact
     discipline: structural one-void-per-sale invariant (pos_sale_id is
     UNIQUE in pos_sale_void_claims), atomic status transition, an
     offsetting negative retail_sales row per original revenue row (never
     deleting the originals), and a drawer-open token when the voided sale
-    had a real cash component (giving cash back is a physical drawer
-    action too). After closeout, this refuses — use the existing manual
-    financial-correction workflow instead.
+    had a real cash component and today's drawer is open (giving cash back
+    is a physical drawer action too). The reversal is booked on today's
+    register day, not the sale's, the same as a return; once today is
+    closed out, this refuses — use the existing manual financial-correction
+    workflow instead.
 
     Front Desk checkout integrity audit — voiding a mixed cart must reverse
     EVERY line kind, not just retail: any credit-pack/training-program
@@ -43804,13 +43806,13 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
     if not original:
         raise HTTPException(status_code=404, detail="POS sale not found")
 
-    business_date = original.get("business_date")
-    active_closeout = await _active_register_closeout(business_date) if business_date else None
-    if active_closeout:
-        raise HTTPException(
-            status_code=409,
-            detail="This sale's business day has been closed out. Use the financial-correction workflow instead.",
-        )
+    # The reversal is money leaving the till today, so it is booked on today's
+    # register day and refused only while today is closed out — the same check
+    # a return makes. The original sale's own day is left exactly as it was.
+    business_date = business_today().isoformat()
+    await _require_register_day_open(business_date)
+    sold_on = original.get("business_date")
+    void_note = f"Void of POS Sale #{original.get('receipt_number')}" + (f" from {sold_on}" if sold_on else "")
 
     await pos_domain_services.refuse_after_hand_refund(original, "void")  # money refunded by hand can't go back twice (audit #27)
     # Gift cards on the sale: checked before anything moves (a spent card refuses the void). See domains/gift_cards.
@@ -43883,7 +43885,7 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
                 "tax_amount": -original_tax,
                 "tax_rate_pct": float((retail_row_original or {}).get("tax_rate_pct") or 0),
                 "pre_tax_amount": -round(float((retail_row_original or {}).get("pre_tax_amount") or 0), 2),
-                "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
+                "description": f"{void_note} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
                 **gift_card_services.funded_offset(retail_row_original),  # card-paid part nets to zero revenue
@@ -43909,7 +43911,7 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
                 # entitlement rows currently never carry tax, so this is 0.0,
                 # but writing the key keeps the whole void tax-explicit.
                 "tax_amount": -round(float(row.get("tax_amount") or 0), 2),
-                "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
+                "description": f"{void_note} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
                 **gift_card_services.funded_offset(row),  # card-paid part nets to zero revenue (audit #72)
@@ -43989,7 +43991,10 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
 
     pos_open_drawer_token = None
     try:
-        if float(original.get("cash_component") or 0) > 0:
+        # Giving cash back is a physical drawer action, so the token is only
+        # handed out while today's drawer is open to give it from.
+        drawer_open_today = await db.cash_drawer_sessions.find_one({"date": business_date}, {"_id": 1})
+        if float(original.get("cash_component") or 0) > 0 and drawer_open_today:
             pos_open_drawer_token = await _issue_pos_token(
                 action="open_drawer", workstation_id=body.workstation_id, pos_sale_id=sale_id,
             )

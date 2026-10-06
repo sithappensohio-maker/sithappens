@@ -1374,6 +1374,7 @@ async def write_void_offsets(plan: dict, sale: dict, *, business_date: str, ts: 
     deleting the original) — the same discipline as the merchandise and
     pack offsets. Returns the ids written, for the void's own rollback."""
     written: List[str] = []
+    sold_on = f" from {sale['business_date']}" if sale.get("business_date") else ""
     for s in plan.get("sold") or []:
         for r in s["rows"]:
             row_id = str(uuid.uuid4())
@@ -1384,7 +1385,7 @@ async def write_void_offsets(plan: dict, sale: dict, *, business_date: str, ts: 
                 "reversed_retail_sales_id": r["id"], "source_kind": "pos_sale_void",
                 "gift_card_id": s["card_id"], "tax_amount": 0.0, "tax_rate_pct": 0.0,
                 "pre_tax_amount": -_money(r.get("amount")),
-                "description": f"Void of POS Sale #{sale.get('receipt_number')} · gift card {_display(s['code'])} · {reason}",
+                "description": f"Void of POS Sale #{sale.get('receipt_number')}{sold_on} · gift card {_display(s['code'])} · {reason}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
             })

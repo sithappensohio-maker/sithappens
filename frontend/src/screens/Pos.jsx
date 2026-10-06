@@ -844,8 +844,8 @@ export default function Pos({ onOpenShopManager } = {}) {
   };
 
   // Void — admin-only (matches backend require_admin), reason required.
-  // Same-day only; the backend rejects once the business day is closed out
-  // and directs to the financial-correction workflow instead.
+  // The reversal lands on today's register; the backend rejects while today
+  // is closed out and directs to the financial-correction workflow instead.
   const [voidingSaleId, setVoidingSaleId] = useState(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidBusy, setVoidBusy] = useState(false);
