@@ -7,7 +7,7 @@ composition time; no route mutation or server import cycle is required.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from datetime import date
+from datetime import date, timedelta
 from fastapi import HTTPException
 
 from domains.bookings.blocks import BookingBlocked
@@ -683,11 +683,26 @@ async def resolve_addon_snapshots(
 
 
 
+def _stay_nights(booking: Dict[str, Any], stay_end: Optional[str] = None) -> List[str]:
+    """The nights a stay covers, as ISO dates. A boarding stay is every night
+    from its start up to (not including) its end date; any other service is the
+    one day it is on. `stay_end` (an early checkout's actual end date) replaces
+    the booked end date."""
+    start = str(booking.get("date") or "")[:10]
+    if booking.get("service_type") == "boarding":
+        end = str(stay_end or booking.get("end_date") or "")[:10]
+        if start and end > start:
+            first = date.fromisoformat(start)
+            return [(first + timedelta(days=i)).isoformat() for i in range((date.fromisoformat(end) - first).days)]
+    return [start]
+
+
 def money_modifier_breakdown(
     booking: Dict[str, Any],
     base_amount: float,
     settings: Dict[str, Any],
     checkout_ts: Optional[str] = None,
+    stay_end: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return one transparent seasonal/late-pickup pricing breakdown.
 
@@ -695,6 +710,11 @@ def money_modifier_breakdown(
     the same number the backend will save. (The per-15-minute late fee here is
     the "client shows up after their DECLARED pickup time" charge, distinct
     from the boarding late-pickup daycare day.)
+
+    The seasonal surcharge is worked out night by night: the base is split
+    evenly across the nights the stay covers (`stay_end` for an early checkout,
+    so only the nights stayed), each night takes its own holiday or peak-season
+    multiplier, and the surcharge is the sum of the nights.
     """
     from datetime import datetime, timezone
 
@@ -702,25 +722,35 @@ def money_modifier_breakdown(
     amount = base
     money = ((settings.get("day_to_day") or {}).get("money") or {})
     seasonal = ((settings.get("day_to_day") or {}).get("seasonal") or {})
-    multiplier = 1.0
     seasonal_label = None
-    bdate = booking.get("date") or ""
     try:
-        for h in (seasonal.get("holiday_surcharges") or []):
-            if h.get("date") == bdate:
-                multiplier = float(h.get("multiplier", 1) or 1)
-                seasonal_label = h.get("label") or "Holiday surcharge"
-                break
-        else:
-            for row in (seasonal.get("peak_season_ranges") or []):
-                if (row.get("start") or "") <= bdate <= (row.get("end") or "9999"):
-                    multiplier = float(row.get("multiplier", 1) or 1)
-                    seasonal_label = row.get("label") or "Peak-season surcharge"
+        nights = _stay_nights(booking, stay_end)
+        per_night = base / len(nights)
+        holidays = seasonal.get("holiday_surcharges") or []
+        peaks = seasonal.get("peak_season_ranges") or []
+        night_multipliers: List[float] = []
+        seasonal_total = 0.0
+        for night in nights:
+            night_multiplier = 1.0
+            for h in holidays:
+                if h.get("date") == night:
+                    night_multiplier = float(h.get("multiplier", 1) or 1)
+                    seasonal_label = seasonal_label or (h.get("label") or "Holiday surcharge")
                     break
+            else:
+                for row in peaks:
+                    if (row.get("start") or "") <= night <= (row.get("end") or "9999"):
+                        night_multiplier = float(row.get("multiplier", 1) or 1)
+                        seasonal_label = seasonal_label or (row.get("label") or "Peak-season surcharge")
+                        break
+            night_multipliers.append(night_multiplier)
+            seasonal_total += per_night * night_multiplier
     except Exception:
-        multiplier = 1.0
+        night_multipliers = [1.0]
+        seasonal_total = base
         seasonal_label = None
-    amount = round(amount * multiplier, 2)
+    multiplier = round(sum(night_multipliers) / len(night_multipliers), 6)
+    amount = round(seasonal_total, 2)
     seasonal_amount = round(amount - base, 2)
 
     late_fee = 0.0

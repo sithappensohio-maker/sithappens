@@ -9255,12 +9255,25 @@ async def _check_out_locked(
                 0.0,
                 round(float(booking.get("estimated_price") or 0) - _booking_estimate_addon_total_from(booking), 2),
             )
-        boarding_auto = await _boarding_auto_base(booking, settings)
-        if boarding_auto > 0:
-            modifier_base = boarding_auto
+        # An early checkout is surcharged on the nights actually stayed (the
+        # early quote), but only when that early price is the one charged: a
+        # full-stay checkout keeps the surcharge on the nights booked.
+        early_stay = await _early_stay_quote(booking)
+        early_charged = (
+            bool(early_stay) and body.base_price is not None and not body.base_price_reason
+            and abs(float(body.base_price) - float(early_stay.get("base_price") or 0)) < 0.005
+        )
+        stay_end = None
+        if early_charged:
+            modifier_base = float(early_stay.get("base_price") or 0)
+            stay_end = early_stay.get("actual_end_date")
+        else:
+            boarding_auto = await _boarding_auto_base(booking, settings)
+            if boarding_auto > 0:
+                modifier_base = boarding_auto
         if modifier_base <= 0:
             modifier_base = float(update.get("actual_price") or 0)
-        modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, pricing_ts)
+        modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, pricing_ts, stay_end=stay_end)
         modifier_total = float(modifier_breakdown.get("modifier_total") or 0)
         update["actual_price"] = round(float(update.get("actual_price") or 0) + modifier_total, 2)
         update["money_modifiers_applied_at"] = ts
@@ -55725,6 +55738,7 @@ _checkout_group_built = _checkout_group.build(globals())   # the group checkout 
 _check_out_endpoint_impl = _checkout_group_built["_check_out_endpoint_impl"]
 check_out_group = _checkout_group_built["check_out_group"]
 early_checkout_quote = _checkout_previews_built["early_checkout_quote"]
+_early_stay_quote = _checkout_previews_built["early_stay_quote"]   # checkout prices its early surcharge from this same quote
 money_modifier_preview = _checkout_previews_built["money_modifier_preview"]
 checkout_group_preview = _checkout_previews_built["checkout_group_preview"]
 

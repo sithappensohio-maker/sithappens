@@ -559,13 +559,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const extraNightsCharge = isBoarding && extraNights > 0
     ? Math.round(extraBilledUnits * extraRateEffective * 100) / 100
     : 0;
+  // An early checkout charged at the early price is surcharged on the nights it
+  // stayed: the preview carries that breakdown next to the booked-span one.
+  const earlyPriceCharged = earlyStayActive && !useCredits && basePrice === "";
+  const modifierPreview = (earlyPriceCharged && moneyModifierPreview?.early) || moneyModifierPreview;
   const modifierBase = (!useCredits && basePrice !== "")
     ? basePreview
-    : Number(moneyModifierPreview?.base_before || basePreview || 0);
-  const modifierMultiplier = Number(moneyModifierPreview?.seasonal_multiplier || 1);
-  const modifierLateFee = Number(moneyModifierPreview?.late_pickup_fee || 0);
+    : Number(modifierPreview?.base_before || basePreview || 0);
+  const modifierMultiplier = Number(modifierPreview?.seasonal_multiplier || 1);
+  const modifierLateFee = Number(modifierPreview?.late_pickup_fee || 0);
   let modifiedBase = (modifierBase * modifierMultiplier) + modifierLateFee;
-  if (moneyModifierPreview?.round_to_dollar) modifiedBase = Math.round(modifiedBase);
+  if (modifierPreview?.round_to_dollar) modifiedBase = Math.round(modifiedBase);
   const moneyModifierTotal = Math.round((modifiedBase - modifierBase) * 100) / 100;
 
   // Multi-dog discount preview: recompute against the CURRENT basePreview (so
@@ -1742,7 +1746,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             )}
             {Math.abs(moneyModifierTotal) > 0.001 && (
               <p className="text-[12px] uppercase tracking-widest text-purple-300 font-black" data-testid="checkout-money-modifiers">
-                {moneyModifierPreview?.seasonal_label || (modifierLateFee > 0 ? "Late pickup / pricing rule" : "Pricing rule")} · {moneyModifierTotal >= 0 ? "+" : "−"}${Math.abs(moneyModifierTotal).toFixed(2)}
+                {modifierPreview?.seasonal_label || (modifierLateFee > 0 ? "Late pickup / pricing rule" : "Pricing rule")} · {moneyModifierTotal >= 0 ? "+" : "−"}${Math.abs(moneyModifierTotal).toFixed(2)}
               </p>
             )}
             {checkoutDiscountApplied > 0 && !checkoutDiscountTooHigh && (

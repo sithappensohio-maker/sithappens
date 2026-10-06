@@ -107,6 +107,12 @@ def build(server_globals: dict) -> dict:
         if not booking:
             raise HTTPException(status_code=404, detail="Booking not found")
         booking, _rank_fields = await _g("group_rank").settle(_g("db"), booking, now=_g("now_iso")())
+        return (await early_stay_quote(booking)) or {"applicable": False}
+
+    async def early_stay_quote(booking: dict):
+        """The early-checkout quote for a settled booking row (see early_checkout_quote),
+        or None unless it is a boarding row being ended before its booked end date.
+        Checkout prices its surcharge from this same quote, so the two agree."""
         today = _g("business_today")().isoformat()
         now_clock = _g("datetime").now(_g("BUSINESS_TZ")).strftime("%H:%M")
         left = _g("booking_reopen").pricing_ts(booking, "")
@@ -119,7 +125,7 @@ def build(server_globals: dict) -> dict:
             or today >= str(booking.get("end_date"))
             or today < str(booking.get("date") or today)
         ):
-            return {"applicable": False}
+            return None
         ps = booking.get("pricing_snapshot") or {}
         settings = await _g("get_settings")()
         cutoff_time = ps.get("pickup_cutoff_time") or _g("_boarding_full_day_cutoff_from_rules")(settings.get("booking_rules") or {})
@@ -169,7 +175,16 @@ def build(server_globals: dict) -> dict:
         if base_amount <= 0:
             base_preview = await _g("discount_preview")(booking_id, {})
             base_amount = float(base_preview.get("preview_base_price") or 0)
-        result = _g("_money_modifier_breakdown")(booking, base_amount, settings, _g("booking_reopen").pricing_ts(booking, _g("now_iso")()))
+        checkout_ts = _g("booking_reopen").pricing_ts(booking, _g("now_iso")())
+        result = _g("_money_modifier_breakdown")(booking, base_amount, settings, checkout_ts)
+        # An early checkout's own surcharge, on the nights stayed, for the screen
+        # to show when the early price is the one charged.
+        early_stay = await early_stay_quote(booking)
+        if early_stay:
+            result["early"] = _g("_money_modifier_breakdown")(
+                booking, float(early_stay.get("base_price") or 0), settings, checkout_ts,
+                stay_end=early_stay.get("actual_end_date"),
+            )
         tax_cfg = (settings.get("sales_tax") or {})
         applies = _g("_service_type_sales_taxable")(booking.get("service_type"), tax_cfg)
         result["sales_tax"] = {
@@ -248,6 +263,7 @@ def build(server_globals: dict) -> dict:
     return {
         "discount_preview": discount_preview,
         "early_checkout_quote": early_checkout_quote,
+        "early_stay_quote": early_stay_quote,
         "money_modifier_preview": money_modifier_preview,
         "checkout_group_preview": checkout_group_preview,
     }

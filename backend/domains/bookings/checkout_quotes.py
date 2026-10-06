@@ -70,9 +70,11 @@ def _money_modifier_breakdown(
     base_amount: float,
     settings: Dict[str, Any],
     checkout_ts: Optional[str] = None,
+    stay_end: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Facade; canonical seasonal/late-pickup modifier math lives in domains.pricing."""
-    return pricing_domain_services.money_modifier_breakdown(booking, base_amount, settings, checkout_ts)
+    """Facade; canonical seasonal/late-pickup modifier math lives in domains.pricing.
+    `stay_end` is an early checkout's actual end date: the surcharge covers only the nights stayed."""
+    return pricing_domain_services.money_modifier_breakdown(booking, base_amount, settings, checkout_ts, stay_end=stay_end)
 
 def _group_row_price_factor(booking: dict) -> float:
     """Facade; canonical group-row pricing factor lives in domains.pricing."""
