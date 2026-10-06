@@ -142,7 +142,11 @@ def build(server_globals: dict) -> dict:
         units = float(quote.get("units") or 1)
         unit_price = float(quote.get("unit_price") or 0)
         late_fee_amount = float(quote.get("late_pickup_daycare_fee") or 0)
-        base_price = round((unit_price * units + late_fee_amount) * _g("_group_row_price_factor")(booking), 2)
+        price_factor = _g("_group_row_price_factor")(booking)
+        base_price = round((unit_price * units + late_fee_amount) * price_factor, 2)
+        # The credit units the nights stayed are worth (a credit checkout takes these,
+        # not the booked span), and the late-pickup fee as cash due (see check_out).
+        stay = {**booking, "end_date": today, "pickup_time": now_clock}
         return {
             "applicable": True,
             "actual_end_date": today,
@@ -150,6 +154,8 @@ def build(server_globals: dict) -> dict:
             "units": units,
             "unit_price": unit_price,
             "late_pickup_daycare_fee": round(late_fee_amount, 2),
+            "late_pickup_cash": round(late_fee_amount * price_factor, 2),
+            "credit_units": _g("_service_base_credit_units_for_booking")(stay),
             "base_price": base_price,
             "pickup_time_used": now_clock,
             "pickup_cutoff_time": cutoff_time,

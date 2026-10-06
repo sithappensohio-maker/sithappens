@@ -1258,6 +1258,11 @@ class CheckoutIn(BaseModel):
     board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
     late_day_resolution: Optional[Literal["forgotten", "stayed_overnight"]] = None  # domains/bookings/late_day.py
     late_day_credit_pool: Optional[Literal["boarding", "daycare"]] = None  # pay a stayed-overnight visit from daycare credits
+    # A boarding dog leaving early that is paid from credits: take the credits for
+    # the nights it stayed (the early quote), not the booked span. Only read on a
+    # credit checkout; the server re-checks the early quote, so a flag on a stay that
+    # is not early changes nothing.
+    early_checkout_credit: bool = False
     # Merchandise sold at pickup. These are NOT booking add-ons: they ring
     # through the ordinary Register sale, so stock, sales tax, retail revenue
     # and the receipt all behave exactly as they do at the till. See
@@ -9021,7 +9026,14 @@ async def _check_out_locked(
     # and the client has enough, consume them. If not, silently fall through
     # to the cash/card path below — don't block the checkout on a credit shortfall.
     elif not had_credit and use_credits and not booking.get("actual_price"):
-        svc_type, credit_need, per_unit = late_day_checkout.credit_plan(booking, body.late_day_credit_pool, _service_base_credit_units_for_booking(booking))
+        # A boarding dog leaving early and paid from credits takes the credits for the
+        # nights it stayed (the early quote), not the booked span, so the rest of the
+        # booked credit never leaves the client's balance. Never on a prepaid session.
+        early_credit = None
+        if body.early_checkout_credit and not prepaid and booking.get("service_type") == "boarding":
+            early_credit = await _early_stay_quote(booking)
+        stay_units = float(early_credit["credit_units"]) if early_credit else _service_base_credit_units_for_booking(booking)
+        svc_type, credit_need, per_unit = late_day_checkout.credit_plan(booking, body.late_day_credit_pool, stay_units)
         balance_field = _credit_balance_field(svc_type) or "credits"
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = float((client_doc or {}).get(balance_field) or 0)
@@ -9032,7 +9044,9 @@ async def _check_out_locked(
         # its payment method checked BEFORE any credit is taken, so a refusal here
         # leaves the client's credits untouched and nothing is recorded as unpaid.
         late_fee_cash = 0.0
-        if booking.get("service_type") == "boarding" and booking.get("end_date"):
+        if early_credit:   # the fee for the pickup now, as the early quote charges it
+            late_fee_cash = round(float(early_credit.get("late_pickup_cash") or 0), 2)
+        elif booking.get("service_type") == "boarding" and booking.get("end_date"):
             ps_row = booking.get("pricing_snapshot") or {}
             fee_cutoff = ps_row.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
             fee_pickup = booking.get("pickup_time") or fee_cutoff

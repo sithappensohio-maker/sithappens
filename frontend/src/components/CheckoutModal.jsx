@@ -107,6 +107,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // full booked price, and a manual base-price override always wins.
   const [earlyQuote, setEarlyQuote] = useState(null);
   const [chargeFullStay, setChargeFullStay] = useState(false);
+  // Early boarding checkout applies when the server quoted one and the operator
+  // hasn't flipped back to full-stay pricing. A household leaving together goes at
+  // the early price too (each leaving dog at its own early price); a friends &
+  // family household is paid on the family's bill, which keeps the booked span.
+  const earlyStayActive = !!earlyQuote && !chargeFullStay && !(isGroupCheckout && isFF);
   useEffect(() => {
     let alive = true;
     setEarlyQuote(null); setChargeFullStay(false);
@@ -123,6 +128,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const creditAmt = checkoutBookings.reduce((sum, b) => sum + Number(b.credit_value || 0), 0);
   const creditPool = booking.credit_service_type || booking.service_type || "daycare";
   const creditsDeducted = checkoutBookings.reduce((sum, b) => sum + Number(b.credits_deducted || 0), 0);
+  // A single boarding dog paid from credits that leaves early takes the credits for
+  // the nights it stayed (the server's early quote, credit_units). Not for credits
+  // already taken at booking, a prepaid session, or a household (booked nights).
+  const earlyCreditOn = earlyStayActive && !isGroupCheckout && !hadCredit && !ffNoCredits && !booking.is_prepaid_program_session;
 
   const fmtCredits = (n) => {
     const val = Math.round((Number(n) || 0) * 10) / 10;
@@ -131,7 +140,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
 
   // Credit units for this row. New group bookings snapshot .5 credits on
   // additional dogs; legacy rows fall back to one credit/day or one credit/night.
-  const creditUnitsFor = (row) => {
+  const bookedCreditUnitsFor = (row) => {
     const snap = Number(row.credit_units_required || 0);
     if (snap > 0) return snap;
     if (row.service_type !== "boarding") return 1;
@@ -141,6 +150,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       return Math.max(1, n);
     } catch { return 1; }
   };
+  // The credits this row takes now: the nights stayed on an early credit checkout
+  // (the server's quote), otherwise the booked span.
+  const creditUnitsFor = (row) => (earlyCreditOn && row.id === booking.id && earlyQuote?.credit_units != null)
+    ? Number(earlyQuote.credit_units)
+    : bookedCreditUnitsFor(row);
   // A daycare visit that stayed the night can be paid from DAYCARE credits —
   // the dog was already here on daycare — at the client's boarding/daycare
   // price ratio (2 per night when boarding is double daycare). Server side:
@@ -504,17 +518,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // A boarding stay's late-pickup daycare fee is cash even when credits cover the
   // nights (audit #3). A converted late-day stay already shows its own fee above,
   // so it is counted once.
+  // An early credit checkout charges the fee for the pickup now (the early quote).
   const boardingLateFeeCash = useCredits && lateDayPickupCash === 0
-    ? Number(discountPreview?.late_pickup_fee_cash || 0) : 0;
+    ? Number((earlyCreditOn ? earlyQuote?.late_pickup_cash : discountPreview?.late_pickup_fee_cash) || 0) : 0;
   const baseCashDueOnCredits = useCredits
     ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits) + lateDayPickupCash + boardingLateFeeCash
     : 0;
 
-  // Early boarding checkout applies when the server quoted one and the operator
-  // hasn't flipped back to full-stay pricing. A household leaving together goes at
-  // the early price too (each leaving dog at its own early price); a friends &
-  // family household is paid on the family's bill, which keeps the booked span.
-  const earlyStayActive = !!earlyQuote && !chargeFullStay && !(isGroupCheckout && isFF);
   // The other dogs in a household checkout: at their early prices while the early
   // price is in use for the household, otherwise at their booked prices.
   const groupOtherBaseTotal = checkoutBookings
@@ -724,6 +734,22 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           return;
         }
       }
+      // The nights stayed on an early credit checkout: ask again, so the credits taken
+      // (and the late-pickup fee in cash) are the ones the screen shows.
+      if (earlyCreditOn && useCredits) {
+        const { data: fresh } = await api.get(`/bookings/${booking.id}/early-checkout-quote`);
+        const same = fresh?.applicable
+          && Number(fresh.credit_units) === Number(earlyQuote.credit_units)
+          && Math.abs(Number(fresh.late_pickup_cash || 0) - Number(earlyQuote.late_pickup_cash || 0)) < 0.005;
+        if (!same) {
+          setEarlyQuote(fresh?.applicable ? fresh : null);
+          setErr(fresh?.applicable
+            ? `The nights stayed now come to ${fmtCredits(fresh.credit_units)} credits (pickup is now past the checkout time). Check it and press Complete again.`
+            : "This stay is no longer an early checkout. Check the price and press Complete again.");
+          setBusy(false);
+          return;
+        }
+      }
       // Add-on prices: ask again too, so the price charged is the one shown.
       if (await recheckAddOnPrices()) {
         setBusy(false);
@@ -769,6 +795,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (useCredits && basePrice !== "") {
         body.additional_cash_charge = Math.max(0, Number(basePrice) || 0);
       }
+      // A dog leaving early and paid from credits: the server takes the nights stayed.
+      if (earlyCreditOn && useCredits) body.early_checkout_credit = true;
 
       if (!useCredits) {
         body.payment_method = payMethod;
@@ -1274,7 +1302,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
 
         {/* Section 1a½ — Boarding EARLY checkout (leaving before booked end).
             Cash path only: credit deductions stay booked-span (server-side). */}
-        {earlyQuote && !(isGroupCheckout && isFF) && !useCredits && (
+        {earlyQuote && !(isGroupCheckout && isFF) && (!useCredits || (!hadCredit && !prepaidSession && !isGroupCheckout)) && (
           <div className="mb-5 border border-shBlue/40 rounded-lg p-4 bg-bgBase" data-testid="checkout-early-panel">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[13px] uppercase tracking-widest text-shBlue font-black"><i className="fas fa-person-walking-arrow-right mr-1.5"/>Checking Out Early</p>
@@ -1287,6 +1315,14 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                 <button type="button" data-testid="early-use-actual" onClick={()=>setChargeFullStay(false)}
                         className="block mt-2 min-h-[40px] px-3 rounded bg-shBlue/15 border border-shBlue/40 text-shBlue text-[12px] font-black uppercase tracking-widest">
                   Charge actual stay instead · ${Number(earlyQuote.base_price).toFixed(2)}
+                </button>
+              </p>
+            ) : earlyCreditOn && useCredits ? (
+              <p className="text-[14px] text-gray-300">
+                Taking the <span className="font-black text-white">nights stayed through today</span> — <span className="font-black text-shGreen">{fmtCredits(earlyQuote.credit_units)} credit{Number(earlyQuote.credit_units) === 1 ? "" : "s"}</span> of {fmtCredits(bookedCreditUnitsFor(booking))} booked. The rest stays on the client account.
+                <button type="button" data-testid="early-use-full" onClick={()=>setChargeFullStay(true)}
+                        className="block mt-2 min-h-[40px] px-3 rounded bg-bgPanel border border-bgHover text-gray-300 text-[12px] font-black uppercase tracking-widest">
+                  Take full booked stay instead
                 </button>
               </p>
             ) : (

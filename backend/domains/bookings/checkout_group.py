@@ -181,6 +181,9 @@ def build(server_globals: dict) -> dict:
             early_group = bool(body.base_price is not None and await _g("_is_early_checkout_price")(booking_id, body, user))
             for target in targets:
                 payload = body.model_dump()
+                # The early credit checkout is for the one dog the screen checks out. A
+                # household paid from credits keeps every dog on its booked nights (not built yet).
+                payload["early_checkout_credit"] = False
                 # New add-ons and a manual base override belong to the dog whose
                 # checkout button was clicked. Shared stay extensions apply to all
                 # dogs because the group has the same reservation dates/service.
