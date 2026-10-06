@@ -163,6 +163,22 @@ test("filed & paid: confirmation, paid amounts, no filing button", async () => {
   expect(container.querySelector('[data-testid="stt-primary-record-payment"]')).toBeFalsy();
 });
 
+test("a filing typed below the ledger shows a plain filing note, not a review flag", async () => {
+  const note = "You filed $282.04, which is $2.13 less than the ledger showed on the filing date ($284.17).";
+  const withNote = filedPeriod({ filing_note: note });
+  api.get.mockResolvedValue({ data: trackerPayload({ periods: [withNote], primary: withNote }) });
+  await mount();
+  expect(text('[data-testid="stt-filing-note"]')).toBe(note);
+  expect(container.querySelector('[data-testid="stt-primary-variance"]')).toBeFalsy();
+  expect(container.querySelector('[data-testid="stt-needs-review-banner"]')).toBeFalsy();
+});
+
+test("a filing with no filing note renders no filing-note line", async () => {
+  api.get.mockResolvedValue({ data: trackerPayload({ periods: [filedPeriod()], primary: filedPeriod() }) });
+  await mount();
+  expect(container.querySelector('[data-testid="stt-filing-note"]')).toBeFalsy();
+});
+
 test("partial payment: remaining balance headline + Record Payment CTA", async () => {
   const part = filedPeriod({ status: "filed_payment_pending", total_paid: 100.0, remaining_balance: 182.04 });
   api.get.mockResolvedValue({ data: trackerPayload({ periods: [part], primary: part }) });

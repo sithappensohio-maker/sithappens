@@ -140,6 +140,8 @@ def derive_period_state(
       zero_return_filed      recorded $0 return
     Plus ``needs_review`` (bool) when a filed period's CURRENT ledger
     liability no longer matches the snapshot taken at filing time.
+    Plus ``filing_note`` (str) on a filed period whose typed remittance was
+    below the ledger as it stood at filing — informational, never a flag.
     """
     p_start = date.fromisoformat(period["period_start"])
     p_end = date.fromisoformat(period["period_end"])
@@ -185,6 +187,17 @@ def derive_period_state(
             state["status"] = "filed_paid"
         else:
             state["status"] = "filed_payment_pending"
+        # A typed remittance BELOW the ledger as it stood at filing is a plain
+        # note, never a drift flag. A zero return has no typed figure, and a
+        # legacy filing has no ledger figure to compare against.
+        if not filing.get("is_zero_return") and "liability" in snap and snap.get("ledger_liability_at_filing") is not None:
+            typed = round(float(snap["liability"] or 0), 2)
+            ledger_then = round(float(snap["ledger_liability_at_filing"] or 0), 2)
+            short = round(ledger_then - typed, 2)
+            if short >= 0.005:
+                state["filing_note"] = (
+                    f"You filed ${typed:,.2f}, which is ${short:,.2f} less than the ledger "
+                    f"showed on the filing date (${ledger_then:,.2f}).")
         # Post-filing variance: recompute vs the frozen snapshot. Never
         # rewrite the snapshot — surface the drift for human review.
         if current_liability is not None and "liability" in snap:

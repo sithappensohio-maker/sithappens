@@ -276,6 +276,50 @@ def test_a_legacy_filing_without_the_ledger_figure_keeps_its_typed_check():
     assert st["needs_review"] and st["variance"]["filed_liability"] == 300.0
 
 
+# ── Filing note: a typed remittance BELOW the ledger at filing is shown, not flagged ──
+
+def _filed_with(typed, ledger, is_zero=False):
+    p = stt.period_for_date("monthly", date(2026, 7, 10))
+    filing = {"id": "fn", "filed_date": "2026-08-10", "is_zero_return": is_zero,
+              "snapshot": {"liability": typed, "ledger_liability_at_filing": ledger,
+                           "amount_to_remit": typed if not is_zero else 0.0},
+              "payments": [{"amount": typed if not is_zero else 0.0}]}
+    return stt.derive_period_state(p, filing, date(2026, 8, 16), "2026-07-01", current_liability=ledger)
+
+
+def test_a_filing_typed_below_the_ledger_at_filing_carries_a_note_not_a_flag():
+    st = _filed_with(290.0, 300.0)
+    assert st["filing_note"] == (
+        "You filed $290.00, which is $10.00 less than the ledger showed on the filing date ($300.00).")
+    assert st["needs_review"] is False and st["variance"] is None
+
+
+def test_a_filing_typed_equal_to_the_ledger_has_no_filing_note():
+    st = _filed_with(300.0, 300.0)
+    assert not st.get("filing_note")
+    assert st["needs_review"] is False
+
+
+def test_a_filing_typed_above_the_ledger_has_no_filing_note():
+    st = _filed_with(310.0, 300.0)
+    assert not st.get("filing_note")
+    assert st["needs_review"] is False
+
+
+def test_a_zero_return_is_not_a_typed_figure_so_it_has_no_filing_note():
+    st = _filed_with(0.0, 300.0, is_zero=True)
+    assert not st.get("filing_note")
+
+
+def test_a_legacy_filing_without_the_ledger_figure_has_no_filing_note():
+    p = stt.period_for_date("monthly", date(2026, 7, 10))
+    filing = {"id": "fl", "filed_date": "2026-08-10", "is_zero_return": False,
+              "snapshot": {"liability": 290.0, "amount_to_remit": 290.0},
+              "payments": [{"amount": 290.0}]}
+    st = stt.derive_period_state(p, filing, date(2026, 8, 16), "2026-07-01", current_liability=290.0)
+    assert not st.get("filing_note")
+
+
 # ── Due-date override: statutory preserved, adjusted distinct ───────────────
 def test_due_date_override_distinct_from_statutory():
     p = stt.period_for_date("monthly", date(2026, 7, 10))

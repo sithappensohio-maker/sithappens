@@ -221,6 +221,9 @@ function PrimaryCard({ p, onDetails, onFile, onPay }) {
           )}
         </div>
       </div>
+      {p.filing_note && (
+        <p className="text-[12px] text-shTextMuted" data-testid="stt-filing-note">{p.filing_note}</p>
+      )}
       {p.needs_review && p.variance && (
         <div className="bg-purple-500/10 border border-purple-500/40 text-purple-300 rounded px-3 py-2 text-[12px]" data-testid="stt-primary-variance">
           <b>Needs review:</b> filed tax liability {money(p.variance.filed_liability)} · ledger when filed {money(p.variance.ledger_at_filing ?? p.variance.filed_liability)} · current ledger liability {money(p.variance.current_liability)} · change since filing {money(p.variance.difference)}. {p.variance.message}
@@ -616,6 +619,7 @@ function DetailsModal({ p, onClose }) {
           <p className="flex justify-between"><span className="text-shTextMuted">Estimated Amount to Remit</span><b>{money(snap.amount_to_remit)}</b></p>
           <p className="flex justify-between"><span className="text-shTextMuted">Amount Paid</span><b>{money(p.total_paid)}</b></p>
           <p className="flex justify-between"><span className="text-shTextMuted">Remaining Balance</span><b>{money(p.remaining_balance)}</b></p>
+          {p.filing_note && <p className="text-[12px] text-shTextMuted pt-1" data-testid="stt-details-filing-note">{p.filing_note}</p>}
         </div>
       )}
       {p.needs_review && p.variance && (
