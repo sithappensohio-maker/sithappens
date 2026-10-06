@@ -33737,6 +33737,54 @@ async def seed_services(_: dict = Depends(require_admin)):
 
 
 # ----- Transactions = bookings with service_id + actual_price -----
+async def _spend_credit_on_logged_service(dog: dict, svc: dict) -> Dict[str, Any]:
+    """Pays one unit of a logged service from the client's credit for that
+    service's pool, the same way checkout spends credit: FIFO credit lots
+    (_consume_credit_lots) and then the client's balance field. A training
+    visit prefers the dog's active program's lot, as checkout does.
+
+    Refuses with HTTPException(400) and changes nothing when the service has
+    no credit pool or the client has no whole credit left for it. The caller
+    undoes a successful spend with _refund_logged_service_credit if the visit
+    cannot be written.
+    """
+    client_id = dog["owner_id"]
+    svc_type = svc.get("service_type") or "other"
+    field = _credit_balance_field(svc_type)
+    if not field:
+        raise HTTPException(status_code=400, detail=f"\"{svc.get('name')}\" doesn't use credits. Choose another payment method.")
+    client_doc = await db.clients.find_one({"id": client_id}, {"_id": 0, field: 1}) or {}
+    available = round(float(client_doc.get(field) or 0), 2)
+    if available < 1:
+        raise HTTPException(status_code=400, detail=f"This client has no {svc_type} credit left. Choose another payment method.")
+    prefer_pid = None
+    if svc_type == "training" and dog.get("active_program_id"):
+        enrol = await db.dog_programs.find_one({"id": dog["active_program_id"]}, {"_id": 0, "program_id": 1})
+        if enrol:
+            prefer_pid = enrol.get("program_id")
+    credit_value, redemptions, consumed = await _consume_credit_lots(client_id, 1, svc_type, prefer_program_id=prefer_pid)
+    if consumed < 0.9999:   # one visit is one whole credit; a fraction is not enough
+        if redemptions:
+            await _restore_credit_lots(redemptions, consumed)
+        raise HTTPException(status_code=400, detail=f"This client has no {svc_type} credit left. Choose another payment method.")
+    await db.clients.update_one({"id": client_id}, {"$inc": {field: -consumed}})
+    return {
+        "client_id": client_id,
+        "field": field,
+        "service_type": svc_type,
+        "value": credit_value,
+        "redemptions": redemptions,
+        "consumed": consumed,
+        "left": round(available - consumed, 2),
+    }
+
+
+async def _refund_logged_service_credit(spend: Dict[str, Any]) -> None:
+    """Gives back a credit _spend_credit_on_logged_service took (to the same lots and balance field)."""
+    await _restore_credit_lots(spend["redemptions"], spend["consumed"])
+    await db.clients.update_one({"id": spend["client_id"]}, {"$inc": {spend["field"]: spend["consumed"]}})
+
+
 @api.post("/transactions")
 async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Creates a booking row tagged with service_id + price. Use this for
@@ -33752,6 +33800,18 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and
     if body.status != "completed":   # a visit still to come (a past one is only a money record)
         booking_guards.refuse_archived(dog=dog, client=client)
     price = body.actual_price if body.actual_price is not None else float(svc.get("base_price") or 0)
+
+    # Paid with Credits: one credit from the service's pool settles the visit
+    # (checkout's rule). Only what sits on top of the credit's cover is cash.
+    spend = None
+    if body.payment_status == "paid" and body.payment_method == "credits":
+        spend = await _spend_credit_on_logged_service(dog, svc)
+    covered = 0.0
+    if spend:
+        covered = credit_cover.priced(
+            price, spend["value"], body.actual_price is not None, float(svc.get("base_price") or 0),
+        )[credit_cover.COVERED_FIELD]
+    paid_now = round(max(0.0, float(price) - covered), 2) if spend else round(float(price), 2)
 
     booking_id = str(uuid.uuid4())
     doc = {
@@ -33772,13 +33832,13 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and
         "dropoff_time": "",
         "pickup_time": "",
         "cost": 0,
-        "credits_deducted": 0,
+        "credits_deducted": spend["consumed"] if spend else 0,
         "service_id": svc["id"],
         "service_name": svc["name"],
         "actual_price": price,
         "payment_status": body.payment_status,
         "payment_method": _normalize_payment_method(body.payment_method, store=True),
-        "amount_paid": round(float(price), 2) if body.payment_status == "paid" else 0.0,
+        "amount_paid": paid_now if body.payment_status == "paid" else 0.0,
         "balance_due": 0.0 if body.payment_status == "paid" else round(float(price), 2),
         "paid_at": now_iso() if body.payment_status == "paid" else None,
         "financial_locked": body.status == "completed" or body.payment_status in ("paid", "refunded", "comped"),
@@ -33786,10 +33846,25 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and
         "financial_locked_by": user.get("id") if (body.status == "completed" or body.payment_status in ("paid", "refunded", "comped")) else None,
         "financial_revision": 1 if (body.status == "completed" or body.payment_status in ("paid", "refunded", "comped")) else 0,
     }
-    doc["cash_revenue"] = _cash_revenue(doc)
-    if float(doc.get("cash_revenue") or 0) > 0:
-        await _require_register_day_open(_business_date_from_timestamp(doc.get("paid_at")))
-    await db.bookings.insert_one(doc)
+    if spend:
+        doc.update({
+            "credit_value": round(float(spend["value"]), 2),
+            "credit_lot_ids": [row["lot_id"] for row in spend["redemptions"]],
+            "credit_lot_redemptions": spend["redemptions"],
+            "credit_service_type": spend["service_type"],
+            credit_cover.COVERED_FIELD: covered,
+        })
+    try:
+        doc["cash_revenue"] = _cash_revenue(doc)
+        if float(doc.get("cash_revenue") or 0) > 0:
+            await _require_register_day_open(_business_date_from_timestamp(doc.get("paid_at")))
+        await db.bookings.insert_one(doc)
+    except Exception:
+        if spend:   # the visit was not written, so the credit goes back
+            await _refund_logged_service_credit(spend)
+        raise
+    if spend:
+        await _maybe_send_low_credit_email(spend["client_id"], spend["service_type"], spend["left"])
     doc.pop("_id", None)
     return doc
 
