@@ -31,6 +31,7 @@ from fastapi import HTTPException
 from domains.shop import analytics
 from domains.shop import analytics_reports as reports
 from domains.shop import analytics_routes
+from domains.shop import income
 from domains.shop import seo
 
 TAG = "TEST_SHOP_ANALYTICS"
@@ -364,6 +365,48 @@ def test_a_refunded_line_is_netted_out_of_revenue_and_units():
         snapshot = reports.sales_snapshot([order])
         assert snapshot["revenue"] == 24.0
         assert snapshot["units"] == 1
+
+
+# Revenue is PRE-TAX, the same basis the P&L books (income rows carry
+# pre_tax_amount). The sales tax is collected for the state, not earned by
+# the shop, so a taxable sale must not show up on the dashboard at its
+# tax-inclusive total.
+
+def test_a_taxable_line_earns_its_pre_tax_amount_not_what_the_customer_paid():
+    # A $20.00 leash with $1.50 sales tax: the customer pays $21.50, the shop
+    # earns $20.00.
+    line = _line("tax-leash", "Leash", 20.0, 1, allocated_tax=1.50, line_total=21.50)
+    order = {"id": str(uuid.uuid4()), "is_guest_order": False, "lines": [line]}
+    assert reports._line_revenue(line) == 20.00
+    assert reports.sales_snapshot([order])["revenue"] == 20.00
+    rows = {r["department"]: r for r in reports.department_performance([order], {})}
+    assert rows["gear"]["revenue"] == 20.00
+
+
+def test_a_refunded_taxable_unit_takes_only_its_pre_tax_amount_out_of_revenue():
+    # Two $20.00 leashes with $1.50 tax each. One comes back: the customer is
+    # refunded $21.50, but revenue falls by the $20.00 pre-tax part only,
+    # leaving $20.00 of revenue for the unit that was kept.
+    line = _line("tax-pair", "Leash", 20.0, 2, allocated_tax=3.00, line_total=43.00,
+                 quantity_refunded=1, amount_refunded=21.50, tax_refunded=1.50)
+    assert reports._line_revenue(line) == 20.00
+
+
+def test_dashboard_revenue_matches_the_income_row_on_a_taxable_mixed_basket():
+    # A taxed leash and an untaxed 10-visit pack. The goods row is the one
+    # that carries the payment; its pre_tax_amount must be the same money the
+    # dashboard counts for gear.
+    leash = _line("tax-leash-mix", "Leash", 20.0, 1, allocated_tax=1.50, line_total=21.50)
+    pack = _line("tax-pack-mix", "10 Visits", 280.0, 1, kind="credit_pack")
+    order = {"id": str(uuid.uuid4()), "client_id": None, "client_name": "Mixed basket",
+             "status": "paid", "is_guest_order": False, "subtotal": 300.0, "tax_amount": 1.50,
+             "tax_rate_pct": 7.5, "total": 301.50, "lines": [leash, pack]}
+    rows = income.plan_rows(order, {"id": "pay-mixed-basket", "amount": 301.50},
+                            date="2026-10-05", created_at=None)
+    goods = next(r for r in rows if r.get("source_kind") == "shop_order")
+    gear = {r["department"]: r for r in reports.department_performance([order], {})}["gear"]
+    assert goods["pre_tax_amount"] == gear["revenue"] == 20.00
+    assert reports.sales_snapshot([order])["revenue"] == 300.00
 
 
 def test_average_order_value_is_per_order_not_per_line():

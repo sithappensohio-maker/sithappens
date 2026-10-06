@@ -9,8 +9,11 @@ and never varied:
 
 That split is not tidiness. It means a stranger posting invented events can
 move a view count and can never move a dollar, and it means the revenue on
-this dashboard is the same revenue the accounting sees, because it is read
-from the same rows.
+this dashboard is read from the same orders the accounting books.
+
+Revenue here is PRE-TAX, the basis the P&L books (a Shop income row's
+pre_tax_amount). The sales tax on a taxable line is collected for the state,
+not earned by the shop, so it is left out of every money figure on this page.
 
 Dates follow the app's existing business-day rule, through the app's own
 `_business_range_utc_bounds`. Events and orders are both filtered on their
@@ -80,13 +83,21 @@ async def _paid_orders(db, start_utc: str, end_utc: str) -> List[dict]:
 
 
 def _line_revenue(line: dict) -> float:
-    """What this line actually earned, after anything given back.
+    """What this line actually earned: pre-tax, after anything given back.
 
-    A refunded line is not revenue. Netting it here rather than reporting
-    gross means the dashboard and the accounting agree about a month in
-    which something was returned.
+    Pre-tax, because the sales tax belongs to the state. line_total is the
+    tax-inclusive figure the customer paid; line_total less allocated_tax is
+    the line's pre-tax amount (line_subtotal, by construction).
+
+    A refunded line is not revenue. amount_refunded is what went back to the
+    customer, tax included, so the tax_refunded share comes off first and
+    only the pre-tax part of the refund is netted here. Netting it rather
+    than reporting gross means the dashboard and the P&L agree about a month
+    in which something was returned.
     """
-    return round(_money(line.get("line_total")) - _money(line.get("amount_refunded")), 2)
+    pre_tax = _money(line.get("line_total")) - _money(line.get("allocated_tax"))
+    refunded_pre_tax = _money(line.get("amount_refunded")) - _money(line.get("tax_refunded"))
+    return round(pre_tax - refunded_pre_tax, 2)
 
 
 def _line_units(line: dict) -> int:
@@ -324,7 +335,8 @@ async def searches_that_led_somewhere(db, start_utc: str, end_utc: str, limit: i
 #   views             count of product_view              (events)
 #   cart_adds         count of add_to_cart               (events)
 #   units             paid quantity minus refunded       (orders)
-#   revenue           paid line_total minus refunded     (orders)
+#   revenue           paid pre-tax line amount minus
+#                     pre-tax refunded                   (orders)
 #
 #   view_to_cart      cart_adds / views
 #   cart_to_purchase  units / cart_adds
