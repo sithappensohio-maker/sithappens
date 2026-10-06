@@ -482,6 +482,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const anchorPreviewRow = checkoutBookings.find(row => row.id === booking.id) || booking;
   const anchorTicketEstimate = Number(anchorPreviewRow.checkout_preview_total ?? anchorPreviewRow.estimated_price ?? 0);
   const bookingBaseEstimate = Math.max(0, anchorTicketEstimate - anchorExistingAddonTotal);
+  // The group preview has already taken this dog's same-day sibling discount
+  // off checkout_preview_total, so the discount line below must not take it
+  // off a second time.
+  const anchorDiscountInPreview = Number(anchorPreviewRow.checkout_preview_discount || 0) > 0;
   const groupOtherBaseTotal = checkoutBookings
     .filter(row => row.id !== booking.id)
     .reduce((sum, row) => sum + Math.max(0, Number(row.checkout_preview_total ?? row.estimated_price ?? 0) - addonTotalFor(row)), 0);
@@ -568,7 +572,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // if the operator overrides the base price, the discount updates live).
   let multiDogDiscount = 0;
   const discountableBase = Math.max(0, basePreview + moneyModifierTotal + extraNightsCharge);
-  if (discountPreview?.eligible && discountPreview.discount && discountableBase > 0 && !useCredits && !booking.multi_dog_discount?.pre_applied) {
+  if (discountPreview?.eligible && discountPreview.discount && discountableBase > 0 && !useCredits && !booking.multi_dog_discount?.pre_applied && !anchorDiscountInPreview) {
     const d = discountPreview.discount;
     if (d.mode === "percent") {
       multiDogDiscount = Math.round(discountableBase * (Math.max(0, Math.min(100, d.value)) / 100) * 100) / 100;
