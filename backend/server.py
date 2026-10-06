@@ -59,7 +59,6 @@ from email_service import (
     notify_client_day_reviewed,
     notify_client_homework_assigned,
     notify_client_low_credits,
-    notify_client_pack_receipt,
     notify_client_quote_received,
     send_account_claim,
     send_meet_greet_request_received,
@@ -49715,19 +49714,9 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         "sold_at": now,
     }
 
-    # Best-effort: email the client a receipt copy.
-    try:
-        await notify_client_pack_receipt(
-            client=client,
-            lines=receipt_lines,
-            totals=totals_by_pool,
-            payment_method=_normalize_payment_method(body.payment_method, store=True),
-            note=body.note or "",
-            sold_by=user.get("name", "Admin"),
-            sold_at=now,
-        )
-    except Exception:
-        pass
+    # One receipt email per sale: the automatic receipt below (gated by
+    # Settings -> Receipts). The hand-built notify_client_pack_receipt send
+    # that used to run here too doubled every pack sale's email.
     try:
         asyncio.create_task(_maybe_auto_email_bulk_credit_pack_receipt(
             client_id=client_id, client_name=client.get("name", ""), client_email=client.get("email"),
