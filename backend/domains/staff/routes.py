@@ -4,6 +4,7 @@ Moved out of server.py verbatim; only the owning module changed. Everything the
 moved code still needs is injected, and every moved name is handed back so the
 host module can re-export it under its original name.
 """
+from domains.backup import deletion_log
 import csv
 import io
 import logging
@@ -478,8 +479,8 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
 
     @api.delete("/admin/time-clock/{entry_id}")
     async def admin_delete_time_clock(entry_id: str, _: dict = Depends(require_admin)):
-        res = await db.time_clock_entries.delete_one({"id": entry_id})
-        if res.deleted_count == 0:
+        res = await deletion_log.delete_one(db, "time_clock_entries", {"id": entry_id})
+        if res == 0:
             raise HTTPException(status_code=404, detail="Entry not found")
         return {"ok": True}
 
@@ -525,7 +526,7 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
 
     @api.delete("/admin/shift-templates/{tid}")
     async def delete_shift_template(tid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-        await db.shift_templates.delete_one({"id": tid})
+        await deletion_log.delete_one(db, "shift_templates", {"id": tid})
         return {"ok": True}
 
     @api.get("/admin/shifts")
@@ -563,7 +564,7 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
 
     @api.delete("/admin/shifts/{sid}")
     async def delete_shift(sid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-        await db.shifts.delete_one({"id": sid})
+        await deletion_log.delete_one(db, "shifts", {"id": sid})
         return {"ok": True}
 
     @api.post("/admin/shifts/generate")

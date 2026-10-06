@@ -72,7 +72,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             return False
 
     async def _release_backup_lease() -> None:
-        await db.app_settings.delete_one({"_id": _BACKUP_LEASE_ID, "owner": _BACKUP_PROCESS_ID})
+        await db.app_settings.delete_one({"_id": _BACKUP_LEASE_ID, "owner": _BACKUP_PROCESS_ID})  # deletion-log: not a record (the backup's own lease row)
 
     async def _backup_lease_held() -> bool:
         """Is any worker writing a backup right now? The lease lasts 4 hours
@@ -1191,7 +1191,8 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
     async def _skip_logged_deletions(c: str, docs: list, backup_at: Optional[str]) -> tuple:
         """A merge leaves out a backed-up row the owner hard-deleted after the backup was taken (audit #8
         follow-up; the rule is backup_rules.merge_skips_logged_deletion). Returns (kept_docs, skipped_count)."""
-        ids = [str(d["id"]) for d in docs if d.get("id")]
+        keys = [backup_rules.record_key(c, d) for d in docs]
+        ids = [k for k in keys if k]
         logged: Dict[str, list] = {}
         if not ids or not await db[deletion_log.COLLECTION].find_one({"collection": c}, {"_id": 1}):
             return docs, 0   # nothing was hard-deleted from this collection: no per-batch lookups
@@ -1202,8 +1203,8 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 logged.setdefault(str(r.get("record_id")), []).append(r.get("deleted_at"))
         if not logged:
             return docs, 0
-        kept = [d for d in docs if not (
-            d.get("id") and backup_rules.merge_skips_logged_deletion(logged.get(str(d["id"]), []), backup_at))]
+        kept = [d for d, k in zip(docs, keys) if not (
+            k and backup_rules.merge_skips_logged_deletion(logged.get(k, []), backup_at))]
         return kept, len(docs) - len(kept)
 
     async def _restore_collections_inner(collections: dict, mode: str, progress=None, backup_at: Optional[str] = None):

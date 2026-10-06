@@ -23,6 +23,7 @@ server.py is at its line ceiling, so this module reads the server helpers it
 needs live (same pattern as domains.bookings.late_day).
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import re
 import secrets
@@ -118,7 +119,7 @@ async def divert_existing_client(email: str, ref_code: Optional[str]) -> Optiona
     if sent is False:
         # Nothing reached them — don't let this attempt count toward the
         # cooldown, and say so rather than promise an email that isn't coming.
-        await db.claim_tokens.delete_one({"token": token})
+        await deletion_log.delete_one(db, "claim_tokens", {"token": token})
         raise HTTPException(
             status_code=503,
             detail="You're already in our system, but we couldn't send your sign-in email just now. Please try again in a few minutes, or contact us.",

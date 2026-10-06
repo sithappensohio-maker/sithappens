@@ -19,6 +19,7 @@ the client's Bills list:
 - Mark reviewed — the unexplained entries listed were not for this bill.
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import asyncio
 import uuid
@@ -598,7 +599,7 @@ async def fix_bill(invoice_id: str, body: BillFixIn, user: dict) -> dict:
                                 notes=f"Credit on file used on bill {invoice_id[:8].upper()}", created_by=who, ts=ts,
                                 extra={"scope": "account", "source": "credit_on_file", "credit_op_id": op_id})
             except Exception:
-                await db.payment_ledger.delete_many({"credit_op_id": op_id})
+                await deletion_log.delete_many(db, "payment_ledger", {"credit_op_id": op_id})
                 await db.invoices.update_one(
                     {"id": invoice_id},
                     {"$inc": {"balance": use, "amount_paid": -use},

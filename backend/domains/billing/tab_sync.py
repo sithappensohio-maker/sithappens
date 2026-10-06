@@ -34,6 +34,7 @@ server.py is at its line ceiling, so this module reads the server helpers
 it needs live (same pattern as domains.clients.signup_claim).
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -453,13 +454,13 @@ async def _claim(coll, key: Optional[str], scope: Dict[str, Any]) -> Tuple[Optio
         raise HTTPException(status_code=409, detail="This change is already being saved. Wait a moment and refresh.")
 
 
-async def _finish_claim(coll, claim_id: Optional[str], ok: bool, result_ref: Optional[str] = None) -> None:
+async def _finish_claim(db, name: str, claim_id: Optional[str], ok: bool, result_ref: Optional[str] = None) -> None:
     if not claim_id:
         return
     if ok:
-        await coll.update_one({"id": claim_id}, {"$set": {"status": "completed", "result_ref": result_ref, "updated_at": _now()}})
+        await db[name].update_one({"id": claim_id}, {"$set": {"status": "completed", "result_ref": result_ref, "updated_at": _now()}})
     else:
-        await coll.delete_one({"id": claim_id})
+        await deletion_log.delete_one(db, name, {"id": claim_id})
 
 
 # ───────────────────────── correcting a checked-out visit ─────────────────────────
@@ -548,7 +549,7 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
                 raise HTTPException(status_code=409, detail=MSG_PAID)
             delta = -applied
     except HTTPException:
-        await _finish_claim(db.financial_adjustment_claims, claim_id, ok=False)
+        await _finish_claim(db, "financial_adjustment_claims", claim_id, ok=False)
         raise
 
     delta = round(delta, 2)
@@ -625,21 +626,21 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
         if balance_moved:
             await db.clients.update_one({"id": money_client}, {"$inc": {"account_balance": -float(delta)}})
         if ledger_id:
-            await db.payment_ledger.delete_one({"id": ledger_id})
+            await deletion_log.delete_one(db, "payment_ledger", {"id": ledger_id})
         if event_id:
-            await db.booking_financial_events.delete_one({"id": event_id})
+            await deletion_log.delete_one(db, "booking_financial_events", {"id": event_id})
         if invoice_moved:
             await db.invoices.update_one(
                 {"id": inv["id"], "correction_ops": op_id},
                 {"$inc": {"balance": -delta, "total": -delta, "subtotal": -delta},
                  "$pull": {"line_items": {"source.op_id": op_id}, "correction_ops": op_id}})
             await restatus_invoice(inv["id"])
-        await _finish_claim(db.financial_adjustment_claims, claim_id, ok=False)
+        await _finish_claim(db, "financial_adjustment_claims", claim_id, ok=False)
         if isinstance(exc, HTTPException):
             raise
         _g("logger").exception("Financial adjustment rolled back for booking %s", booking_id)
         raise HTTPException(status_code=500, detail="The adjustment could not be saved safely. No financial changes were kept.") from exc
-    await _finish_claim(db.financial_adjustment_claims, claim_id, ok=True, result_ref=event_id)
+    await _finish_claim(db, "financial_adjustment_claims", claim_id, ok=True, result_ref=event_id)
     booking.update(update)
     return booking
 
@@ -714,9 +715,9 @@ async def adjust_tab(client_id: str, body, user: dict) -> dict:
         try:
             out = await _adjust_tab_locked(client_id, amount, invoice_id, body.notes, user)
         except Exception:
-            await _finish_claim(db.tab_adjustment_claims, claim_id, ok=False)
+            await _finish_claim(db, "tab_adjustment_claims", claim_id, ok=False)
             raise
-        await _finish_claim(db.tab_adjustment_claims, claim_id, ok=True, result_ref=(out.get("row") or {}).get("id"))
+        await _finish_claim(db, "tab_adjustment_claims", claim_id, ok=True, result_ref=(out.get("row") or {}).get("id"))
         return out
     finally:
         await release_client_guard(guard)
@@ -790,7 +791,7 @@ async def _adjust_tab_locked(client_id: str, amount: float, invoice_id: Optional
         if moved:
             await db.clients.update_one({"id": client_id}, {"$inc": {"account_balance": applied}})
         if row:
-            await db.payment_ledger.delete_one({"id": row["id"]})
+            await deletion_log.delete_one(db, "payment_ledger", {"id": row["id"]})
         await db.invoices.update_one(
             {"id": invoice_id, "correction_ops": op_id},
             {"$inc": {"balance": applied, "total": applied, "subtotal": applied},

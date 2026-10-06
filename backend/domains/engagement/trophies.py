@@ -4,6 +4,7 @@ Moved out of server.py verbatim; only the owning module changed. Everything the
 moved code still needs is injected, and every moved name is handed back so the
 host module can re-export it under its original name.
 """
+from domains.backup import deletion_log
 import logging
 import uuid
 from typing import Any, Dict, Literal, Optional
@@ -118,7 +119,7 @@ def make_trophy_domain(*, ManualAwardIn, TIER_COLORS, _serialize_awarded, api, a
             # Soft-disable defaults rather than deleting (keeps history valid).
             await db.trophies.update_one({"code": code}, {"$set": {"active": False}})
             return {"ok": True, "deactivated": True}
-        await db.trophies.delete_one({"code": code})
+        await deletion_log.delete_one(db, "trophies", {"code": code})
         return {"ok": True, "deleted": True}
 
     @api.get("/dogs/{dog_id}/trophies")

@@ -7,6 +7,7 @@ the dependency are defined in server.py. The money and state work stays in serve
 """
 from typing import Any, Dict, List, Optional
 
+from domains.backup import deletion_log
 from fastapi import Depends, HTTPException
 
 
@@ -332,7 +333,7 @@ def build(server_globals: dict) -> dict:
                     except Exception as exc:
                         _g("logger").critical("group checkout rollback could not restore booking %s: %s", original.get("id"), exc)
             try:
-                await _g("db").checkout_groups.delete_one({"id": checkout_group_id})
+                await deletion_log.delete_one(_g("db"), "checkout_groups", {"id": checkout_group_id})
             except Exception:
                 pass
             raise

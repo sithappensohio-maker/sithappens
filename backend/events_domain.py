@@ -18,6 +18,7 @@ server.py, following the School-module pattern, so server.py only grows by a
 few lines.
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import base64
 import csv
@@ -777,9 +778,9 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         await _event_by_id(event_id)
         if await db.event_registrations.count_documents({"event_id": event_id}):
             raise HTTPException(status_code=409, detail="This event has registrations. Unpublish it instead of deleting it.")
-        await db.events.delete_one({"id": event_id})
-        await db.event_media.delete_many({"event_id": event_id})
-        await db.event_counters.delete_many({"_id": {"$regex": "^" + re.escape(event_id) + ":"}})
+        await deletion_log.delete_one(db, "events", {"id": event_id})
+        await deletion_log.delete_many(db, "event_media", {"event_id": event_id})
+        await deletion_log.delete_many(db, "event_counters", {"_id": {"$regex": "^" + re.escape(event_id) + ":"}})
         return {"ok": True}
 
     @api.patch("/admin/events/{event_id}")
@@ -918,7 +919,7 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         old = ev.get(f"{kind}_image_id")
         await db.events.update_one({"id": event_id}, {"$set": {f"{kind}_image_id": media_id, "updated_at": _now_iso()}})
         if old:
-            await db.event_media.delete_one({"id": old})
+            await deletion_log.delete_one(db, "event_media", {"id": old})
         return await _event_admin_view(event_id)
 
     async def _remove_image(event_id: str, kind: str) -> dict:
@@ -926,7 +927,7 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
             raise HTTPException(status_code=404, detail="No such image")
         ev = await _event_by_id(event_id)
         if ev.get(f"{kind}_image_id"):
-            await db.event_media.delete_one({"id": ev[f"{kind}_image_id"]})
+            await deletion_log.delete_one(db, "event_media", {"id": ev[f"{kind}_image_id"]})
             await db.events.update_one({"id": event_id}, {"$set": {f"{kind}_image_id": None, "updated_at": _now_iso()}})
         return await _event_admin_view(event_id)
 

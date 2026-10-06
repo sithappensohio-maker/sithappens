@@ -2296,8 +2296,8 @@ async def download_file(file_id: str, user: dict = Depends(get_current_user)):
 
 @api.delete("/files/{file_id}")
 async def delete_file(file_id: str, _: dict = Depends(require_admin)):
-    res = await db.client_files.delete_one({"id": file_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "client_files", {"id": file_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="File not found")
     return {"ok": True}
 
@@ -2543,7 +2543,7 @@ async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
             continue
         try:
             # Mint a fresh token (invalidate any previously unused ones for safety)
-            await db.claim_tokens.delete_many({"client_id": c["id"], "used": False})
+            await deletion_log.delete_many(db, "claim_tokens", {"client_id": c["id"], "used": False})
             token = secrets.token_urlsafe(32)
             expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
             await db.claim_tokens.insert_one({
@@ -2602,7 +2602,7 @@ async def send_claim_email(client_id: str, _: dict = Depends(require_admin_and_p
     if existing_user:
         target_email = existing_user["email"]
 
-    await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+    await deletion_log.delete_many(db, "claim_tokens", {"client_id": client_id, "used": False})
 
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
@@ -2874,7 +2874,7 @@ async def forgot_password(body: ForgotPasswordIn, request: Request):
         return {"ok": True}
 
     # Mint a fresh token and invalidate any old unused ones for this user.
-    await db.claim_tokens.delete_many({
+    await deletion_log.delete_many(db, "claim_tokens", {
         "$or": [
             {"user_id": user["id"], "used": False},
             {"client_id": user.get("client_id"), "used": False} if user.get("client_id") else {"_unused": True},
@@ -3054,7 +3054,7 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
     # archived family — that link could only fail; staff restore and call (audit #36).
     if not (existing_client and existing_client.get("deleted_at")):
         linked_user = await db.users.find_one({"client_id": client_id}, {"_id": 0, "id": 1})
-        await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+        await deletion_log.delete_many(db, "claim_tokens", {"client_id": client_id, "used": False})
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
         await db.claim_tokens.insert_one({
@@ -5087,7 +5087,7 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
 @api.delete("/recurring-templates/{template_id}")
 async def delete_recurring_template(template_id: str, user: dict = Depends(get_current_user)):
     await _load_owned_template(template_id, user)
-    await db.recurring_templates.delete_one({"id": template_id})
+    await deletion_log.delete_one(db, "recurring_templates", {"id": template_id})
     return {"ok": True}
 
 
@@ -5471,7 +5471,7 @@ async def _mutate_client_credits(
     except Exception:
         if lot_id:
             try:
-                await db.credit_lots.delete_one({"id": lot_id})
+                await deletion_log.delete_one(db, "credit_lots", {"id": lot_id})
             except Exception as exc:
                 logger.critical("credit mutation rollback could not remove lot %s: %s", lot_id, exc)
         if consumed > 0:
@@ -5493,7 +5493,7 @@ async def _mutate_client_credits(
                 logger.critical("credit mutation rollback could not restore client balance for %s: %s", client_id, exc)
         if adjustment_id:
             try:
-                await db.credit_adjustments.delete_one({"id": adjustment_id})
+                await deletion_log.delete_one(db, "credit_adjustments", {"id": adjustment_id})
             except Exception as exc:
                 logger.critical("credit mutation rollback could not remove audit row %s: %s", adjustment_id, exc)
         raise
@@ -5684,9 +5684,9 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
             if balance_applied and fee_client:
                 await db.clients.update_one({"id": fee_client}, {"$inc": {"account_balance": -fee}})
             if ledger_id:
-                await db.payment_ledger.delete_one({"id": ledger_id})
+                await deletion_log.delete_one(db, "payment_ledger", {"id": ledger_id})
             if event_id:
-                await db.booking_financial_events.delete_one({"id": event_id})
+                await deletion_log.delete_one(db, "booking_financial_events", {"id": event_id})
             if isinstance(exc, HTTPException):
                 raise
             logger.exception("Charged cancellation rolled back for booking %s", booking_id)
@@ -8803,7 +8803,7 @@ async def _rollback_checkout_finances(
             logger.critical("checkout rollback could not restore credit lot %s: %s", lot.get("id"), exc)
 
     try:
-        await db.payment_ledger.delete_many({"operation_id": operation_id})
+        await deletion_log.delete_many(db, "payment_ledger", {"operation_id": operation_id})
     except Exception as exc:
         logger.critical("checkout rollback could not remove ledger rows for %s: %s", operation_id, exc)
     try:  # the stay's gift card charges go back on the card (keyed: once)
@@ -11067,11 +11067,11 @@ async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = D
 
 @api.delete("/admin/announcements/{ann_id}")
 async def delete_announcement(ann_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
-    r = await db.announcements.delete_one({"id": ann_id})
-    if r.deleted_count == 0:
+    r = await deletion_log.delete_one(db, "announcements", {"id": ann_id})
+    if r == 0:
         raise HTTPException(status_code=404, detail="Announcement not found")
     # Drop read receipts for this announcement so we don't leak orphaned rows.
-    await db.announcement_reads.delete_many({"announcement_id": ann_id})
+    await deletion_log.delete_many(db, "announcement_reads", {"announcement_id": ann_id})
     return {"ok": True}
 
 
@@ -11715,9 +11715,9 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
             await deletion_log.delete_one(db, "retail_sales", {"id": refund_row["id"]})
             if ledger_ids:
-                await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
+                await deletion_log.delete_many(db, "payment_ledger", {"id": {"$in": ledger_ids}})
             if event_id:
-                await db.booking_financial_events.delete_one({"id": event_id})
+                await deletion_log.delete_one(db, "booking_financial_events", {"id": event_id})
             logger.exception("Booking refund rolled back for %s", booking_id)
             raise HTTPException(status_code=500, detail="The refund could not be saved safely. No refund was recorded.") from exc
         if claim_id:
@@ -11728,7 +11728,7 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
         return booking
     except Exception:
         if claim_id:
-            await db.refund_idempotency_claims.delete_one({"id": claim_id})
+            await deletion_log.delete_one(db, "refund_idempotency_claims", {"id": claim_id})
         raise
 
 
@@ -11809,9 +11809,9 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         if money_client and balance_applied:
             await db.clients.update_one({"id": money_client}, {"$inc": {"account_balance": float(ledger_net)}})
         if ledger_row_id:
-            await db.payment_ledger.delete_one({"id": ledger_row_id})
+            await deletion_log.delete_one(db, "payment_ledger", {"id": ledger_row_id})
         if event_id:
-            await db.booking_financial_events.delete_one({"id": event_id})
+            await deletion_log.delete_one(db, "booking_financial_events", {"id": event_id})
         logger.exception("Checkout reopen rolled back for %s", booking_id)
         raise HTTPException(status_code=500, detail="Checkout could not be reopened safely. No changes were kept.") from exc
     booking.update(set_update)
@@ -12136,7 +12136,7 @@ async def delete_homework(homework_id: str, _: dict = Depends(require_admin)):
     # is no cancel/archive path). Release its idempotency claim too, or the
     # dog and template stay locked with nothing left to point at.
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
-    await db.homework.delete_one({"id": homework_id})
+    await deletion_log.delete_one(db, "homework", {"id": homework_id})
     await _release_manual_assignment_claim(hw)
     await release_school_homework_reference(db=db, homework=hw, homework_id=homework_id)
     return {"ok": True}
@@ -12685,7 +12685,7 @@ async def delete_homework_template(template_id: str, _: dict = Depends(require_a
     if tpl.get("is_default"):
         await db.homework_templates.update_one({"id": template_id}, {"$set": {"active": False}})
     else:
-        await db.homework_templates.delete_one({"id": template_id})
+        await deletion_log.delete_one(db, "homework_templates", {"id": template_id})
     return {"ok": True}
 
 
@@ -14573,7 +14573,7 @@ async def admin_force_monday_digest(_: dict = Depends(require_admin)):
     # The job keys on this week's Monday (the Ohio day, not UTC), so that is the key to clear (audit #69).
     today = business_today()
     monday = today - timedelta(days=today.weekday())
-    await db.notification_log.delete_many({"key": f"trainer_monday_digest:{monday.isoformat()}"})
+    await deletion_log.delete_many(db, "notification_log", {"key": f"trainer_monday_digest:{monday.isoformat()}"})
     return await run_trainer_monday_digest_job(db, manual_send_id=uuid.uuid4().hex)
 
 
@@ -14587,7 +14587,7 @@ async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
     today = business_today()
     monday = today - timedelta(days=today.weekday())
     week_start = monday.isoformat()
-    await db.notification_log.delete_many({"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
+    await deletion_log.delete_many(db, "notification_log", {"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
     result = await run_homework_weekly_digest_job(db)
     return result
 
@@ -19090,7 +19090,7 @@ async def _grant_online_school_enrollment(
     except Exception:
         # Compensating rollback — delete the dog_programs row just
         # inserted above so no orphaned half-enrollment survives.
-        await db.dog_programs.delete_one({"id": dog_program_doc["id"]})
+        await deletion_log.delete_one(db, "dog_programs", {"id": dog_program_doc["id"]})
         raise HTTPException(status_code=500, detail="Enrollment failed and was rolled back. Please try again.")
     school_enrollment.pop("_id", None)
 
@@ -19391,7 +19391,7 @@ async def _grant_staff_school_enrollment(
         try:
             await db.school_enrollments.insert_one(dict(school_enrollment))
         except Exception:
-            await db.dog_programs.delete_one({"id": dog_program_doc["id"]})
+            await deletion_log.delete_one(db, "dog_programs", {"id": dog_program_doc["id"]})
             raise
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="This dog is already actively enrolled in this program")
@@ -19762,7 +19762,7 @@ async def migrate_legacy_enrollment_to_school(
                 {"$set": update},
             )
             if changed.matched_count == 0:
-                await db.school_enrollments.delete_one({"id": companion["id"]})
+                await deletion_log.delete_one(db, "school_enrollments", {"id": companion["id"]})
                 raise HTTPException(status_code=409, detail="The legacy enrollment changed while it was being adopted. Refresh and try again.")
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail="A School identity already exists for this enrollment. Refresh before retrying migration.")
@@ -19804,8 +19804,8 @@ async def migrate_legacy_enrollment_to_school(
     except Exception:
         # Compensating rollback: the old row is still active, so remove the new
         # pair rather than leave two sources of truth.
-        await db.school_enrollments.delete_one({"id": new_school["id"]})
-        await db.dog_programs.delete_one({"id": new_enrollment["id"]})
+        await deletion_log.delete_one(db, "school_enrollments", {"id": new_school["id"]})
+        await deletion_log.delete_one(db, "dog_programs", {"id": new_enrollment["id"]})
         raise
     if not dog.get("active_program_id") or dog.get("active_program_id") == legacy["id"]:
         await db.dogs.update_one({"id": dog["id"]}, {"$set": {"active_program_id": new_enrollment["id"]}})
@@ -19960,11 +19960,11 @@ async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(
     if enrollment and enrollment.get("delivery_channel") != "online_school":
         raise HTTPException(status_code=409, detail="Refusing to remove — the linked enrollment is not an Online School enrollment.")
     if enrollment:
-        await db.dog_programs.delete_one({"id": se["enrollment_id"]})
+        await deletion_log.delete_one(db, "dog_programs", {"id": se["enrollment_id"]})
         dog = await db.dogs.find_one({"id": se["dog_id"]}, {"_id": 0, "active_program_id": 1})
         if dog and dog.get("active_program_id") == se["enrollment_id"]:
             await db.dogs.update_one({"id": se["dog_id"]}, {"$set": {"active_program_id": None}})
-    await db.school_enrollments.delete_one({"id": school_enrollment_id})
+    await deletion_log.delete_one(db, "school_enrollments", {"id": school_enrollment_id})
     return {"ok": True}
 
 
@@ -22256,11 +22256,11 @@ async def portal_school_submit_checkpoint(
         await db.checkpoint_submissions.insert_one(submission)
     except DuplicateKeyError:
         _delete_school_media_file(media_doc)
-        await db.homework_media.delete_one({"id": media_id})
+        await deletion_log.delete_one(db, "homework_media", {"id": media_id})
         raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting review.")
     except Exception:
         _delete_school_media_file(media_doc)
-        await db.homework_media.delete_one({"id": media_id})
+        await deletion_log.delete_one(db, "homework_media", {"id": media_id})
         raise HTTPException(status_code=500, detail="Checkpoint submission failed. Please try again.")
     submission.pop("_id", None)
 
@@ -29047,8 +29047,8 @@ async def admin_today_brain_clear_all(user: dict = Depends(require_admin)):
 @api.post("/admin/today-brain/restore")
 async def admin_today_brain_restore(body: TodayBrainDismissIn, _: dict = Depends(require_admin)):
     """Undo a single dismissal (item re-appears immediately)."""
-    res = await db.task_dismissals.delete_one({"item_id": body.item_id})
-    return {"ok": True, "removed": res.deleted_count}
+    res = await deletion_log.delete_one(db, "task_dismissals", {"item_id": body.item_id})
+    return {"ok": True, "removed": res}
 
 
 # -------- Calendar Events --------
@@ -29728,8 +29728,8 @@ async def update_dog_fact(fact_id: str, body: DogFactPatch, _: dict = Depends(re
 
 @api.delete("/dog-facts/{fact_id}")
 async def delete_dog_fact(fact_id: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    res = await db.dog_facts.delete_one({"id": fact_id})
-    if not res.deleted_count:
+    res = await deletion_log.delete_one(db, "dog_facts", {"id": fact_id})
+    if not res:
         raise HTTPException(status_code=404, detail="Fact not found")
     return {"ok": True}
 
@@ -29891,8 +29891,8 @@ async def update_training_tip(tip_id: str, body: TrainingTipPatch, _: dict = Dep
 
 @api.delete("/training-tips/{tip_id}")
 async def delete_training_tip(tip_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
-    r = await db.training_tips.delete_one({"id": tip_id})
-    if not r.deleted_count:
+    r = await deletion_log.delete_one(db, "training_tips", {"id": tip_id})
+    if not r:
         raise HTTPException(status_code=404, detail="Tip not found")
     return {"ok": True}
 
@@ -30994,8 +30994,8 @@ async def admin_trivia_update(
 
 @api.delete("/admin/trivia/questions/{qid}")
 async def admin_trivia_delete(qid: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    res = await db.trivia_questions.delete_one({"id": qid})
-    if not res.deleted_count:
+    res = await deletion_log.delete_one(db, "trivia_questions", {"id": qid})
+    if not res:
         raise HTTPException(status_code=404, detail="Question not found")
     return {"ok": True}
 
@@ -33749,7 +33749,7 @@ async def delete_service(service_id: str, force: bool = False, _: dict = Depends
     if existing.get("is_default"):
         await db.services.update_one({"id": service_id}, {"$set": {"active": False}})
     else:
-        await db.services.delete_one({"id": service_id})
+        await deletion_log.delete_one(db, "services", {"id": service_id})
     return {"ok": True}
 
 
@@ -33969,8 +33969,9 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     # Otherwise, just strip the income fields and leave the booking intact.
     # The delete only lands while the dog still isn't checked in (a check-in in
     # between keeps the visit and strips the income fields instead).
+    _tx_name = "bookings_archive" if _tx_archived else "bookings"
     if not (booking.get("service_id") and not booking.get("checked_in_at")
-            and (await _tx_coll.delete_one({"id": transaction_id, "checked_in_at": {"$in": [None, ""]}})).deleted_count):
+            and await deletion_log.delete_one(db, _tx_name, {"id": transaction_id, "checked_in_at": {"$in": [None, ""]}})):
         await _tx_coll.update_one(
             {"id": transaction_id},
             {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": "", "amount_paid": "", "balance_due": "", "cash_revenue": ""}},
@@ -36944,8 +36945,8 @@ async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_a
     if not existing:
         raise HTTPException(status_code=404, detail="Till adjustment not found")
     await _require_register_day_open(existing.get("date") or business_today().isoformat())
-    res = await db.till_adjustments.delete_one({"id": adjustment_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "till_adjustments", {"id": adjustment_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Till adjustment not found")
     return {"ok": True, "register": await _register_day_summary(existing.get("date"))}
 
@@ -37354,10 +37355,10 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
         if adjust_balance_applied:
             await _adjust_client_balance(invoice.get("client_id"), amount)
         if ledger_id:
-            await db.payment_ledger.delete_one({"id": ledger_id})
+            await deletion_log.delete_one(db, "payment_ledger", {"id": ledger_id})
         if invoice_delta_applied:
             await db.invoices.update_one({"id": invoice_id}, {"$inc": {"amount_paid": -amount, "balance": amount}})
-        await db.payment_topup_claims.delete_one({"id": claim_id})
+        await deletion_log.delete_one(db, "payment_topup_claims", {"id": claim_id})
         raise
 
     await db.payment_topup_claims.update_one(
@@ -37536,10 +37537,10 @@ async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depend
         if balance_reversed:
             await _adjust_client_balance(original.get("client_id"), -float(original.get("amount") or 0))
         if reversal_ledger_id:
-            await db.payment_ledger.delete_one({"id": reversal_ledger_id})
+            await deletion_log.delete_one(db, "payment_ledger", {"id": reversal_ledger_id})
         if status_transitioned:
             await db.payments.update_one({"id": payment_id}, {"$set": {"status": "completed"}, "$unset": {"voided_at": ""}})
-        await db.payment_void_claims.delete_one({"id": claim_id})
+        await deletion_log.delete_one(db, "payment_void_claims", {"id": claim_id})
         raise
 
     await db.payment_void_claims.update_one(
@@ -37935,7 +37936,7 @@ async def create_stripe_checkout_session(invoice_id: str, body: StripeCheckoutSe
         if not (current_invoice and current_invoice.get("stripe_active_attempt_id") == attempt_id):
             # Not already ours — a genuine conflict. Clean up our own
             # never-used claim row (only if it never got a session either).
-            await db.stripe_payment_attempts.delete_one({"id": attempt_id, "stripe_checkout_session_id": None})
+            await deletion_log.delete_one(db, "stripe_payment_attempts", {"id": attempt_id, "stripe_checkout_session_id": None})
             raise HTTPException(status_code=409, detail="This invoice already has an active online payment or unresolved Stripe charge in progress.")
         # else: already ours from a prior partial run — proceed using it.
 
@@ -39678,7 +39679,7 @@ async def delete_shop_media(media_id: str, _: dict = Depends(require_admin_and_p
     referenced_by = await _shop_media_referenced_by(media_id)
     if referenced_by:
         raise HTTPException(status_code=409, detail=f"This image is still in use by {referenced_by} and cannot be deleted.")
-    await db.shop_media.delete_one({"id": media_id})
+    await deletion_log.delete_one(db, "shop_media", {"id": media_id})
     return {"ok": True, "deleted": 1}
 
 
@@ -39828,8 +39829,8 @@ async def move_photography_photo(photo_id: str, body: PhotographyGalleryMoveIn, 
 
 @api.delete("/photography/gallery/{photo_id}")
 async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    result = await db.photography_gallery.delete_one({"id": photo_id})
-    return {"ok": True, "deleted": result.deleted_count}
+    result = await deletion_log.delete_one(db, "photography_gallery", {"id": photo_id})
+    return {"ok": True, "deleted": result}
 
 
 # IMPORTANT — SHOP REFUND MONEY INVARIANT:
@@ -40253,7 +40254,7 @@ async def remove_shop_category(category_id: str, body: ShopCategoryRemoveIn, use
         await db.shop_subcategories.update_many({"category_id": category_id}, {"$set": {
             "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
         }})
-        await db.shop_categories.delete_one({"id": category_id})
+        await deletion_log.delete_one(db, "shop_categories", {"id": category_id})
         return {"ok": True, "action": "moved", "items_moved": moved}
 
     if body.action == "move_to_uncategorized":
@@ -40261,7 +40262,7 @@ async def remove_shop_category(category_id: str, body: ShopCategoryRemoveIn, use
         await db.shop_subcategories.update_many({"category_id": category_id}, {"$set": {
             "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
         }})
-        await db.shop_categories.delete_one({"id": category_id})
+        await deletion_log.delete_one(db, "shop_categories", {"id": category_id})
         return {"ok": True, "action": "moved_to_uncategorized", "items_moved": moved}
 
     raise HTTPException(status_code=400, detail="Unknown removal action.")
@@ -40365,7 +40366,7 @@ async def remove_shop_subcategory(subcategory_id: str, body: ShopSubcategoryRemo
 
     if body.action == "move_to_category":
         moved = await _reassign_items_off_subcategory(subcategory_id, None, keep_category=True)
-        await db.shop_subcategories.delete_one({"id": subcategory_id})
+        await deletion_log.delete_one(db, "shop_subcategories", {"id": subcategory_id})
         return {"ok": True, "action": "moved_to_category", "items_moved": moved}
 
     if body.action == "move_to_subcategory":
@@ -40377,7 +40378,7 @@ async def remove_shop_subcategory(subcategory_id: str, body: ShopSubcategoryRemo
         if target["category_id"] != subcategory["category_id"]:
             raise HTTPException(status_code=400, detail="Destination subcategory must belong to the same category.")
         moved = await _reassign_items_off_subcategory(subcategory_id, body.target_subcategory_id, keep_category=True)
-        await db.shop_subcategories.delete_one({"id": subcategory_id})
+        await deletion_log.delete_one(db, "shop_subcategories", {"id": subcategory_id})
         return {"ok": True, "action": "moved", "items_moved": moved}
 
     raise HTTPException(status_code=400, detail="Unknown removal action.")
@@ -43147,7 +43148,7 @@ async def delete_pos_product(product_id: str, user: dict = Depends(require_admin
             detail="This product has order, sale, or inventory history and can't be permanently deleted — "
                    "archive it instead to keep past orders and receipts intact.",
         )
-    await db.pos_products.delete_one({"id": product_id})
+    await deletion_log.delete_one(db, "pos_products", {"id": product_id})
     # Category/subcategory assignment lives ON the product document itself
     # (category_id/subcategory_id fields) — deleting the document removes
     # that assignment by construction, nothing else to clean up.
@@ -43662,11 +43663,11 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         if entitlement_retail_sales_ids:
             await deletion_log.delete_many(db, "retail_sales", {"id": {"$in": entitlement_retail_sales_ids}})
         if created_lot_ids:
-            await db.credit_lots.delete_many({"id": {"$in": created_lot_ids}})
+            await deletion_log.delete_many(db, "credit_lots", {"id": {"$in": created_lot_ids}})
         if retail_sales_id:
             await deletion_log.delete_one(db, "retail_sales", {"id": retail_sales_id})
-        await db.pos_sales.delete_one({"id": sale_id})
-        await db.pos_sale_claims.delete_one({"id": claim_id})
+        await deletion_log.delete_one(db, "pos_sales", {"id": sale_id})
+        await deletion_log.delete_one(db, "pos_sale_claims", {"id": claim_id})
         raise
 
     await db.pos_sale_claims.update_one(
@@ -43992,7 +43993,7 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
             await deletion_log.delete_one(db, "retail_sales", {"reversed_retail_sales_id": original.get("retail_sales_id"), "pos_sale_id": sale_id})
         if status_transitioned:
             await db.pos_sales.update_one({"id": sale_id}, {"$set": {"status": "completed"}, "$unset": {"voided_at": "", "void_reason": ""}})
-        await db.pos_sale_void_claims.delete_one({"id": claim_id})
+        await deletion_log.delete_one(db, "pos_sale_void_claims", {"id": claim_id})
         raise
 
     await db.pos_sale_void_claims.update_one(
@@ -44552,8 +44553,8 @@ async def delete_tax_payment(pid: str, _: dict = Depends(require_admin_and_permi
     """LEGACY combined-ledger delete. Kept only for the pre-4D-2A rows; the
     jurisdiction-aware estimated_tax_payments ledger below is append-only
     (void events, never hard deletes)."""
-    res = await db.tax_payments.delete_one({"id": pid})
-    if not res.deleted_count:
+    res = await deletion_log.delete_one(db, "tax_payments", {"id": pid})
+    if not res:
         raise HTTPException(404, "Payment not found")
     return {"ok": True}
 
@@ -45850,8 +45851,8 @@ async def update_mileage(mid: str, body: MileagePatch, _: dict = Depends(require
 
 @api.delete("/admin/mileage/{mid}")
 async def delete_mileage(mid: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
-    res = await db.mileage_log.delete_one({"id": mid})
-    if not res.deleted_count:
+    res = await deletion_log.delete_one(db, "mileage_log", {"id": mid})
+    if not res:
         raise HTTPException(404, "Mileage entry not found")
     return {"ok": True}
 
@@ -46412,7 +46413,7 @@ async def update_task(tid: str, body: TaskIn, _: dict = Depends(require_admin_an
 
 @api.delete("/admin/tasks/{tid}")
 async def delete_task(tid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    await db.tasks.delete_one({"id": tid})
+    await deletion_log.delete_one(db, "tasks", {"id": tid})
     return {"ok": True}
 
 
@@ -47236,8 +47237,8 @@ async def delete_expense(expense_id: str, _: dict = Depends(require_admin_and_pe
     if not existing:
         raise HTTPException(status_code=404, detail="Expense not found")
     await _require_register_day_open(existing.get("date") or business_today().isoformat())
-    res = await db.expenses.delete_one({"id": expense_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "expenses", {"id": expense_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"ok": True}
 
@@ -48123,8 +48124,8 @@ async def set_pricing_tier_price(tier_id: str, body: PricingTierPriceIn, user: d
 
 
 async def remove_pricing_tier_price(tier_id: str, price_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
-    res = await db.pricing_tier_prices.delete_one({"id": price_id, "tier_id": tier_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "pricing_tier_prices", {"id": price_id, "tier_id": tier_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Tier price not found")
     return {"ok": True}
 
@@ -48324,7 +48325,7 @@ async def delete_credit_pack(pack_id: str, force: bool = False, _: dict = Depend
     if existing.get("is_default"):
         await db.credit_packs.update_one({"id": pack_id}, {"$set": {"active": False}})
     else:
-        await db.credit_packs.delete_one({"id": pack_id})
+        await deletion_log.delete_one(db, "credit_packs", {"id": pack_id})
     return {"ok": True}
 
 
@@ -50154,8 +50155,8 @@ async def delete_custom_email_template(slug: str, _: dict = Depends(require_admi
     """Delete a CUSTOM template. System templates can only be reset, not deleted."""
     if slug in {t["slug"] for t in _EMAIL_REGISTRY}:
         raise HTTPException(status_code=400, detail="System templates cannot be deleted, only reset")
-    r = await db.email_templates.delete_one({"slug": slug, "kind": "custom"})
-    if r.deleted_count == 0:
+    r = await deletion_log.delete_one(db, "email_templates", {"slug": slug, "kind": "custom"})
+    if r == 0:
         raise HTTPException(status_code=404, detail="Custom template not found")
     # Unbind from products that referenced it
     await db.programs.update_many({"welcome_email_template_slug": slug}, {"$set": {"welcome_email_template_slug": None}})
@@ -50294,7 +50295,7 @@ async def update_email_template(slug: str, body: EmailTemplateUpdate, _: dict = 
 async def reset_email_template(slug: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     if not _email_get_template(slug):
         raise HTTPException(status_code=404, detail="Unknown template")
-    await db.email_templates.delete_one({"slug": slug})
+    await deletion_log.delete_one(db, "email_templates", {"slug": slug})
     email_service.invalidate_template_cache()
     return {"ok": True, "slug": slug}
 
@@ -51413,8 +51414,8 @@ async def delete_intake_template(template_id: str, _: dict = Depends(require_adm
             {"$set": {"active": False, "archived": True, "updated_at": now_iso()}},
         )
         return {"ok": True, "soft_archived": True, "submissions": sub_count}
-    res = await db.intake_form_templates.delete_one({"id": template_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "intake_form_templates", {"id": template_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Template not found")
     return {"ok": True, "soft_archived": False}
 
@@ -51565,8 +51566,8 @@ async def update_intake_submission(submission_id: str, body: IntakeSubmissionPat
 
 @api.delete("/intake/submissions/{submission_id}")
 async def delete_intake_submission(submission_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
-    res = await db.intake_submissions.delete_one({"id": submission_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "intake_submissions", {"id": submission_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Submission not found")
     return {"ok": True}
 
@@ -52124,8 +52125,8 @@ async def update_waitlist_entry(entry_id: str, body: WaitlistPatch, user: dict =
 
 @api.delete("/waitlist/{entry_id}")
 async def delete_waitlist_entry(entry_id: str, _: dict = Depends(require_admin)):
-    res = await db.waitlist.delete_one({"id": entry_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "waitlist", {"id": entry_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Waitlist entry not found")
     return {"ok": True}
 
@@ -53313,8 +53314,8 @@ async def resolve_followup(entry_id: str, user: dict = Depends(require_employee_
 
 @api.delete("/communications/{entry_id}")
 async def delete_communication(entry_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
-    res = await db.client_communications.delete_one({"id": entry_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "client_communications", {"id": entry_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"ok": True}
 
@@ -53458,8 +53459,8 @@ async def create_review_request(body: ReviewRequestIn, user: dict = Depends(requ
 
 @api.delete("/review-requests/{entry_id}")
 async def delete_review_request(entry_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
-    res = await db.review_requests.delete_one({"id": entry_id})
-    if res.deleted_count == 0:
+    res = await deletion_log.delete_one(db, "review_requests", {"id": entry_id})
+    if res == 0:
         raise HTTPException(status_code=404, detail="Request not found")
     return {"ok": True}
 
@@ -54115,7 +54116,7 @@ async def bulk_email_templates_delete(template_id: str, _: dict = Depends(requir
         raise HTTPException(status_code=404, detail="Template not found")
     if tpl.get("kind") == "system":
         raise HTTPException(status_code=400, detail="System templates cannot be deleted")
-    await db.bulk_email_templates.delete_one({"id": template_id})
+    await deletion_log.delete_one(db, "bulk_email_templates", {"id": template_id})
     return {"ok": True, "id": template_id}
 
 

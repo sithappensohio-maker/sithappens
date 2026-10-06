@@ -39,6 +39,7 @@ from pydantic import BaseModel, EmailStr, Field
 from pymongo import ReturnDocument
 
 import email_service
+from domains.backup import deletion_log
 from domains.pos import given_back
 
 # "refunded": every dollar of the order's register sale went back (a void, a
@@ -377,7 +378,7 @@ def register_photo_order_routes(
             raise HTTPException(status_code=409, detail="A refunded order stays on the list as its record.")
         if o.get("status") != "ordered":
             raise HTTPException(status_code=409, detail="A paid order can't be deleted. Refund it through the register instead.")
-        await orders.delete_one({owner_field: owner_id, "id": oid})
+        await deletion_log.delete_one(db, orders_collection, {owner_field: owner_id, "id": oid})
         return {"ok": True, "summary": await _summary(owner_id)}
 
     def _pos_lines(o: dict):

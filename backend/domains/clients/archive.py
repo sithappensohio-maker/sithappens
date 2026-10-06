@@ -23,6 +23,7 @@ keep the family hidden). Stamps are conditional, so a double click never
 re-stamps and a second restore is refused.
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -225,7 +226,7 @@ async def archive_client(client_id: str, user: dict) -> Dict[str, Any]:
         )
     _g("_invalidate_auth_user_cache")()
     closed = await _close_the_rest(dog_ids=every_dog, client_id=client_id, stamp=stamp, reason="family_archived", user=user)
-    await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+    await deletion_log.delete_many(db, "claim_tokens", {"client_id": client_id, "used": False})
     await db.school_notifications.update_many(   # the School HQ "needs attention" queue (a stored list)
         {"client_id": client_id, "audience": "school_staff", "resolved_at": None},
         {"$set": {"resolved_at": stamp, "resolved_by": "family_archived"}})

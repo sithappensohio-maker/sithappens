@@ -9,6 +9,7 @@ is the write path — turning a validated plan into ordinary curriculum through
 the SAME `create_program` / `update_program` the Studio uses, so an imported
 course is indistinguishable from a hand-built one.
 """
+from domains.backup import deletion_log
 import logging
 import inspect
 import os
@@ -232,8 +233,8 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                     os.remove(item["storage_path"])
             except OSError:
                 pass
-            await db.homework_media.delete_one({"id": item["media_id"]})
-            await db.school_resources.delete_one({"id": item["resource_id"]})
+            await deletion_log.delete_one(db, "homework_media", {"id": item["media_id"]})
+            await deletion_log.delete_one(db, "school_resources", {"id": item["resource_id"]})
 
     @api.post("/admin/school/curriculum/import")
     async def import_curriculum_package(body: CurriculumPackageIn,
@@ -503,7 +504,7 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             # "Nothing was created" is true, and list why in plain words.
             await _rollback_media(created)
             for rid in made_recipes:
-                await db.homework_templates.delete_one({"id": rid})
+                await deletion_log.delete_one(db, "homework_templates", {"id": rid})
             raise HTTPException(status_code=422, detail={
                 "error_code": "invalid_curriculum_package", "errors": _plain_problems(e)})
         if existing:

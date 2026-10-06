@@ -813,14 +813,14 @@ async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
         if written_rows:
             await deletion_log.delete_many(_db, "retail_sales", {"id": {"$in": written_rows}})
         if record_id:
-            await _db.pos_sale_returns.delete_one({"id": record_id})
+            await deletion_log.delete_one(_db, "pos_sale_returns", {"id": record_id})
         if reserved:
             undo: Dict[str, Any] = {f"line_items.{i}.returned_qty": -r["qty"] for i, r in wanted.items()}
             for i, (m_net, m_tax) in money.items():
                 undo[f"line_items.{i}.returned_net"] = -m_net
                 undo[f"line_items.{i}.returned_tax"] = -m_tax
             await _db.pos_sales.update_one({"id": sale_id}, {"$inc": undo})
-        await _db.pos_sale_return_claims.delete_one({"id": claim_id})
+        await deletion_log.delete_one(_db, "pos_sale_return_claims", {"id": claim_id})
         raise
 
 

@@ -37,6 +37,7 @@ server.py is at its line ceiling, so this reads the server helpers it needs
 live (same pattern as domains.bookings.late_day).
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -110,13 +111,13 @@ async def rollback_unstarted(order_id: str, idempotency_key: str) -> None:
     db = _g("db")
     if await db.shop_payment_attempts.find_one({"shop_order_id": order_id}, {"_id": 1}):
         return
-    order = await db.shop_orders.find_one_and_delete(
-        {"id": order_id, "status": "pending_payment", "stripe_active_attempt_id": None},
+    order = await deletion_log.take_one(
+        db, "shop_orders", {"id": order_id, "status": "pending_payment", "stripe_active_attempt_id": None},
         projection={"_id": 0})
     if not order:
         return
     # Claim next, so a retry with this key starts a new order (new refs).
-    await db.shop_checkout_claims.delete_one({"idempotency_key": idempotency_key, "shop_order_id": order_id})
+    await deletion_log.delete_one(db, "shop_checkout_claims", {"idempotency_key": idempotency_key, "shop_order_id": order_id})
     await _pull_holds(order)
 
 

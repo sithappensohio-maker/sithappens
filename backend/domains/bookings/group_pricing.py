@@ -40,8 +40,8 @@ async def undo_rows(created: List[dict]) -> None:
         return
     db = _g("db")
     made_here = {"source_booking_id": {"$in": ids}, "enrollment_source": "board_train_package"}
-    await db.dog_programs.delete_many(made_here)
-    await db.school_enrollments.delete_many(made_here)
+    await deletion_log.delete_many(db, "dog_programs", made_here)
+    await deletion_log.delete_many(db, "school_enrollments", made_here)
     await deletion_log.delete_many(db, "bookings", {"id": {"$in": ids}})
 
 

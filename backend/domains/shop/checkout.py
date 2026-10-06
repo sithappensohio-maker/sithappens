@@ -33,6 +33,7 @@ of ownership — knowing an address is not the same as being the person who
 paid — so nothing in this file ever matches an order to a person by email.
 """
 from __future__ import annotations
+from domains.backup import deletion_log
 
 import hashlib
 import hmac
@@ -310,7 +311,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
     if reserved_order is None:
         current = await db.shop_orders.find_one({"id": order_id}, {"_id": 0, "stripe_active_attempt_id": 1})
         if not (current and current.get("stripe_active_attempt_id") == attempt_id):
-            await db.shop_payment_attempts.delete_one({"id": attempt_id, "stripe_checkout_session_id": None})
+            await deletion_log.delete_one(db, "shop_payment_attempts", {"id": attempt_id, "stripe_checkout_session_id": None})
             raise HTTPException(status_code=409, detail="This order already has an active online payment in progress.")
 
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=_s("STRIPE_CHECKOUT_EXPIRES_SECONDS"))

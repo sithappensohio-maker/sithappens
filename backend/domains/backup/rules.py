@@ -36,6 +36,21 @@ MERGE_KEYS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+def record_key(collection: str, doc: dict) -> Optional[str]:
+    """The key a merge matches a row by, and the key a hard delete is logged under (domains/backup/deletion_log.py).
+
+    The row's `id`; else its natural key (MERGE_KEYS, joined); else its string `_id` (the string-_id collections).
+    Both sides call this, so a logged delete and the backed-up copy of that row always agree on the key."""
+    if doc.get("id"):
+        return str(doc["id"])
+    natural = MERGE_KEYS.get(collection)
+    if natural and all(doc.get(f) is not None for f in natural):
+        return "\x1f".join(str(doc[f]) for f in natural)
+    if isinstance(doc.get("_id"), str) and doc["_id"]:
+        return doc["_id"]
+    return None
+
+
 def _parse_stamp(value: Any) -> Optional[datetime]:
     """An ISO timestamp as an aware datetime (a naive one is read as UTC), or None when unreadable."""
     if not value:

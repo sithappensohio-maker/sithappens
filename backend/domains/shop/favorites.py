@@ -18,6 +18,8 @@ id, not a guessed one, not a stale one from a different login.
 """
 from __future__ import annotations
 
+from domains.backup import deletion_log
+
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -101,9 +103,9 @@ async def remove(db, client_id: str, kind: str, ref_id: str) -> dict:
     """
     kind = (kind or "").strip()
     ref_id = (ref_id or "").strip()
-    result = await db.shop_favorites.delete_one(
-        {"client_id": client_id, "kind": kind, "ref_id": ref_id})
-    return {"saved": False, "removed": result.deleted_count}
+    removed = await deletion_log.delete_one(
+        db, "shop_favorites", {"client_id": client_id, "kind": kind, "ref_id": ref_id})
+    return {"saved": False, "removed": removed}
 
 
 def resolve(refs: List[dict], catalog_items: List[dict]) -> List[Dict[str, Any]]:

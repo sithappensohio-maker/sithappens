@@ -32,6 +32,7 @@ Two deliberate exceptions, both narrow and both explicit:
   they actually want and the existing sales-tax logic runs. There is no second
   checkout here and no price is copied onto the booking as financial truth.
 """
+from domains.backup import deletion_log
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -772,8 +773,8 @@ def register_photo_special_routes(
             raise HTTPException(status_code=409, detail=f"{booked} reservation(s) exist. Cancel them first or just close booking.")
         if await db.photo_special_orders.find_one({"photo_special_id": special_id}, {"_id": 1}):
             raise HTTPException(status_code=409, detail="Photo orders exist for this special. Close booking instead of deleting it.")
-        await db.photo_specials.delete_one({"id": special_id})
-        await db.photo_special_media.delete_many({"special_id": special_id})
+        await deletion_log.delete_one(db, "photo_specials", {"id": special_id})
+        await deletion_log.delete_many(db, "photo_special_media", {"special_id": special_id})
         return {"ok": True}
 
     @api.post("/admin/photo-specials/{special_id}/hero-image")
@@ -797,7 +798,7 @@ def register_photo_special_routes(
             "id": media_id, "special_id": special_id, "mime": mime, "b64": b64,
             "filename": _clean(body.filename, 140) or "hero", "size_bytes": approx, "created_at": now_iso(),
         })
-        await db.photo_special_media.delete_many({"special_id": special_id, "id": {"$ne": media_id}})
+        await deletion_log.delete_many(db, "photo_special_media", {"special_id": special_id, "id": {"$ne": media_id}})
         await db.photo_specials.update_one({"id": special_id}, {"$set": {"hero_image_id": media_id, "updated_at": now_iso()}})
         return {"ok": True, "hero_image_id": media_id}
 
