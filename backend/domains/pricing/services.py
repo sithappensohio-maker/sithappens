@@ -711,10 +711,11 @@ def money_modifier_breakdown(
     the "client shows up after their DECLARED pickup time" charge, distinct
     from the boarding late-pickup daycare day.)
 
-    The seasonal surcharge is worked out night by night: the base is split
-    evenly across the nights the stay covers (`stay_end` for an early checkout,
-    so only the nights stayed), each night takes its own holiday or peak-season
-    multiplier, and the surcharge is the sum of the nights.
+    The seasonal surcharge covers the nights the stay covers (`stay_end` for an
+    early checkout, so only the nights stayed). A holiday on ANY of those nights
+    applies its multiplier to the whole base. Otherwise the base is split evenly
+    across the nights and each night inside a peak-season range takes the peak
+    multiplier; the surcharge is the sum of the nights.
     """
     from datetime import datetime, timezone
 
@@ -725,26 +726,28 @@ def money_modifier_breakdown(
     seasonal_label = None
     try:
         nights = _stay_nights(booking, stay_end)
-        per_night = base / len(nights)
         holidays = seasonal.get("holiday_surcharges") or []
         peaks = seasonal.get("peak_season_ranges") or []
-        night_multipliers: List[float] = []
-        seasonal_total = 0.0
-        for night in nights:
-            night_multiplier = 1.0
-            for h in holidays:
-                if h.get("date") == night:
-                    night_multiplier = float(h.get("multiplier", 1) or 1)
-                    seasonal_label = seasonal_label or (h.get("label") or "Holiday surcharge")
-                    break
-            else:
+        holiday = next((h for night in nights for h in holidays if h.get("date") == night), None)
+        if holiday is not None:
+            # A holiday on any night of the stay surcharges the whole base at the holiday rate.
+            holiday_multiplier = float(holiday.get("multiplier", 1) or 1)
+            night_multipliers = [holiday_multiplier] * len(nights)
+            seasonal_total = base * holiday_multiplier
+            seasonal_label = holiday.get("label") or "Holiday surcharge"
+        else:
+            per_night = base / len(nights)
+            night_multipliers = []
+            seasonal_total = 0.0
+            for night in nights:
+                night_multiplier = 1.0
                 for row in peaks:
                     if (row.get("start") or "") <= night <= (row.get("end") or "9999"):
                         night_multiplier = float(row.get("multiplier", 1) or 1)
                         seasonal_label = seasonal_label or (row.get("label") or "Peak-season surcharge")
                         break
-            night_multipliers.append(night_multiplier)
-            seasonal_total += per_night * night_multiplier
+                night_multipliers.append(night_multiplier)
+                seasonal_total += per_night * night_multiplier
     except Exception:
         night_multipliers = [1.0]
         seasonal_total = base
