@@ -15,11 +15,28 @@ import server
 from _test_loop import run
 
 from test_stale_price_snapshot_fix import (  # noqa: E402
-    _admin_user, _booking, _check_in, _daycare_service,
+    _admin_user, _booking, _check_in,
 )
 
 TAG = "TEST_SECOND_DOG_DISCOUNT"
 PRICE = 40.0
+
+
+@contextlib.contextmanager
+def _daycare_service(price=PRICE):
+    """The one default daycare service for this test. Other daycare services
+    left active by earlier suites would otherwise decide the price of a booking."""
+    parked = run(server.db.services.find({"service_type": "daycare"}, {"_id": 0, "id": 1, "active": 1, "is_default": 1}).to_list(500))
+    run(server.db.services.update_many({"id": {"$in": [p["id"] for p in parked]}}, {"$set": {"active": False, "is_default": False}}))
+    svc = run(server.create_service(server.ServiceIn(
+        name=f"{TAG} Daycare {uuid.uuid4().hex[:6]}", service_type="daycare", base_price=price, active=True), _admin_user()))
+    run(server.db.services.update_one({"id": svc["id"]}, {"$set": {"is_default": True}}))
+    try:
+        yield svc
+    finally:
+        run(server.db.services.delete_many({"id": svc["id"]}))
+        for p in parked:
+            run(server.db.services.update_one({"id": p["id"]}, {"$set": {"active": p.get("active", True), "is_default": p.get("is_default", False)}}))
 
 
 @contextlib.contextmanager
