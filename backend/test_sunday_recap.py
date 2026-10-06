@@ -40,7 +40,9 @@ def _cleanup(*days: date) -> None:
 
 def _run_rollup(today: date):
     send = AsyncMock(return_value=True)
+    evening = datetime(today.year, today.month, today.day, 21, 0, tzinfo=daily_jobs.BUSINESS_TZ)
     with patch.object(daily_jobs, "_today_local", return_value=today), \
+            patch.object(daily_jobs, "_business_now", return_value=evening), \
             patch.object(email_service, "ADMIN_NOTIFICATION_EMAIL", "owner@example.com"), \
             patch.object(email_service, "_send", new=send):
         res = run(daily_jobs.run_homework_step_rollup_job(server.db))

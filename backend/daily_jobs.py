@@ -32,6 +32,12 @@ BUSINESS_TZ = ZoneInfo("America/New_York")
 # Jobs run on the first scheduler tick at/after this local hour (emails
 # should not go out at midnight just because the day rolled over).
 DAILY_JOBS_MIN_HOUR = int(os.environ.get("DAILY_JOBS_MIN_HOUR", "7"))
+# The Sunday step recap waits until this hour (business time), so Sunday's practice is in it (audit #87).
+SUNDAY_RECAP_HOUR = int(os.environ.get("SUNDAY_RECAP_HOUR", "20"))
+
+
+def _business_now() -> datetime:
+    return datetime.now(BUSINESS_TZ)
 # How many days back a missed birthday is still greeted.
 BIRTHDAY_CATCHUP_DAYS = int(os.environ.get("BIRTHDAY_CATCHUP_DAYS", "3"))
 
@@ -560,6 +566,9 @@ async def run_homework_step_rollup_job(db) -> dict:
         return {"sent": 0, "reason": "no admin email"}
 
     today = _today_local()
+    # Sunday's recap waits for the evening, so the day's practice is in it (audit #87).
+    if today.weekday() == 6 and _business_now().hour < SUNDAY_RECAP_HOUR:
+        return {"sent": 0, "reason": "waiting_for_sunday_evening"}
     today_iso = today.isoformat()
     dedup_key = f"hw_step_rollup:{today_iso}"
     existing = await db.system_runs.find_one({"id": dedup_key}, {"_id": 0})
@@ -839,6 +848,22 @@ def daily_plan(today: date) -> Dict[str, Any]:
     }
 
 
+async def maybe_run_sunday_recap(db) -> dict | None:
+    """The Sunday step recap, sent once it is evening so Sunday's practice is in it (audit #87).
+    The scheduler calls this on every tick, so it records one attempt per evening: a failed
+    send is not retried every minute."""
+    now = _business_now()
+    if now.weekday() != 6 or now.hour < SUNDAY_RECAP_HOUR:
+        return None
+    today_iso = now.date().isoformat()
+    attempt = await db.system_runs.find_one({"id": "sunday_recap"}, {"_id": 0})
+    if attempt and attempt.get("last_attempt") == today_iso:
+        return None
+    await db.system_runs.update_one(
+        {"id": "sunday_recap"}, {"$set": {"id": "sunday_recap", "last_attempt": today_iso}}, upsert=True)
+    return await run_homework_step_rollup_job(db)
+
+
 async def maybe_run_daily(db, *, min_hour: int | None = None) -> dict | None:
     """Run every daily job at most once per business-local day, on the first
     call at/after `min_hour` local. Returns a summary on the run, or None when
@@ -846,6 +871,10 @@ async def maybe_run_daily(db, *, min_hour: int | None = None) -> dict | None:
     min_hour = DAILY_JOBS_MIN_HOUR if min_hour is None else min_hour
     if datetime.now(BUSINESS_TZ).hour < min_hour:
         return None
+    try:
+        await maybe_run_sunday_recap(db)   # Sunday's recap runs in the evening, on its own marker (audit #87)
+    except Exception as e:
+        logger.error("sunday recap failed: %s", e)
     today = _today_iso()
     existing = await db.system_runs.find_one({"id": "daily"}, {"_id": 0})
     if existing and existing.get("last_run") == today:
