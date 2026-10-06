@@ -10251,7 +10251,6 @@ def _default_settings() -> dict:
             "finance": {
                 "fiscal_year_start_month": 1,       # 1-12
                 "bookkeeping_export_format": "csv", # "csv" | "quickbooks" | "wave"
-                "mileage_rate_per_mile": 0.67,      # IRS 2024 standard mileage rate
                 "form_1099_threshold_usd": 600,
             },
             # ── Branding / UI knobs ───────────────────────────────────
@@ -44020,9 +44019,24 @@ QUARTERLY_TAX_DEFAULTS = {
     "state_income_pct": 2.75,       # Ohio top effective
     "local_income_pct": 2.5,        # Warren city
     "estimated_payments_made": 0.0, # YTD federal quarterly payments already mailed in
-    "mileage_rate_per_mile": 0.725, # 2026 IRS standard mileage rate for business use
     "filing_status": "single",      # informational only
 }
+
+# IRS standard business mileage rate per tax year (Schedule C deduction). Each
+# tax year's deduction is priced at that year's rate. A year missing from this
+# table gets the LATEST rate below, not zero, so a future year still deducts;
+# add the official rate here once the IRS publishes it.
+MILEAGE_RATE_BY_YEAR = {
+    2024: 0.67,
+    2025: 0.70,
+    2026: 0.725,
+}
+
+
+def mileage_rate_for_year(year: Any) -> float:
+    """Business mileage rate for a tax year (see MILEAGE_RATE_BY_YEAR)."""
+    latest_year = max(MILEAGE_RATE_BY_YEAR)
+    return MILEAGE_RATE_BY_YEAR.get(int(year), MILEAGE_RATE_BY_YEAR[latest_year])
 
 
 async def _get_quarterly_tax_settings() -> Dict[str, Any]:
@@ -44036,11 +44050,8 @@ async def _get_quarterly_tax_settings() -> Dict[str, Any]:
     # Backfill missing keys so older docs still work after we add new fields.
     patched = {**QUARTERLY_TAX_DEFAULTS, **row}
     # Sprint 110fa — Tax defaults audit: bump installs that were still using
-    # our older placeholder defaults (0.70 mileage / 176100 wage base) to the
-    # official 2026 values. If the owner manually changed either setting, leave
-    # their value alone.
-    if float(row.get("mileage_rate_per_mile", 0) or 0) == 0.70:
-        patched["mileage_rate_per_mile"] = QUARTERLY_TAX_DEFAULTS["mileage_rate_per_mile"]
+    # our older placeholder wage base (176100) to the official 2026 value. If
+    # the owner manually changed it, leave their value alone.
     if float(row.get("ss_wage_base", 0) or 0) == 176100.0:
         patched["ss_wage_base"] = QUARTERLY_TAX_DEFAULTS["ss_wage_base"]
     return patched
@@ -44239,7 +44250,7 @@ async def admin_quarterly_tax(
     non_deductible_expenses = recorded_expenses_total - recorded_expenses
 
     # ---- Mileage deduction (IRS standard rate × YTD business miles) ----------
-    mileage_rate = float(settings.get("mileage_rate_per_mile") or 0)
+    mileage_rate = mileage_rate_for_year(yr)
     mileage_rows = await db.mileage_log.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)
@@ -45714,8 +45725,7 @@ async def mileage_summary(
     """Quick tiles for the Dashboard: today / month-to-date / YTD totals."""
     today = business_today()
     yr = int(year or today.year)
-    settings = await _get_quarterly_tax_settings()
-    rate = float(settings.get("mileage_rate_per_mile") or 0)
+    rate = mileage_rate_for_year(yr)
 
     today_iso = today.isoformat()
     month_start = f"{today.year}-{today.month:02d}-01"

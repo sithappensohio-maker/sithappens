@@ -1327,7 +1327,6 @@ const QUARTERLY_TAX_FIELDS = [
   ["se_tax_taxable_pct", "SE taxable %", "IRS default 92.35%"],
   ["ss_wage_base", "SS wage base ($)", "2026 SSA taxable maximum $184,500"],
   ["estimated_payments_made", "Quarterly payments already made ($)", "Legacy field; payment log below wins when used"],
-  ["mileage_rate_per_mile", "Mileage rate ($/mile)", "2026 IRS business standard mileage rate $0.725"],
 ];
 
 function QuarterlyTaxTab() {

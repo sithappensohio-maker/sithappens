@@ -296,7 +296,7 @@ export default function Settings({ initialSection = null, onSectionChange = () =
           desc: "Live P&L, weekly tallies, transaction log, and exports. (Opens the Income screen.)",
           badges: ["Live", "Admin-only"], externalTab: "income" },
         { id: "_d2d_finance", label: "Finance Defaults", icon: "fa-chart-pie",
-          desc: "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
+          desc: "Fiscal year start, bookkeeping export format, 1099 threshold.",
           badges: ["Live", "Admin-only"], d2dSection: "finance" },
         { id: "sales_tax", label: "Sales Tax", icon: "fa-percent",
           desc: "Whether you collect sales tax and at what rate. Merchandise is taxed; services never are.",
@@ -2700,7 +2700,7 @@ const SECTION_BLURBS = {
   loyalty:     "Bronze/Silver/Gold/Platinum visit thresholds, streak targets, trophy reward value, referral reward type & amount.",
   compliance:  "Per-service vaccine matrix, block-on-expiry behavior, waiver re-sign frequency & scope, doc upload requirements.",
   services:    "Training session length, graduation thresholds, photography SLA, grooming durations.",
-  finance:     "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
+  finance:     "Fiscal year start, bookkeeping export format, 1099 threshold.",
   ui:          "Splatter intensity, primary CTA copy, PWA name/tagline, time/date format, week start, portal toggles.",
 };
 

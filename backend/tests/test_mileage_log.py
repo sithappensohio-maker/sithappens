@@ -144,29 +144,19 @@ def test_quarterly_tax_includes_mileage(admin_headers):
     assert exp_delta >= expected_delta - 0.05
 
 
-def test_settings_persist_mileage_rate(admin_headers):
-    # Read current
-    cur = requests.get(f"{API}/admin/quarterly-tax/settings",
-                       headers=admin_headers, timeout=15).json()
-    assert "mileage_rate_per_mile" in cur["defaults"]
-    orig = cur["current"].get("mileage_rate_per_mile", 0.70)
-
-    # Bump to 0.99
+def test_mileage_rate_is_per_tax_year_not_a_setting(admin_headers):
+    # The IRS rate is a fixed per-year table (MILEAGE_RATE_BY_YEAR), not an
+    # owner setting: the settings endpoint refuses it, and the summary prices
+    # the selected year at that year's rate.
     upd = requests.put(f"{API}/admin/quarterly-tax/settings",
                        headers=admin_headers,
                        json={"mileage_rate_per_mile": 0.99}, timeout=15)
-    assert upd.status_code == 200
-    assert upd.json()["settings"]["mileage_rate_per_mile"] == 0.99
+    assert upd.status_code == 400
 
-    # Summary should reflect new rate immediately
     s = requests.get(f"{API}/admin/mileage/summary",
                      headers=admin_headers, timeout=15).json()
-    assert s["rate_per_mile"] == 0.99
-
-    # Restore
-    requests.put(f"{API}/admin/quarterly-tax/settings",
-                 headers=admin_headers,
-                 json={"mileage_rate_per_mile": orig}, timeout=15)
+    expected = {2024: 0.67, 2025: 0.70, 2026: 0.725}.get(s["year"], 0.725)
+    assert s["rate_per_mile"] == expected
 
 
 def test_admin_required():

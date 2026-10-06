@@ -446,9 +446,6 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
           <Field label="Bookkeeping export format" type="select" value={f.bookkeeping_export_format}
                  onChange={(v) => set("finance", "bookkeeping_export_format", v)} testId="d2d-export" disabled unsupported
                  options={[{value:"csv",label:"Generic CSV"},{value:"quickbooks",label:"QuickBooks"},{value:"wave",label:"Wave"}]} />
-          <Field label="Business mileage rate ($/mile)" type="number" value={f.mileage_rate_per_mile}
-                 onChange={(v) => set("finance", "mileage_rate_per_mile", v)} testId="d2d-mileage"
-                 hint="IRS 2024 standard = $0.67." />
           <Field label="1099 threshold ($)" type="number" value={f.form_1099_threshold_usd}
                  onChange={(v) => set("finance", "form_1099_threshold_usd", v)} testId="d2d-1099" disabled unsupported />
         </div>
@@ -592,7 +589,6 @@ function OperatorQuickControls({ d2d }) {
       lines: [
         ["Fiscal year start", `Month ${f.fiscal_year_start_month || 1}`],
         ["Export format", f.bookkeeping_export_format || "csv"],
-        ["Mileage rate", f.mileage_rate_per_mile ? `$${f.mileage_rate_per_mile}/mi` : "—"],
       ],
       cta: { label: "Configure finance", cat: "finance", sub: "_d2d_finance" },
       icon: "fa-chart-pie", color: "shSecondary",
