@@ -55697,18 +55697,6 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
     return {"ok": True, "merged": True, "audit": audit_row, "trophies": trophy_counts, "preview_before": preview}
 
 
-@api.post("/admin/duplicates/dogs/repoint-merged-trophies")
-async def admin_repoint_merged_dog_trophies(dry_run: bool = True, user: dict = Depends(require_admin)):
-    """One-off repair for dog merges made before trophies followed the dog. Defaults
-    to a dry run that only reports counts; pass dry_run=false to apply. Safe to
-    run twice: a second apply moves nothing."""
-    perms = _perms_for(user)
-    if not perms.get("delete_records"):
-        raise HTTPException(status_code=403, detail="Missing permission: delete_records")
-    result = await repoint_merged_dog_trophies(db, dry_run=bool(dry_run))
-    return {"ok": True, **result}
-
-
 @api.get("/admin/duplicates/report")
 async def admin_duplicates_report(include_archived: bool = False, _: dict = Depends(require_admin)):
     return await _duplicate_finder_report(include_archived=include_archived)

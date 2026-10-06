@@ -5,6 +5,7 @@ moved code still needs is injected, and every moved name is handed back so the
 host module can re-export it under its original name.
 """
 from domains.backup import deletion_log
+from trophy_service import repoint_merged_dog_trophies
 import logging
 import uuid
 from typing import Any, Dict, Literal, Optional
@@ -309,6 +310,14 @@ def make_trophy_domain(*, ManualAwardIn, TIER_COLORS, _serialize_awarded, api, a
             logger.warning("Share card render failed: %s", exc)
             raise HTTPException(status_code=500, detail="Failed to render share card")
         return Response(content=png, media_type="image/png")
+
+    @api.post("/admin/duplicates/dogs/repoint-merged-trophies")
+    async def admin_repoint_merged_dog_trophies(dry_run: bool = True, _: dict = Depends(require_admin_and_permission("delete_records"))):
+        """One-off repair for dog merges made before trophies followed the dog. Defaults
+        to a dry run that only reports counts; pass dry_run=false to apply. Safe to
+        run twice: a second apply moves nothing."""
+        result = await repoint_merged_dog_trophies(db, dry_run=bool(dry_run))
+        return {"ok": True, **result}
 
     @api.get("/trophies/leaderboard")
     async def trophies_leaderboard(_: dict = Depends(require_admin), limit: int = 5):
