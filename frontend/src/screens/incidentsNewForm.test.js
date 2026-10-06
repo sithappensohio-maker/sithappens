@@ -47,8 +47,9 @@ test("opening Log Incident later in the day pre-fills the current date and time"
   });
   await flush();
 
-  // Later: 15:45 on 12 June, the same tab, without a reload.
-  jest.setSystemTime(new Date(2031, 5, 12, 15, 45));
+  // Later: 19:45 UTC on 12 June, the same tab, without a reload. That is 3:45 PM
+  // in Warren, Ohio (EDT), whatever zone the machine running the test is set to.
+  jest.setSystemTime(new Date("2031-06-12T19:45:00Z"));
   await act(async () => {
     container.querySelector('[data-testid="add-incident-button"]').click();
   });
@@ -56,4 +57,33 @@ test("opening Log Incident later in the day pre-fills the current date and time"
 
   expect(container.querySelector('input[type="time"]').value).toBe("15:45");
   expect(container.querySelector('input[type="date"]').value).toBe(todayISO());
+});
+
+test("the pre-filled time is the Ohio clock, not the device's (audit #36)", async () => {
+  // The device's own clock reads 03:07 here; the real instant is 3:45 PM in Ohio.
+  // The form must show Ohio's time, the same day the date comes from.
+  const Incidents = require("./Incidents").default;
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<Incidents />);
+  });
+  await flush();
+
+  jest.setSystemTime(new Date("2031-06-12T19:45:00Z"));
+  const proto = Object.getPrototypeOf(new Date());
+  const spies = [
+    jest.spyOn(proto, "getHours").mockReturnValue(3),
+    jest.spyOn(proto, "getMinutes").mockReturnValue(7),
+  ];
+  try {
+    await act(async () => {
+      container.querySelector('[data-testid="add-incident-button"]').click();
+    });
+    await flush();
+
+    expect(container.querySelector('input[type="time"]').value).toBe("15:45");
+    expect(container.querySelector('input[type="date"]').value).toBe("2031-06-12");
+  } finally {
+    spies.forEach((s) => s.mockRestore());
+  }
 });

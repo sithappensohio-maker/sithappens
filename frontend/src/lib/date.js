@@ -12,6 +12,7 @@
 //   • today as YYYY-MM-DD ................................. todayISO()
 //   • n days before / after today .......................... daysAgoISO(n) / daysFromTodayISO(n)
 //   • any YYYY-MM-DD plus or minus n days .................. addDaysISO(iso, n)
+//   • the Ohio time (HH:MM) of an instant, default now ..... businessTimeHHMM(when)
 //   • the Ohio date a stored timestamp falls on ............ businessDateOf(ts)
 //   • a Date that stands for a calendar-grid day ........... parseLocalISO / localISOFromDate
 // Never slice toISOString() for a date, and never build "today" from
@@ -68,6 +69,39 @@ export function businessDateOf(when) {
 // freezes it.
 export function todayISO() {
   return businessDateOf(new Date());
+}
+
+// Built once, like the date formatter. hourCycle "h23" keeps midnight at
+// "00", never "24".
+let businessTimeFormatter;
+function getBusinessTimeFormatter() {
+  if (businessTimeFormatter === undefined) {
+    try {
+      businessTimeFormatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: BUSINESS_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      });
+    } catch {
+      businessTimeFormatter = null;
+    }
+  }
+  return businessTimeFormatter;
+}
+
+// The Ohio wall-clock time (HH:MM, 24-hour) of an instant. Defaults to now.
+// Like businessDateOf(), it never reads the device's own hours or minutes,
+// so a form pre-filled with it shows the same time as the business's day.
+// Invalid input returns "".
+export function businessTimeHHMM(when = new Date()) {
+  const d = when instanceof Date ? when : new Date(when);
+  if (Number.isNaN(d.getTime())) return "";
+  const fmt = getBusinessTimeFormatter();
+  if (!fmt) return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  let hh = "", mm = "";
+  for (const p of fmt.formatToParts(d)) {
+    if (p.type === "hour") hh = p.value;
+    else if (p.type === "minute") mm = p.value;
+  }
+  return `${pad2(hh)}:${pad2(mm)}`;
 }
 
 // Calendar arithmetic on a YYYY-MM-DD string: no clock, no time zone, no DST.

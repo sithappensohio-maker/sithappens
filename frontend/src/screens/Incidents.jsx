@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { todayISO } from "../lib/date";
+import { todayISO, businessTimeHHMM } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
@@ -28,7 +28,8 @@ const SEVERITIES = [
   { key: "critical", label: "Critical", color: "bg-red-500/30 text-red-200 ring-1 ring-red-400/40" },
 ];
 
-function nowHHMM() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
+// The Ohio clock, matching the date (todayISO), not the device's own clock (audit #36).
+function nowHHMM() { return businessTimeHHMM(new Date()); }
 
 // A function, so the date and time are read when the form opens, not when the app loaded (audit #36).
 const emptyForm = () => ({

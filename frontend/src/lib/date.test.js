@@ -4,7 +4,7 @@
  * device set to another time zone. */
 import fs from "fs";
 import path from "path";
-import { BUSINESS_TZ, todayISO, businessDateOf, addDaysISO, daysAgoISO, daysFromTodayISO } from "./date";
+import { BUSINESS_TZ, todayISO, businessDateOf, businessTimeHHMM, addDaysISO, daysAgoISO, daysFromTodayISO } from "./date";
 
 const BACKEND = path.join(__dirname, "..", "..", "..", "backend");
 const at = (instant) => { jest.useFakeTimers(); jest.setSystemTime(new Date(instant)); };
@@ -33,6 +33,30 @@ test("today never comes from the device's own date parts", () => {
   for (const k of ["getFullYear", "getMonth", "getDate"]) jest.spyOn(proto, k).mockReturnValue(1);
   expect(todayISO()).toBe("2026-09-30");
   expect(daysFromTodayISO(1)).toBe("2026-10-01");
+});
+
+test.each([
+  ["2026-10-01T01:30:00Z", "21:30"], // 9:30 PM EDT
+  ["2026-01-15T00:30:00Z", "19:30"], // 7:30 PM EST
+  ["2026-10-01T04:00:00Z", "00:00"], // midnight EDT: never "24:00"
+  ["2026-06-12T19:45:00Z", "15:45"], // 3:45 PM EDT
+])("businessTimeHHMM: at %s the Ohio clock reads %s", (instant, hhmm) => {
+  expect(businessTimeHHMM(new Date(instant))).toBe(hhmm);
+  at(instant);
+  expect(businessTimeHHMM()).toBe(hhmm);
+});
+
+test("businessTimeHHMM never reads the device's own clock", () => {
+  // Poison the device's hour and minute: a device-local read would show 03:07.
+  at("2026-06-12T19:45:00Z");
+  const proto = Object.getPrototypeOf(new Date());
+  jest.spyOn(proto, "getHours").mockReturnValue(3);
+  jest.spyOn(proto, "getMinutes").mockReturnValue(7);
+  expect(businessTimeHHMM()).toBe("15:45");
+});
+
+test("businessTimeHHMM: an unreadable instant gives an empty string", () => {
+  expect(businessTimeHHMM("not a date")).toBe("");
 });
 
 test("the old UTC slice really is tomorrow at 9:30 PM Eastern", () => {
