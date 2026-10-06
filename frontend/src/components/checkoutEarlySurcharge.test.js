@@ -86,3 +86,19 @@ test("an early checkout at the early price shows the surcharge on the two nights
   expect(q("checkout-total").textContent).toBe("$150.00");
   expect(q("checkout-money-modifiers").textContent).toContain("$50.00");
 });
+
+test("a household leaving early shows each leaving dog at its early price, not its booked stay", async () => {
+  // Two dogs leave together two nights into a five-night stay. The anchor's early
+  // price is $100; the other dog's early price is $100 too (booked: $250).
+  const OTHER = { ...STAY, id: "bk-c", dog_id: "d-c", dog_name: "Pip", checkout_preview_total: 250, early_checkout_total: 100 };
+  const single = api.get.getMockImplementation();
+  api.get.mockImplementation((url) => (String(url).includes("checkout-group-preview")
+    ? Promise.resolve({ data: { bookings: [STAY, OTHER] } })
+    : single(url)));
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<CheckoutModal booking={STAY} services={SERVICES} onClose={() => {}} />);
+  });
+  await flush();
+  expect(q("checkout-group-service-total").textContent).toContain("$200.00");
+});

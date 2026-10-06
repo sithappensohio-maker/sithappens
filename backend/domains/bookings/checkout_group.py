@@ -174,6 +174,11 @@ def build(server_globals: dict) -> dict:
             completed: List[Dict[str, Any]] = []
             goods_print_tokens: List[str] = []   # the merchandise rung on one dog's checkout prints with the group (audit #89)
             share = _g("checkout_discount").HouseholdShare(body)
+            # The household leaves at the early price when the screen charged the
+            # early price for the dog whose button was pressed. Then every other
+            # dog that is leaving early is charged its own early price too, as a
+            # single dog would be (not its booked stay).
+            early_group = bool(body.base_price is not None and await _g("_is_early_checkout_price")(booking_id, body, user))
             for target in targets:
                 payload = body.model_dump()
                 # New add-ons and a manual base override belong to the dog whose
@@ -183,6 +188,11 @@ def build(server_globals: dict) -> dict:
                     payload["add_ons"] = []
                     payload["base_price"] = None
                     payload["additional_cash_charge"] = 0
+                    if early_group:
+                        settled_target, _rank_fields = await _g("group_rank").settle(_g("db"), target, now=_g("now_iso")())
+                        early = await _g("_early_stay_quote")(settled_target)
+                        if early:
+                            payload["base_price"] = round(float(early.get("base_price") or 0), 2)
                     # Merchandise belongs to the one checkout it was rung on, not
                     # to every dog in the household. Ringing it per dog would sell
                     # the same bag of food three times.

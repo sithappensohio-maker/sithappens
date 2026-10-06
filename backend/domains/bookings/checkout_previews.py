@@ -249,6 +249,16 @@ def build(server_globals: dict) -> dict:
             out = dict(row)
             out["checkout_preview_total"] = row_total
             out["checkout_preview_discount"] = round(predicted_discount, 2)
+            # A dog leaving early in a household that leaves together: its total at the
+            # early price (the same quote a single dog gets), None when it is not leaving early.
+            early = await early_stay_quote(row)
+            out["early_checkout_total"] = None
+            if early:
+                early_base = round(float(early.get("base_price") or 0), 2)
+                early_discount = 0.0
+                if (prior_completed + idx) > 0 and not pre_applied:
+                    early_discount = _g("_discount_amount_for_extra_dogs")(early_base, cfg, additional_dogs=1)
+                out["early_checkout_total"] = max(0.0, round(early_base + addons - early_discount, 2))
             preview_rows.append(out)
             combined += row_total
             discount_total += predicted_discount

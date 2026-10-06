@@ -486,9 +486,6 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // off checkout_preview_total, so the discount line below must not take it
   // off a second time.
   const anchorDiscountInPreview = Number(anchorPreviewRow.checkout_preview_discount || 0) > 0;
-  const groupOtherBaseTotal = checkoutBookings
-    .filter(row => row.id !== booking.id)
-    .reduce((sum, row) => sum + Math.max(0, Number(row.checkout_preview_total ?? row.estimated_price ?? 0) - addonTotalFor(row)), 0);
 
   // Sprint 110eg — When paying with credits, the `basePrice` input is
   // interpreted as the EXTRA cash to charge today on top of credits
@@ -513,10 +510,21 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits) + lateDayPickupCash + boardingLateFeeCash
     : 0;
 
-  // Early boarding checkout applies when the server quoted one, the operator
-  // hasn't flipped back to full-stay pricing, and this is a single-dog cash
-  // checkout (group rows and credit deductions still price the booked span).
-  const earlyStayActive = !!earlyQuote && !chargeFullStay && !isGroupCheckout;
+  // Early boarding checkout applies when the server quoted one and the operator
+  // hasn't flipped back to full-stay pricing. A household leaving together goes at
+  // the early price too (each leaving dog at its own early price); a friends &
+  // family household is paid on the family's bill, which keeps the booked span.
+  const earlyStayActive = !!earlyQuote && !chargeFullStay && !(isGroupCheckout && isFF);
+  // The other dogs in a household checkout: at their early prices while the early
+  // price is in use for the household, otherwise at their booked prices.
+  const groupOtherBaseTotal = checkoutBookings
+    .filter(row => row.id !== booking.id)
+    .reduce((sum, row) => {
+      const total = earlyStayActive && row.early_checkout_total != null
+        ? row.early_checkout_total
+        : (row.checkout_preview_total ?? row.estimated_price ?? 0);
+      return sum + Math.max(0, Number(total) - addonTotalFor(row));
+    }, 0);
 
   // The AUTO price — what the system would charge with no manual override.
   // Kept separate from basePreview so the manual-override notice can compare
@@ -1266,11 +1274,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
 
         {/* Section 1a½ — Boarding EARLY checkout (leaving before booked end).
             Cash path only: credit deductions stay booked-span (server-side). */}
-        {earlyQuote && !isGroupCheckout && !useCredits && (
+        {earlyQuote && !(isGroupCheckout && isFF) && !useCredits && (
           <div className="mb-5 border border-shBlue/40 rounded-lg p-4 bg-bgBase" data-testid="checkout-early-panel">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[13px] uppercase tracking-widest text-shBlue font-black"><i className="fas fa-person-walking-arrow-right mr-1.5"/>Checking Out Early</p>
               <span className="text-[12px] text-gray-500">Booked through {earlyQuote.original_end_date}</span>
+              {isGroupCheckout && !chargeFullStay && <span className="block text-[12px] text-gray-500 w-full">Each dog leaving early in this household is charged its own early price.</span>}
             </div>
             {chargeFullStay ? (
               <p className="text-[14px] text-gray-300">
