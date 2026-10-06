@@ -52274,6 +52274,8 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
 
     # The vaccines a stay needs come from its own service, the same as booking and check-in (audit #81).
     settings = await get_settings()
+    # The same expiry-day rule booking refuses by (audit #81): a vaccine on its expiry day is lapsed when the switch is on.
+    block_on_expiry_day = booking_guards.expiry_day_blocks(settings)
 
     # Bulk-load recent open incidents
     inc_rows = await db.incidents.find(
@@ -52291,7 +52293,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
             # tolerate both flat string and {expires} nested dict
             if isinstance(expires, dict):
                 expires = expires.get("expires") or expires.get("expiry") or expires.get("date")
-            if not expires or expires < today_local:
+            if not expires or booking_guards.vaccine_expired(expires, today_local, block_on_expiry_day=block_on_expiry_day):
                 return True
         return False
 

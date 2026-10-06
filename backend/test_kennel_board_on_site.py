@@ -53,12 +53,13 @@ def _dog(vaccines):
     return dog_id
 
 
-def _with_vaccine_rules(monkeypatch, *, required, per_service=None):
+def _with_vaccine_rules(monkeypatch, *, required, per_service=None, block_on_expiry_day=True):
     """Swap in settings with the given global and per-service vaccine lists; everything else stays as it is."""
     base = run(server.get_settings())
     day_to_day = dict(base.get("day_to_day") or {})
     compliance = dict(day_to_day.get("compliance") or {})
     compliance["vaccines_per_service"] = per_service or {}
+    compliance["block_on_expiry_day"] = block_on_expiry_day
     day_to_day["compliance"] = compliance
     settings = {**base, "required_vaccines": required, "day_to_day": day_to_day}
 
@@ -89,6 +90,44 @@ def test_a_lapsed_global_vaccine_is_still_flagged_when_no_service_overrides_it(m
     dog = _dog({"rabies": "2020-01-01"})
     b = _stay(dog_id=dog)
     assert _card(b["id"])["warnings"]["vaccine_lapsed"] is True
+
+
+def test_a_vaccine_expiring_today_is_flagged_on_the_board(monkeypatch):
+    # Booking refuses a vaccine on its expiry day (block_on_expiry_day defaults on); the board must warn the same day.
+    _with_vaccine_rules(monkeypatch, required=["rabies"], block_on_expiry_day=True)
+    dog = _dog({"rabies": _day(0)})
+    b = _stay(dog_id=dog)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is True
+
+
+def test_a_vaccine_expiring_tomorrow_is_not_flagged_on_the_board(monkeypatch):
+    _with_vaccine_rules(monkeypatch, required=["rabies"], block_on_expiry_day=True)
+    dog = _dog({"rabies": _day(1)})
+    b = _stay(dog_id=dog)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is False
+
+
+def test_with_expiry_day_allowed_the_board_does_not_flag_the_expiry_day(monkeypatch):
+    # Switch off: booking allows the expiry day, so the board must not flag it either.
+    _with_vaccine_rules(monkeypatch, required=["rabies"], block_on_expiry_day=False)
+    dog = _dog({"rabies": _day(0)})
+    b = _stay(dog_id=dog)
+    assert _card(b["id"])["warnings"]["vaccine_lapsed"] is False
+
+
+def test_the_board_flags_exactly_what_booking_refuses(monkeypatch):
+    from domains.bookings import guards as booking_guards
+    for on in (True, False):
+        _with_vaccine_rules(monkeypatch, required=["rabies"], block_on_expiry_day=on)
+        for offset in (-1, 0, 1):
+            vaccines = {"rabies": _day(offset)}
+            dog_id = _dog(vaccines)
+            b = _stay(dog_id=dog_id)
+            refused = booking_guards.dog_vaccine_block(
+                {"id": dog_id, "name": "Rex", "vaccines": vaccines}, ["rabies"],
+                today=TODAY.isoformat(), pending_fn=lambda _d, _v: False, block_on_expiry_day=on,
+            ) is not None
+            assert _card(b["id"])["warnings"]["vaccine_lapsed"] is refused, (on, offset)
 
 
 def test_a_stay_picked_up_early_on_an_earlier_day_is_off_the_board():

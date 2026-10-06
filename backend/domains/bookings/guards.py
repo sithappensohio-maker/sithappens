@@ -15,6 +15,21 @@ from domains import vaccines as vaccines_domain
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date
 
 
+def expiry_day_blocks(settings: dict) -> bool:
+    """The live Day-to-Day switch: a vaccine on its expiry day counts as lapsed.
+    On by default. The Kennel Board reads this too, so it flags what booking refuses."""
+    compliance = ((settings.get("day_to_day") or {}).get("compliance") or {})
+    return bool(compliance.get("block_on_expiry_day", True))
+
+
+def vaccine_expired(expires: Any, today: str, *, block_on_expiry_day: bool = True) -> bool:
+    """True when a vaccine's expiry (YYYY-MM-DD; any time suffix ignored) has lapsed
+    on `today`. With the expiry-day switch on, the expiry day itself is lapsed; off,
+    only the days after it. An empty expiry is not "expired" here (callers treat it as missing)."""
+    d = str(expires or "")[:10]
+    return bool(d and (d <= today if block_on_expiry_day else d < today))
+
+
 def dog_vaccine_block(
     dog: dict,
     required: List[str],
@@ -46,7 +61,7 @@ def dog_vaccine_block(
             code="vaccine_pending", action="wait", dog_id=dog.get("id"), vaccine=v,
         )
         d = str(vaccines.get(v, "") or "")[:10]
-        expired = bool(d and (d <= today if block_on_expiry_day else d < today))
+        expired = vaccine_expired(d, today, block_on_expiry_day=block_on_expiry_day)
         if not d or expired:
             if pending:
                 return pending_block
@@ -82,7 +97,7 @@ def booking_vaccine_block(settings: dict, dog: dict, required: List[str], **kw) 
     compliance = day_to_day.get("compliance") or {}
     return dog_vaccine_block(
         dog, required,
-        block_on_expiry_day=bool(compliance.get("block_on_expiry_day", True)),
+        block_on_expiry_day=expiry_day_blocks(settings),
         document_required=bool(compliance.get("vaccine_doc_upload_required", False)),
         **kw,
     )
