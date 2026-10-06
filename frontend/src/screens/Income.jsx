@@ -432,7 +432,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
             <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shSecondary" icon="fa-dollar-sign" />
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)}
                       sub={summary.ar_outstanding_total > 0
-                        ? `outstanding · incl. ${fmt(summary.ar_outstanding_total)} on tabs (${summary.ar_outstanding_count})`
+                        ? `outstanding · excl. ${fmt(summary.ar_outstanding_total)} on client tabs (${summary.ar_outstanding_count})`
                         : "outstanding"}
                       color="text-shAccent" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-shTextMuted" icon="fa-calendar" />

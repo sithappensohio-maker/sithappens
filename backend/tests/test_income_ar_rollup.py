@@ -38,10 +38,12 @@ def test_income_summary_exposes_ar_fields():
 
 def test_ar_rollup_matches_dedicated_endpoint():
     """ar_outstanding_total in income summary must equal AR endpoint's
-    total_receivable, and unpaid_total must INCLUDE that AR balance."""
+    total_receivable. A client tab is reported beside the Unpaid tile but is
+    NOT part of unpaid_total: Unpaid is visit amounts owed (window_owed)."""
     H = _admin()
     client = _pick_client(H)
     cid = client["id"]
+    unpaid_before = requests.get(f"{BASE}/api/transactions/weekly-summary", headers=H, timeout=15).json()["unpaid_total"]
     # Establish a $50 deficit on this client
     r = requests.post(
         f"{BASE}/api/clients/{cid}/adjustment",
@@ -61,9 +63,9 @@ def test_ar_rollup_matches_dedicated_endpoint():
         assert summary["ar_outstanding_count"] == ar["count"], (
             f"count mismatch: income={summary['ar_outstanding_count']} vs AR={ar['count']}"
         )
-        # And the headline unpaid_total must include the $50 we just added
-        assert summary["unpaid_total"] >= 50, (
-            f"unpaid_total ({summary['unpaid_total']}) should include AR balance"
+        # The tab balance alone must not move the Unpaid tile
+        assert abs(summary["unpaid_total"] - unpaid_before) < 0.01, (
+            f"unpaid_total moved from {unpaid_before} to {summary['unpaid_total']} on a tab balance alone"
         )
     finally:
         # Restore client balance to zero

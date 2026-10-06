@@ -34448,7 +34448,6 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     completed_total = 0.0
     booked_total = 0.0
     paid_total = 0.0
-    unpaid_total = 0.0
     credits_redeemed = 0
     booking_sales_tax_collected = 0.0  # RH1 — reported beside revenue
     completed_count = 0
@@ -34483,8 +34482,6 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         elif r.get("status") in ("approved", "pending"):
             booked_total += price
             booked_count += 1
-        if r.get("payment_status") not in ("paid", "paid_partial") and r.get("status") == "completed":
-            unpaid_total += _booking_balance_due(r)
         credits_redeemed += float(r.get("credits_deducted") or 0)
 
     # Step 4B-8 — approved policy: Finance attributes booking revenue to the
@@ -34590,18 +34587,16 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     completed_count += retail_count + credit_pack_sales_count + training_revenue_count + plan_revenue_count + account_payments_count + reversals_count
     paid_total += other_revenue_total
 
-    # Sprint 110di-68 — Roll Accounts Receivable open balances into the Unpaid
-    # tile so partial-pay tabs sitting on client accounts (from Sprint 110di-51
-    # retail/pack/program partial payments) are visible alongside unpaid
-    # bookings instead of silently hiding in AR. We surface AR as its OWN
-    # number on the response (so the frontend can show "incl. AR" sub-label)
-    # AND add it to the headline `unpaid_total`.
+    # Unpaid = what this week's completed visits still owe, by the same rule as
+    # P&L outstanding and Today's amount due (end_of_day.window_owed; each
+    # bill's live balance). Client account balances (tabs) are NOT added: they
+    # are reported beside the tile as ar_outstanding_*, and live on the AR screen.
+    unpaid_total = round(await end_of_day_domain.window_owed(rows), 2)
     # Summed in Mongo over every client (no result ceiling) — see
     # _account_balance_totals; the old to_list(5000) slice understated AR.
     _ar = await _account_balance_totals()
     ar_outstanding_total = _ar["receivable"]
     ar_outstanding_count = _ar["receivable_count"]
-    unpaid_total += ar_outstanding_total
 
     return {
         "week_start": monday_iso,
@@ -34609,7 +34604,7 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         "completed_total": round(completed_total, 2),
         "booked_total": round(booked_total, 2),
         "paid_total": round(paid_total, 2),
-        "unpaid_total": round(unpaid_total, 2),
+        "unpaid_total": unpaid_total,
         "ar_outstanding_total": ar_outstanding_total,
         "ar_outstanding_count": ar_outstanding_count,
         "credits_redeemed": credits_redeemed,

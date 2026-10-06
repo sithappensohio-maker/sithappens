@@ -585,6 +585,16 @@ async def owed(visits: List[Dict[str, Any]]) -> float:
     return _money(sum(r["amount"] for r in rows))
 
 
+async def window_owed(visits: List[Dict[str, Any]]) -> float:
+    """The one "still owed" figure for a service-date window. The weekly Unpaid
+    tile (server.weekly_summary) and the P&L outstanding line
+    (pl_report.build_pl_data) both call this on every row their window holds
+    (archive included, nothing filtered out), so the two read one rule and
+    cannot drift. Client account balances (tabs) are NOT part of it: they stay
+    on the AR screen."""
+    return await owed(visits)
+
+
 async def owing_visit_count() -> int:
     """How many visits still really owe money (Action Required)."""
     rows = await _g("db").bookings.find(

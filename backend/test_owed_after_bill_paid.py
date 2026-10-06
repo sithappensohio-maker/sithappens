@@ -607,3 +607,77 @@ def test_bill_payment_revenue_counted_once():
         assert round(weekly_after["completed_total"] - weekly_before["completed_total"], 2) == 40.0
         assert round(weekly_after["paid_total"] - weekly_before["paid_total"], 2) == 40.0
         assert round(pl_after["net_total"] - pl_before["net_total"], 2) == 40.0
+
+
+# ───────── one Unpaid measure: the weekly tile and the P&L outstanding line ─────────
+# Both read end_of_day.window_owed over the same service-date rows, so the two
+# never drift. Account balances (client tabs) are NOT in either figure: they
+# stay on the AR screen and are reported beside the tile, never added to it.
+
+def _tiles(day_iso):
+    return _weekly_unpaid(day_iso), _pl_unpaid(day_iso)
+
+
+def test_an_unpaid_checkout_off_the_tab_counts_once_in_both_at_its_owed_amount():
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        day = server.business_today().isoformat()
+        before = _tiles(day)
+        bid = v["booking_id"]
+        # payment_status="unpaid" with NO amount_paid in the request: the visit
+        # gets its own bill (an ordinary open invoice), but nothing is pushed
+        # onto the client's account_balance/AR ledger (that only happens when
+        # amount_paid is passed, even as 0 — Sprint 110di-51's tab intent).
+        run(server.check_out(bid, server.CheckoutIn(payment_method="cash", payment_status="unpaid"), user=ADMIN))
+        client = run(server.db.clients.find_one({"id": v["client_id"]}, {"_id": 0, "account_balance": 1}))
+        assert (client or {}).get("account_balance", 0) == 0, "premise: not put on a tab (no AR)"
+        weekly, pl = _tiles(day)
+        assert round(weekly - before[0], 2) == 40.0, "the weekly Unpaid tile counts the visit once, at its owed amount"
+        assert round(pl - before[1], 2) == 40.0, "P&L outstanding counts the visit once, at its owed amount"
+        assert round(weekly - pl, 2) == 0.0
+
+
+def test_a_bill_paid_later_drops_both_tiles_by_exactly_its_amount_and_they_agree():
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        bill, _ = _on_the_tab_then_paid(v)
+        day = server.business_today().isoformat()
+        w0, p0 = _tiles(day)
+        assert round(w0 - p0, 2) == 0.0
+        _pay(bill)
+        w1, p1 = _tiles(day)
+        assert round(w0 - w1, 2) == 40.0
+        assert round(p0 - p1, 2) == 40.0
+        assert round(w1 - p1, 2) == 0.0
+
+
+def test_a_visit_with_a_stored_due_and_no_bill_counts_in_both():
+    from unittest.mock import AsyncMock, patch
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        day = server.business_today().isoformat()
+        before = _tiles(day)
+        bid = v["booking_id"]
+        with patch.object(server, "_create_invoice_for_bookings", new=AsyncMock(side_effect=RuntimeError("bill step failed"))):
+            run(server.check_out(bid, server.CheckoutIn(payment_method="cash", payment_status="unpaid"), user=ADMIN))
+        assert run(server.db.invoices.find_one({"booking_ids": bid})) is None, "premise: no bill"
+        assert _row(bid)["balance_due"] == 40.0, "premise: the visit stores its own due"
+        client = run(server.db.clients.find_one({"id": v["client_id"]}, {"_id": 0, "account_balance": 1}))
+        assert (client or {}).get("account_balance", 0) == 0, "premise: not on the tab either"
+        weekly, pl = _tiles(day)
+        assert round(weekly - before[0], 2) == 40.0, "a visit with a stored due and no bill still counts in the weekly tile"
+        assert round(pl - before[1], 2) == 40.0, "and in P&L outstanding"
+
+
+def test_an_account_balance_with_no_visit_changes_neither_tile():
+    cid = str(uuid.uuid4())
+    day = server.business_today().isoformat()
+    before = _tiles(day)
+    ar_before = run(server.weekly_summary(ADMIN, ref_date=day))["ar_outstanding_total"]
+    run(server.db.clients.insert_one({"id": cid, "name": f"{TAG} tab only", "email": f"{cid}@example.com",
+                                      "account_balance": 25.0, "created_at": server.now_iso()}))
+    try:
+        after = _tiles(day)
+        ar_after = run(server.weekly_summary(ADMIN, ref_date=day))["ar_outstanding_total"]
+        assert round(after[0] - before[0], 2) == 0.0, "a client tab alone is not in the Unpaid tile"
+        assert round(after[1] - before[1], 2) == 0.0, "a client tab alone is not in P&L outstanding"
+        assert round(ar_after - ar_before, 2) == 25.0, "the tab is still reported as account receivable beside the tile"
+    finally:
+        run(server.db.clients.delete_many({"id": cid}))

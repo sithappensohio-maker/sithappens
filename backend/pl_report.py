@@ -253,6 +253,9 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # naturally excludes the double-count. (Other credit redemptions stay in
     # the list and earn $0 via `_cash_revenue` so they still show up in
     # counts / by_service rows when there's a paid add-on slice.)
+    # Outstanding reads every service-date row in the window, unfiltered, the
+    # same rows the weekly Unpaid tile reads (end_of_day.window_owed).
+    window_rows = bookings
     bookings = [b for b in bookings if not _is_program_redemption(b)]
 
     # ── Income totals — Step 4B-8: booking REVENUE is attributed to the
@@ -278,12 +281,11 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     ]
 
     completed = [b for b in bookings if b.get("status") == "completed"]
-    # What the visits still owe comes from each bill's LIVE balance, the same
-    # rule as Today's amount due and Action Required (audit #18): a bill paid
-    # after checkout leaves the visit's stored payment_status behind, so the
-    # stored status can't decide it. Visits with no bill keep their own due.
+    # Outstanding is the shared window figure (the weekly Unpaid tile reads the
+    # same helper): each bill's LIVE balance, the rule as Today's amount due and
+    # Action Required (audit #18). Client account balances are not included.
     from domains.operations import end_of_day  # lazy — same reason as the server imports below
-    unpaid_total = round(await end_of_day.owed(completed), 2)
+    unpaid_total = round(await end_of_day.window_owed(window_rows), 2)
 
     completed_total = round(
         sum(_business_revenue_from_booking_event(ev) for ev in collection_events), 2)
