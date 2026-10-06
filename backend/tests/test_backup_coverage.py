@@ -117,8 +117,9 @@ def test_backup_v3_contains_today_data(admin_headers):
         f"Expected ≥100 dog facts in backup, got {len(cols['dog_facts'])}"
 
 
-def test_backup_merge_restores_mileage_row(admin_headers):
-    """End-to-end: log mileage → export → delete → restore → row is back."""
+def test_backup_merge_leaves_out_mileage_deleted_after_the_backup(admin_headers):
+    """End-to-end: log mileage → export → delete → merge restore → the deleted row stays deleted.
+    A merge leaves out a row deleted after the backup was taken (deletion log, audit #8)."""
     r = requests.post(f"{BASE}/api/admin/mileage", headers=admin_headers,
                       json={"miles": 13.7, "purpose": "PYTEST-backup-roundtrip",
                             "destination": "Backup test"}, timeout=15)
@@ -145,7 +146,7 @@ def test_backup_merge_restores_mileage_row(admin_headers):
     listed = requests.get(f"{BASE}/api/admin/mileage",
                           headers=admin_headers, timeout=15).json()["rows"]
     restored = [m for m in listed if m.get("id") == mid]
-    assert restored and restored[0]["miles"] == 13.7
+    assert not restored, "a row deleted after the backup is left out of a merge"
 
     requests.delete(f"{BASE}/api/admin/mileage/{mid}",
                     headers=admin_headers, timeout=15)
@@ -215,8 +216,9 @@ def test_backup_roundtrips_email_template_override(admin_headers):
 
     rows = requests.get(f"{BASE}/api/admin/email-templates",
                         headers=admin_headers, timeout=15).json()
+    # The override was reset after the backup, so the merge leaves it out (deletion log, audit #8).
     row = next((t for t in rows if t["slug"] == slug), None)
-    assert row and row["override"]["subject"] == pinned, "override didn't survive restore"
+    assert row and not (row.get("override") or {}).get("subject"), "a reset after the backup is left out of a merge"
 
     # Cleanup
     requests.post(f"{BASE}/api/admin/email-templates/{slug}/reset",

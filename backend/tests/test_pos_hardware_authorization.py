@@ -352,13 +352,14 @@ def test_token_reissuance_creates_no_new_payment(admin_headers, fresh_client_and
     invoice_id = r.json()["pos_invoice_id"]
     before = _payment_count(invoice_id)
 
+    # Reissuing the receipt token creates no payment. A drawer token now needs the register PIN, so this
+    # checks the receipt action only.
     for _ in range(3):
         rr = requests.post(f"{API}/invoices/{invoice_id}/pos-tokens", headers=admin_headers,
-                            json={"actions": ["print_receipt", "open_drawer"]}, timeout=15)
+                            json={"actions": ["print_receipt"]}, timeout=15)
         assert rr.status_code == 200, rr.text
         body = rr.json()
         assert body.get("print_receipt_token")
-        assert body.get("open_drawer_token")
 
     after = _payment_count(invoice_id)
     assert after == before == 1
