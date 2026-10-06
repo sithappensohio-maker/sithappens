@@ -23,6 +23,7 @@ server = app_entry.server
 from _test_loop import run
 from domains.operations import end_of_day
 from domains.billing import tab_sync
+import pl_report
 
 TAG = "TEST_OWED_AFTER_PAID"
 ADMIN = {"id": "owed-admin", "name": "Owed QA", "display_name": "Owed QA", "email": "owed@test", "role": "admin"}
@@ -549,3 +550,60 @@ def test_a_package_visit_on_a_group_bill_never_claims_its_siblings_share():
         run(server.db.clients.delete_many({"id": cid}))
         run(server.db.invoices.delete_many({"id": inv}))
         run(server.db.payment_ledger.delete_many({"client_id": cid}))
+
+
+# ─────────────────────────── weekly tile + P&L outstanding ───────────────────────────
+# The Unpaid tile (weekly_summary) and the P&L "outstanding" line both read the
+# stored payment_status, so a visit whose bill was paid later kept counting, and
+# weekly_summary skipped paid_partial visits that P&L counted. Both now go by
+# end_of_day.owed, the same rule as Today's amount due and Action Required.
+
+def _week_of(day_iso):
+    from datetime import date as _date
+    return server._week_bounds(_date.fromisoformat(day_iso))
+
+
+def _weekly_unpaid(day_iso):
+    return run(server.weekly_summary(ADMIN, ref_date=day_iso))["unpaid_total"]
+
+
+def _pl_unpaid(day_iso):
+    mon, sun = _week_of(day_iso)
+    return run(pl_report.build_pl_data(server.db, mon, sun))["income"]["unpaid_total"]
+
+
+def test_bill_paid_later_leaves_weekly_summary_unpaid():
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        bill, _ = _on_the_tab_then_paid(v)
+        day = server.business_today().isoformat()
+        before = _weekly_unpaid(day)
+        _pay(bill)
+        assert round(before - _weekly_unpaid(day), 2) == 40.0, "a paid bill must stop the visit counting as unpaid"
+
+
+def test_bill_paid_later_leaves_pl_outstanding_and_agrees_with_weekly():
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        bill, _ = _on_the_tab_then_paid(v)
+        day = server.business_today().isoformat()
+        pl_before = _pl_unpaid(day)
+        assert round(_weekly_unpaid(day) - pl_before, 2) == 0.0, "weekly and P&L must agree before payment"
+        _pay(bill)
+        pl_after = _pl_unpaid(day)
+        assert round(pl_before - pl_after, 2) == 40.0, "P&L outstanding must drop when the bill is paid"
+        assert round(_weekly_unpaid(day) - pl_after, 2) == 0.0, "weekly and P&L must agree after payment"
+
+
+def test_bill_payment_revenue_counted_once():
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        bill, _ = _on_the_tab_then_paid(v)
+        day = server.business_today().isoformat()
+        mon, sun = _week_of(day)
+        weekly_before = run(server.weekly_summary(ADMIN, ref_date=day))
+        pl_before = run(pl_report.build_pl_data(server.db, mon, sun))["income"]
+        _pay(bill)
+        weekly_after = run(server.weekly_summary(ADMIN, ref_date=day))
+        pl_after = run(pl_report.build_pl_data(server.db, mon, sun))["income"]
+        # the bill payment is one retail row: +40 once in each report, never a second booking row
+        assert round(weekly_after["completed_total"] - weekly_before["completed_total"], 2) == 40.0
+        assert round(weekly_after["paid_total"] - weekly_before["paid_total"], 2) == 40.0
+        assert round(pl_after["net_total"] - pl_before["net_total"], 2) == 40.0

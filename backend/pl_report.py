@@ -223,16 +223,6 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # only the cash slice ABOVE its credit_value, and nothing a gift card
     # paid. Pure credit burns return $0 — the original pack sale already
     # wrote a retail_sales row.
-    def _balance_due(b: dict) -> float:
-        actual = float(b.get("actual_price") or 0)
-        status = b.get("payment_status")
-        if status == "paid_partial":
-            return max(0.0, round(actual - float(b.get("amount_paid") or 0), 2))
-        if status == "unpaid" and b.get("status") == "completed":
-            return round(actual, 2)
-        return 0.0
-
-
     # Sprint 110eg — `_is_program_redemption` retained for backwards-compat
     # filtering (the old per-redemption path), but credit-pack burns now
     # also yield $0 via `_cash_revenue`. We DON'T pre-filter the booking
@@ -288,14 +278,18 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     ]
 
     completed = [b for b in bookings if b.get("status") == "completed"]
-    unpaid = [b for b in bookings if b.get("payment_status") in ("unpaid", "paid_partial") and b.get("actual_price")]
+    # What the visits still owe comes from each bill's LIVE balance, the same
+    # rule as Today's amount due and Action Required (audit #18): a bill paid
+    # after checkout leaves the visit's stored payment_status behind, so the
+    # stored status can't decide it. Visits with no bill keep their own due.
+    from domains.operations import end_of_day  # lazy — same reason as the server imports below
+    unpaid_total = round(await end_of_day.owed(completed), 2)
 
     completed_total = round(
         sum(_business_revenue_from_booking_event(ev) for ev in collection_events), 2)
     booking_sales_tax_collected = round(
         sum(_booking_event_tax_slice(ev) for ev in collection_events), 2)
     paid_total = completed_total
-    unpaid_total = round(sum(_balance_due(b) for b in unpaid), 2)
 
     # ── Daily revenue (collection events + retail sales), business revenue only
     by_day_map: Dict[str, float] = defaultdict(float)
