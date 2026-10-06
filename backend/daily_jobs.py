@@ -540,24 +540,45 @@ async def run_homework_practice_reminder_job(db) -> dict:
     return {"sent": sent, "attempted": attempted, "errors": errors, "weekday": today_dow}
 
 
+def _week_label(monday: date, sunday: date) -> str:
+    """'Sep 28 – Oct 4, 2026', or 'Dec 28, 2026 – Jan 3, 2027' across a year end."""
+    start = f"{monday:%b} {monday.day}"
+    if monday.year != sunday.year:
+        start += f", {monday.year}"
+    return f"{start} – {sunday:%b} {sunday.day}, {sunday.year}"
+
+
 async def run_homework_step_rollup_job(db) -> dict:
     """Sprint 105 — daily roll-up email of every homework step completed
     today across all clients. Dedups once per day. Skips entirely if no
-    steps were completed."""
+    steps were completed.
+
+    The Sunday send is the week's recap instead: it covers Monday through
+    Sunday by business date (not a rolling 24 hours) and is titled as that week."""
     from email_service import _send, ADMIN_NOTIFICATION_EMAIL  # type: ignore
     if not ADMIN_NOTIFICATION_EMAIL:
         return {"sent": 0, "reason": "no admin email"}
 
-    today = datetime.now(BUSINESS_TZ).date()
+    today = _today_local()
     today_iso = today.isoformat()
     dedup_key = f"hw_step_rollup:{today_iso}"
     existing = await db.system_runs.find_one({"id": dedup_key}, {"_id": 0})
     if existing and int(existing.get("sent") or 0) == 1:
         return {"sent": 0, "skipped_already_sent": True}
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    is_week_recap = today.weekday() == 6
+    if is_week_recap:
+        monday = today - timedelta(days=6)
+        window_start = datetime.combine(monday, datetime.min.time(), tzinfo=BUSINESS_TZ).astimezone(timezone.utc)
+        window_end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=BUSINESS_TZ).astimezone(timezone.utc)
+        ts_filter = {"$gte": window_start.isoformat(), "$lt": window_end.isoformat()}
+        week_label = _week_label(monday, today)
+    else:
+        ts_filter = {"$gte": (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()}
+        week_label = ""
+
     grouped: Dict[str, dict] = {}
-    async for ev in db.step_events.find({"ts": {"$gte": cutoff}, "done": True}, {"_id": 0}):
+    async for ev in db.step_events.find({"ts": ts_filter, "done": True}, {"_id": 0}):
         key = f"{ev.get('client_id')}|{ev.get('homework_id')}|{ev.get('day_number')}"
         g = grouped.setdefault(key, {
             "client_name": ev.get("client_name", "—"),
@@ -574,7 +595,7 @@ async def run_homework_step_rollup_job(db) -> dict:
             {"$set": {"id": dedup_key, "ran_at": datetime.now(timezone.utc).isoformat(), "sent": 0}},
             upsert=True,
         )
-        return {"sent": 0, "reason": "no step events today"}
+        return {"sent": 0, "reason": "no step events this week" if is_week_recap else "no step events today"}
 
     rows_html = ""
     for g in grouped.values():
@@ -587,12 +608,18 @@ async def run_homework_step_rollup_job(db) -> dict:
         )
 
     total = sum(len(g["steps"]) for g in grouped.values())
-    subj = f"Today's training progress · {total} step{'s' if total != 1 else ''} done"
+    steps_word = f"{total} step{'s' if total != 1 else ''} done"
+    if is_week_recap:
+        subj = f"Training progress for the week of {week_label} · {steps_word}"
+        date_line = f"Week of {week_label}"
+    else:
+        subj = f"Today's training progress · {steps_word}"
+        date_line = f"Date: {today_iso}"
     body_html = (
         '<html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f1f5f9;margin:0;padding:24px;">'
         '<table style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;">'
         f'<tr><td style="padding:20px 32px;background:#0f172a;color:#fff;"><h1 style="margin:0;font-size:20px;">{subj}</h1>'
-        f'<p style="margin:4px 0 0 0;color:#94a3b8;font-size:13px;">Date: {today_iso}</p></td></tr>'
+        f'<p style="margin:4px 0 0 0;color:#94a3b8;font-size:13px;">{date_line}</p></td></tr>'
         f'<tr><td style="padding:24px 32px;">{rows_html}'
         '<p style="color:#64748b;font-size:12px;margin-top:16px;">Per-step emails are off. To get an email on every step instead of this nightly roll-up, go to Settings → Notifications.</p>'
         '</td></tr></table></body></html>'
