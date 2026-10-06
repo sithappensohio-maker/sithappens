@@ -351,7 +351,8 @@ def build_late_daycare():
     for project, dog_name in (("phone-390", "Clover"), ("phone-320", "Juniper")):
         cid, did, bid = (str(uuid.uuid4()) for _ in range(3))
         run(server.db.clients.insert_one({"id": cid, "name": f"Late Checkout {project}", "email": f"late.{project}@example.com",
-                                          "phone": "5555550100", "credits": 0, "boarding_credits": 0, "account_balance": 0.0}))
+                                          "phone": "5555550100", "credits": 0, "boarding_credits": 0, "account_balance": 0.0,
+                                          "created_at": server.now_iso()}))
         run(server.db.dogs.insert_one({"id": did, "owner_id": cid, "name": dog_name, "breed": "Beagle", "age_y": 3,
                                        "vaccines": {"rabies": "2099-01-01", "bordetella": "2099-01-01", "dhpp": "2099-01-01"}}))
         run(server.db.bookings.insert_one({
