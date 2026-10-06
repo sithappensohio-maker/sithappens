@@ -127,6 +127,8 @@ from trophy_service import (
     migrate_trophy_copy_for_school,
     practice_log_counts_as_session as _shared_practice_log_counts_as_session,
     render_share_card_png,
+    move_dog_trophies_on_merge,
+    repoint_merged_dog_trophies,
 )
 import scheduler as job_scheduler
 from trophy_service import dog_visit_filter, practice_days, _client_visit_count, _visit_filter, _eligible_trophies
@@ -55434,7 +55436,7 @@ _DOG_MERGE_REF_COLLECTIONS: List[Tuple[str, str]] = [
     ("training_session_log", "dog_id"),
     ("dog_programs", "dog_id"),
     ("program_enrollments", "dog_id"),
-    ("awarded_trophies", "dog_id"),
+    ("awarded_trophies", "dog_id"),   # listed for the preview; the merge moves trophies by recipient_id (move_dog_trophies_on_merge)
     ("step_events", "dog_id"),
     ("client_files", "dog_id"),
     ("review_requests", "dog_id"),
@@ -55627,12 +55629,23 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
 
     moved_counts: Dict[str, int] = {}
     for coll, field in _DOG_MERGE_REF_COLLECTIONS:
+        if coll == "awarded_trophies":
+            continue   # trophies follow the recipient rule below, not dog_id
         try:
             res = await db[coll].update_many({field: duplicate_id}, {"$set": {field: primary_id, "merged_from_dog_id": duplicate_id, "merged_at": ts}})
             moved_counts[coll] = int(getattr(res, "modified_count", 0) or 0)
         except Exception as exc:
             logger.warning("dog merge: failed updating %s.%s %s->%s: %s", coll, field, duplicate_id, primary_id, exc)
             moved_counts[coll] = 0
+
+    # Trophies are read by recipient_id. A trophy the main dog already holds is
+    # revoked on the moved copy (never held twice); the rest move to the main dog.
+    try:
+        trophy_counts = await move_dog_trophies_on_merge(db, primary_id=primary_id, duplicate_id=duplicate_id, ts=ts)
+    except Exception as exc:
+        logger.warning("dog merge: failed moving trophies %s->%s: %s", duplicate_id, primary_id, exc)
+        trophy_counts = {"moved": 0, "revoked": 0}
+    moved_counts["awarded_trophies"] = trophy_counts["moved"]
 
     # Merge useful dog-profile details without overwriting the main dog with worse data.
     merged_vaccines, merged_vaccine_certs = _merge_vaccine_records(
@@ -55683,13 +55696,26 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
         "note": (body.note or "").strip(),
         "preview_summary": preview.get("summary"),
         "moved_counts": moved_counts,
+        "trophy_counts": trophy_counts,
     }
     # PyMongo/Motor mutates inserted dictionaries by adding a raw ObjectId `_id`.
     # Returning that mutated dict causes FastAPI JSON serialization to throw a 500
     # even though the safe merge/archive already succeeded. Insert a copy and
     # return the clean public audit row.
     await db.duplicate_merge_audit.insert_one(dict(audit_row))
-    return {"ok": True, "merged": True, "audit": audit_row, "preview_before": preview}
+    return {"ok": True, "merged": True, "audit": audit_row, "trophies": trophy_counts, "preview_before": preview}
+
+
+@api.post("/admin/duplicates/dogs/repoint-merged-trophies")
+async def admin_repoint_merged_dog_trophies(dry_run: bool = True, user: dict = Depends(require_admin)):
+    """One-off repair for dog merges made before trophies followed the dog. Defaults
+    to a dry run that only reports counts; pass dry_run=false to apply. Safe to
+    run twice: a second apply moves nothing."""
+    perms = _perms_for(user)
+    if not perms.get("delete_records"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_records")
+    result = await repoint_merged_dog_trophies(db, dry_run=bool(dry_run))
+    return {"ok": True, **result}
 
 
 @api.get("/admin/duplicates/report")

@@ -117,6 +117,105 @@ async def award_trophy(
     return awarded
 
 
+DOG_MERGE_REVOKE_REASON = "duplicate dog merged into a dog that already holds this trophy"
+
+
+async def move_dog_trophies_on_merge(
+    db, *, primary_id: str, duplicate_id: str, ts: str, dry_run: bool = False,
+) -> Dict[str, int]:
+    """Move the trophies a duplicate dog holds to the kept dog.
+
+    A dog cannot hold the same trophy twice, so when the kept dog already has an
+    active award with the same trophy_code, the moved copy is revoked (kept, not
+    deleted). Every other row moves: recipient_id and dog_id point at the kept
+    dog and merged_from_dog_id records the duplicate. Returns
+    {"moved": rows re-attributed (revoked ones included), "revoked": rows this
+    call revoked}. dry_run counts without writing."""
+    rows = await db.awarded_trophies.find(
+        {"recipient_type": "dog", "recipient_id": duplicate_id}, {"_id": 0},
+    ).sort("awarded_at", 1).to_list(5000)
+    if not rows:
+        return {"moved": 0, "revoked": 0}
+    held = {
+        r.get("trophy_code") for r in await db.awarded_trophies.find(
+            {"recipient_type": "dog", "recipient_id": primary_id, "revoked": {"$ne": True}},
+            {"_id": 0, "trophy_code": 1},
+        ).to_list(5000)
+    }
+    moved = revoked = 0
+    for row in rows:
+        set_doc: Dict[str, Any] = {
+            "recipient_id": primary_id, "dog_id": primary_id,
+            "merged_from_dog_id": duplicate_id, "merged_at": ts,
+        }
+        if not row.get("revoked"):
+            if row.get("trophy_code") in held:
+                set_doc.update({"revoked": True, "revoked_at": ts, "revoked_reason": DOG_MERGE_REVOKE_REASON})
+                revoked += 1
+            else:
+                held.add(row.get("trophy_code"))
+        moved += 1
+        if not dry_run:
+            await db.awarded_trophies.update_one({"id": row.get("id")}, {"$set": set_doc})
+    return {"moved": moved, "revoked": revoked}
+
+
+async def _live_dog_for_merge_chain(db, dog_id: str) -> Optional[str]:
+    """Follow duplicate_of_dog_id links (A merged into B, later B into C) to the
+    dog that is still live. None when the chain breaks or loops."""
+    seen = set()
+    current = dog_id
+    while current and current not in seen:
+        seen.add(current)
+        # A live dog with neither field projects to {} — check for None, not falsy.
+        dog = await db.dogs.find_one({"id": current}, {"_id": 0, "archived": 1, "duplicate_of_dog_id": 1})
+        if dog is None:
+            return None
+        if not dog.get("archived"):
+            return current
+        current = dog.get("duplicate_of_dog_id") or None
+    return None
+
+
+async def repoint_merged_dog_trophies(db, *, dry_run: bool = True) -> Dict[str, Any]:
+    """One-off repair for dog merges made before trophies followed the dog.
+
+    Those merges moved awarded_trophies.dog_id but left recipient_id on the
+    archived duplicate, so the kept dog's trophy wall never showed them. For each
+    archived duplicate (duplicate_of_dog_id set) whose trophies still name it as
+    recipient, the rows move to the live kept dog under the same rule as a merge.
+    Idempotent: moved rows name the kept dog, so a second run finds nothing. A
+    restored (not archived) dog keeps its trophies. dry_run=True writes nothing."""
+    dups = await db.dogs.find(
+        {"archived": True, "duplicate_of_dog_id": {"$nin": [None, ""]}},
+        {"_id": 0, "id": 1, "duplicate_of_dog_id": 1},
+    ).to_list(5000)
+    ts = _now_iso()
+    details: List[Dict[str, Any]] = []
+    skipped = total_moved = total_revoked = 0
+    for dup in dups:
+        dup_id = dup.get("id")
+        primary_id = await _live_dog_for_merge_chain(db, dup.get("duplicate_of_dog_id") or "")
+        if not dup_id or not primary_id or primary_id == dup_id:
+            skipped += 1
+            continue
+        counts = await move_dog_trophies_on_merge(
+            db, primary_id=primary_id, duplicate_id=dup_id, ts=ts, dry_run=dry_run,
+        )
+        if counts["moved"]:
+            details.append({"duplicate_dog_id": dup_id, "primary_dog_id": primary_id, **counts})
+        total_moved += counts["moved"]
+        total_revoked += counts["revoked"]
+    return {
+        "dry_run": bool(dry_run),
+        "duplicates_checked": len(dups),
+        "duplicates_skipped": skipped,
+        "moved": total_moved,
+        "revoked": total_revoked,
+        "dogs": details[:200],
+    }
+
+
 # ───────────────────────── evaluators ──────────────────────────
 
 
