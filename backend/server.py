@@ -48722,10 +48722,11 @@ async def sell_training_program(
     # revenue rows, or any other financial mutation below. Minimum age applies
     # to every dog-targeted program sale; Online School also enforces pathway
     # prerequisites here (and again at the canonical grant boundary).
-    # A self-guided online course is access for one dog — never in-person
-    # training credits or weekly sessions (it used to hand out both).
+    # An Online School course (self-guided, or "both") is access for one dog —
+    # never in-person training credits or weekly sessions (it used to hand out
+    # both). The Shop sells both delivery modes as access only, and so does the desk.
     online_course = (program.get("purchase_fulfillment") == "online_school"
-                     and program.get("delivery_mode") == "self_guided")
+                     and program.get("delivery_mode") in ("self_guided", "both"))
     if online_course and not dog:
         raise HTTPException(status_code=400, detail="Pick the dog who's taking this online course — the sale gives that dog access.")
     if dog:

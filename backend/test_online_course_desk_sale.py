@@ -64,10 +64,10 @@ def _client_and_dog():
 
 
 @contextlib.contextmanager
-def _school_program(purchase_fulfillment=None, available_online=False):
+def _school_program(purchase_fulfillment=None, available_online=False, delivery_mode="self_guided"):
     admin = _admin_user()
     kw = dict(name=f"{TAG} Program {uuid.uuid4().hex[:6]}", type="private_lessons",
-              format={"count": 1, "unit": "modules"}, price=100, delivery_mode="self_guided",
+              format={"count": 1, "unit": "modules"}, price=100, delivery_mode=delivery_mode,
               available_online=available_online,
               modules=[server.ModuleIn(name="Module 1", order=0, goals=[server.GoalIn(name="Skill 1")])])
     if purchase_fulfillment is not None:
@@ -122,6 +122,53 @@ def test_an_online_course_needs_the_dog_taking_it():
             _sell(c, prog, admin)
         assert err.value.status_code == 400
         assert run(server.db.credit_lots.count_documents({"client_id": c["id"]})) == 0
+
+
+# ── Both-delivery Online School courses (decided 2026-10-05): the desk sells
+#    them as access only, exactly like the Shop — no credits, no sessions.
+
+def test_a_both_delivery_online_course_sale_gives_access_but_no_credits_or_sessions():
+    with _client_and_dog() as (c, dog), _school_program(purchase_fulfillment="online_school", delivery_mode="both") as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            before = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "training_credits": 1})).get("training_credits") or 0
+            out = _sell(c, prog, admin, dog_id=dog["id"], schedule_day_of_week=1, schedule_time="10:00")
+            # The same access grant the Shop uses: a purchase-sourced Online School enrollment.
+            assert out["enrollment"] and out["enrollment"]["status"] == "active"
+            row = _enrollment(dog["id"], prog["id"])
+            assert row is not None and row["enrollment_source"] == "purchase"
+            assert out["scheduled_bookings"] == []
+            assert out["client_balance"] == before
+            after = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "training_credits": 1})).get("training_credits") or 0
+            assert after == before
+            lot = run(server.db.credit_lots.find_one({"id": out["lot"]["id"]}, {"_id": 0}))
+            assert lot["qty_total"] == 0 and lot["qty_remaining"] == 0 and lot["online_course"] is True
+            assert run(server.db.bookings.count_documents({"dog_id": dog["id"], "is_prepaid_program_session": True})) == 0
+            assert run(server.db.retail_sales.count_documents({"source_id": lot["id"]})) == 1
+        finally:
+            run(server.db.bookings.delete_many({"dog_id": dog["id"]}))
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
+
+
+def test_a_both_delivery_online_course_still_needs_the_dog_taking_it():
+    with _client_and_dog() as (c, _dog), _school_program(purchase_fulfillment="online_school", delivery_mode="both") as (prog, admin), _OpenRegisterDay(TAG):
+        with pytest.raises(server.HTTPException) as err:
+            _sell(c, prog, admin)
+        assert err.value.status_code == 400
+        assert run(server.db.credit_lots.count_documents({"client_id": c["id"]})) == 0
+
+
+def test_an_in_person_both_delivery_program_still_gives_its_credits():
+    """A both-capable program sold as credits (not Online School fulfillment)
+    is an in-person sale and keeps issuing its training credits."""
+    with _client_and_dog() as (c, dog), _school_program(delivery_mode="both") as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            before = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "training_credits": 1})).get("training_credits") or 0
+            out = _sell(c, prog, admin, dog_id=dog["id"])
+            after = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "training_credits": 1})).get("training_credits") or 0
+            assert after == before + (prog.get("format") or {}).get("count", 1)
+            assert out["lot"]["qty_total"] == (prog.get("format") or {}).get("count", 1)
+        finally:
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
 
 
 def test_selling_the_same_course_again_to_an_enrolled_dog_charges_nothing():
