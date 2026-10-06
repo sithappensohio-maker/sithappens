@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 import sales_tax_policy
 from domains.bookings import friends_family
 from domains.gift_cards import services as gift_cards_services
+from domains.backup import deletion_log
 from domains.pos import given_back, sale_claims
 
 _db = None
@@ -810,7 +811,7 @@ async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
         # (Stock put back is not undone here; a card refill is keyed and a
         # retry finds it already done.)
         if written_rows:
-            await _db.retail_sales.delete_many({"id": {"$in": written_rows}})
+            await deletion_log.delete_many(_db, "retail_sales", {"id": {"$in": written_rows}})
         if record_id:
             await _db.pos_sale_returns.delete_one({"id": record_id})
         if reserved:

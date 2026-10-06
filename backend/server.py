@@ -113,6 +113,7 @@ from domains.shop import abandon as shop_abandon
 from domains.shop import income as shop_income
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
+from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
 from domains.bookings import reopen as booking_reopen
 from school_events import EventType as SchoolEvent
 
@@ -2320,7 +2321,7 @@ async def _archive_old_bookings_once() -> dict:
         b["archived_at"] = now_iso()
         try:
             await db.bookings_archive.insert_one(b)
-            await db.bookings.delete_one({"id": b["id"]})
+            await db.bookings.delete_one({"id": b["id"]})  # deletion-log: moved, not deleted (the row is in bookings_archive; a merge drops the hot copy by the twin rule)
             moved += 1
         except Exception as e:
             logger.warning("archive: failed for booking %s: %s", b.get("id"), e)
@@ -4475,7 +4476,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         try:   # the family archived while this was being checked: never left booked (audit #36)
             await booking_guards.refuse_archived_dog(db, dog_id=doc.get("dog_id"), client_id=doc.get("client_id"), staff=is_admin)
         except HTTPException:
-            await db.bookings.delete_one({"id": doc["id"]})
+            await deletion_log.delete_one(db, "bookings", {"id": doc["id"]})
             raise
     finally:
         if owns_capacity_lock and capacity_owner:
@@ -11698,7 +11699,7 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
                 logger.warning("invoice refund-payment recording failed for booking %s: %s", booking_id, exc)
         except Exception as exc:
             await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
-            await db.retail_sales.delete_one({"id": refund_row["id"]})
+            await deletion_log.delete_one(db, "retail_sales", {"id": refund_row["id"]})
             if ledger_ids:
                 await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
             if event_id:
@@ -29290,6 +29291,9 @@ BACKUP_COLLECTIONS = [
     "payment_topup_claims", "payment_void_claims", "refund_idempotency_claims",
     "shop_checkout_claims", "auto_receipt_email_claims",
     "financial_adjustment_claims", "tab_adjustment_claims",
+    # The hard-delete log (domains/backup/deletion_log.py). A merge restore reads it so it does not bring back a
+    # row removed after the backup was taken; a replace restores it with the rest.
+    "deleted_records",
 ]
 # Every collection the app writes that is deliberately NOT backed up, and why.
 # A test (test_backup_coverage_guard.py) fails when code writes a collection
@@ -37330,9 +37334,9 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
         # _booking_refund_locked's established discipline. The claim is
         # only released/deleted AFTER rollback completes.
         if retail_sales_id:
-            await db.retail_sales.delete_one({"id": retail_sales_id})
+            await deletion_log.delete_one(db, "retail_sales", {"id": retail_sales_id})
         if payment_id:
-            await db.payments.delete_one({"id": payment_id})
+            await deletion_log.delete_one(db, "payments", {"id": payment_id})
         if adjust_balance_applied:
             await _adjust_client_balance(invoice.get("client_id"), amount)
         if ledger_id:
@@ -37512,9 +37516,9 @@ async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depend
         if invoice_delta_applied:
             await db.invoices.update_one({"id": original.get("invoice_id")}, {"$inc": {"amount_paid": float(original.get("amount") or 0), "balance": -float(original.get("amount") or 0)}})
         if retail_reversed:
-            await db.retail_sales.delete_one({"payment_id": reversal_payment_id})
+            await deletion_log.delete_one(db, "retail_sales", {"payment_id": reversal_payment_id})
         if reversal_payment_id:
-            await db.payments.delete_one({"id": reversal_payment_id})
+            await deletion_log.delete_one(db, "payments", {"id": reversal_payment_id})
         if balance_reversed:
             await _adjust_client_balance(original.get("client_id"), -float(original.get("amount") or 0))
         if reversal_ledger_id:
@@ -43642,11 +43646,11 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             except Exception as exc:
                 logger.error("Failed to reverse client balance deltas during sale rollback for pos_sale %s: %s", sale_id, exc)
         if entitlement_retail_sales_ids:
-            await db.retail_sales.delete_many({"id": {"$in": entitlement_retail_sales_ids}})
+            await deletion_log.delete_many(db, "retail_sales", {"id": {"$in": entitlement_retail_sales_ids}})
         if created_lot_ids:
             await db.credit_lots.delete_many({"id": {"$in": created_lot_ids}})
         if retail_sales_id:
-            await db.retail_sales.delete_one({"id": retail_sales_id})
+            await deletion_log.delete_one(db, "retail_sales", {"id": retail_sales_id})
         await db.pos_sales.delete_one({"id": sale_id})
         await db.pos_sale_claims.delete_one({"id": claim_id})
         raise
@@ -43952,7 +43956,7 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
         await gift_card_services.apply_void(gc_plan, original, claim_id=claim_id, user=user)  # last
     except Exception:
         if gc_offsets:
-            await db.retail_sales.delete_many({"id": {"$in": gc_offsets}})
+            await deletion_log.delete_many(db, "retail_sales", {"id": {"$in": gc_offsets}})
         if balance_clawback_applied and balance_clawback:
             try:
                 await db.clients.update_one({"id": original.get("client_id")}, {"$inc": {k: -v for k, v in balance_clawback.items()}})
@@ -43969,9 +43973,9 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
             except Exception as exc:
                 logger.error("Failed to restore credit_lot %s during void rollback: %s", lot_id, exc)
         if reversed_entitlement_ids:
-            await db.retail_sales.delete_many({"reversed_retail_sales_id": {"$in": reversed_entitlement_ids}, "pos_sale_id": sale_id})
+            await deletion_log.delete_many(db, "retail_sales", {"reversed_retail_sales_id": {"$in": reversed_entitlement_ids}, "pos_sale_id": sale_id})
         if retail_reversed:
-            await db.retail_sales.delete_one({"reversed_retail_sales_id": original.get("retail_sales_id"), "pos_sale_id": sale_id})
+            await deletion_log.delete_one(db, "retail_sales", {"reversed_retail_sales_id": original.get("retail_sales_id"), "pos_sale_id": sale_id})
         if status_transitioned:
             await db.pos_sales.update_one({"id": sale_id}, {"$set": {"status": "completed"}, "$unset": {"voided_at": "", "void_reason": ""}})
         await db.pos_sale_void_claims.delete_one({"id": claim_id})
@@ -47478,8 +47482,8 @@ async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin_and_p
             "This money was written by the register, a payment or the Shop, so it can't be removed here. "
             "Reverse it from its own screen (refund, void, return or payment)."))
     await _require_register_day_open(existing.get("date") or business_today().isoformat())
-    res = await db.retail_sales.delete_one({"id": sale_id})
-    if res.deleted_count == 0:
+    deleted = await deletion_log.delete_one(db, "retail_sales", {"id": sale_id})
+    if deleted == 0:
         raise HTTPException(status_code=404, detail="Retail sale not found")
     return {"ok": True}
 

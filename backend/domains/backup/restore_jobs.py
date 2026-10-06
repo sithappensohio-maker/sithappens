@@ -356,7 +356,8 @@ def make_restore_jobs_domain(*, api, db, logger, now_iso, require_owner, require
                 await _save(job_id, current=collection, collections_done=index - (0 if finished else 1),
                             collections_total=total, current_docs_done=docs_done)
 
-            summary, kept_live = await _restore_collections(payload["collections"], mode, progress)
+            summary, kept_live = await _restore_collections(payload["collections"], mode, progress,
+                                                            backup_at=info.get("exported_at"))
             del payload
             await _save(job_id, status="done", phase="done", summary=summary, kept_live=kept_live,
                         finished_at=now_iso(), current=None)

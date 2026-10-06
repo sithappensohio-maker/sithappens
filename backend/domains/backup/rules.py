@@ -4,7 +4,8 @@ Most collections round-trip by `id` (or by a string `_id`, see
 STRING_ID_COLLECTIONS in server.py). The few below need more, and each rule
 is pinned by backend/test_backup_coverage_guard.py.
 """
-from typing import Any, Dict, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from domains.operations import audit_redact
 
@@ -33,6 +34,38 @@ MERGE_KEYS: Dict[str, Tuple[str, ...]] = {
     "task_dismissals": ("item_id",),
     "vaccine_dismissals": ("dog_id",),
 }
+
+
+def _parse_stamp(value: Any) -> Optional[datetime]:
+    """An ISO timestamp as an aware datetime (a naive one is read as UTC), or None when unreadable."""
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def merge_skips_logged_deletion(deleted_ats: Iterable[Any], backup_at: Any) -> bool:
+    """Whether a merge must leave out a backed-up row (audit #8 follow-up).
+
+    `deleted_ats` are the times the row was hard-deleted live, from the deletion log
+    (domains/backup/deletion_log.py). The owner removed the row after the backup was taken when any of
+    those deletions came at or after `backup_at`, so an older copy must not bring it back. A deletion
+    before the backup leaves the row in the file. Deletions at the same instant are skipped (never
+    resurrected). With no backup time, or a stamp that can't be read, every logged deletion counts."""
+    stamps = list(deleted_ats)
+    if not stamps:
+        return False
+    backup = _parse_stamp(backup_at)
+    if backup is None:
+        return True
+    for stamp in stamps:
+        deleted = _parse_stamp(stamp)
+        if deleted is None or deleted >= backup:
+            return True
+    return False
 
 
 def merge_filter(collection: str, doc: dict, is_string_id: bool):

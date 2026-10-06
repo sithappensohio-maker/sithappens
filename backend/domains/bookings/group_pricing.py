@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
+from domains.backup import deletion_log
+
 _server_globals: Optional[dict] = None
 
 
@@ -40,7 +42,7 @@ async def undo_rows(created: List[dict]) -> None:
     made_here = {"source_booking_id": {"$in": ids}, "enrollment_source": "board_train_package"}
     await db.dog_programs.delete_many(made_here)
     await db.school_enrollments.delete_many(made_here)
-    await db.bookings.delete_many({"id": {"$in": ids}})
+    await deletion_log.delete_many(db, "bookings", {"id": {"$in": ids}})
 
 
 async def group_quote(*, client_id: Optional[str], service_type: str, date: str, end_date: Optional[str],

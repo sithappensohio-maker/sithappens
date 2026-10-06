@@ -19,6 +19,7 @@ from pymongo import UpdateOne
 from pymongo.errors import BulkWriteError
 
 from domains.backup import rules as backup_rules
+from domains.backup import deletion_log
 from domains.bookings import prepaid_close
 
 
@@ -1102,6 +1103,9 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         version: int
         collections: dict
         mode: Literal["replace", "merge"] = "replace"  # replace = wipe & restore; merge = upsert by id
+        # When the backup was taken (the file's exported_at). A merge leaves out rows the owner hard-deleted
+        # after this time; with no time, every logged deletion is respected (audit #8 follow-up).
+        exported_at: Optional[str] = None
 
     @api.post("/backup/restore")
     async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_owner)):
@@ -1131,7 +1135,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                         status_code=507,
                         detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
                     )
-                summary, kept_live_total = await _restore_collections(body.collections, body.mode)
+                summary, kept_live_total = await _restore_collections(body.collections, body.mode, backup_at=body.exported_at)
             finally:
                 heartbeat.cancel()
         finally:
@@ -1144,7 +1148,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             "pre_restore_snapshot": pre_snapshot,
         }
 
-    async def _restore_collections(collections: dict, mode: str, progress=None):
+    async def _restore_collections(collections: dict, mode: str, progress=None, backup_at: Optional[str] = None):
         """Restores (see _restore_collections_inner). Older backups can bring
         back register sales with the pre-audit-#72 gift-card split, so the
         repair is sent round again — before (a restore that dies partway
@@ -1159,7 +1163,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             await db.system_runs.delete_many(repairs)
         await prepaid_close.rearm_after_restore(db, collections, mode)   # audit #38: restored sessions are closed again
         try:
-            return await _restore_collections_inner(collections, mode, progress)
+            return await _restore_collections_inner(collections, mode, progress, backup_at)
         finally:
             if sales or people or school:
                 await db.system_runs.delete_many(repairs)
@@ -1184,7 +1188,25 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             str(d["id"]) in live_other or (c == "bookings_archive" and str(d["id"]) in hot_in_backup))]
         return kept, len(docs) - len(kept)
 
-    async def _restore_collections_inner(collections: dict, mode: str, progress=None):
+    async def _skip_logged_deletions(c: str, docs: list, backup_at: Optional[str]) -> tuple:
+        """A merge leaves out a backed-up row the owner hard-deleted after the backup was taken (audit #8
+        follow-up; the rule is backup_rules.merge_skips_logged_deletion). Returns (kept_docs, skipped_count)."""
+        ids = [str(d["id"]) for d in docs if d.get("id")]
+        logged: Dict[str, list] = {}
+        if not ids or not await db[deletion_log.COLLECTION].find_one({"collection": c}, {"_id": 1}):
+            return docs, 0   # nothing was hard-deleted from this collection: no per-batch lookups
+        for start in range(0, len(ids), 1000):
+            chunk = ids[start:start + 1000]
+            async for r in db[deletion_log.COLLECTION].find(
+                    {"collection": c, "record_id": {"$in": chunk}}, {"_id": 0, "record_id": 1, "deleted_at": 1}):
+                logged.setdefault(str(r.get("record_id")), []).append(r.get("deleted_at"))
+        if not logged:
+            return docs, 0
+        kept = [d for d in docs if not (
+            d.get("id") and backup_rules.merge_skips_logged_deletion(logged.get(str(d["id"]), []), backup_at))]
+        return kept, len(docs) - len(kept)
+
+    async def _restore_collections_inner(collections: dict, mode: str, progress=None, backup_at: Optional[str] = None):
         """Restore each backed-up collection. Returns (summary, kept_live).
 
         Older versions are accepted — they simply contain fewer collections.
@@ -1192,15 +1214,21 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         restoring a v1 snapshot won't blow away homework_templates, trophies,
         etc. `progress(collection, index, total, docs_done, finished)` is
         awaited as it goes (the restore job reports and heartbeats with it).
+        `backup_at` is when the backup was taken; a merge leaves out rows hard-deleted live after it.
         """
         summary: Dict[str, Any] = {}
         kept_live_total = 0
         todo = [(c, docs) for c, docs in (collections or {}).items() if c in BACKUP_COLLECTIONS]
+        if mode != "replace" and todo:
+            await deletion_log.ensure_index(db)
         for index, (c, docs) in enumerate(todo, start=1):
             if progress:
                 await progress(c, index, len(todo), 0, False)
             docs = [backup_rules.restore_row(c, d) for d in (docs or []) if isinstance(d, dict)]
             is_string_id = c in STRING_ID_COLLECTIONS
+            skipped_deleted = 0
+            if mode != "replace":
+                docs, skipped_deleted = await _skip_logged_deletions(c, docs, backup_at)
             other_copies = 0
             if mode != "replace" and c in backup_rules.MERGE_TWIN:
                 docs, other_copies = await _drop_other_copies(c, docs, collections)
@@ -1265,6 +1293,8 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                     summary[c]["live_rows_kept"] = live_kept
                 if other_copies:
                     summary[c]["skipped_other_copy"] = other_copies
+                if skipped_deleted:   # removed live after the backup was taken; not brought back (audit #8 follow-up)
+                    summary[c]["skipped_deleted"] = skipped_deleted
                 if kept_live:
                     summary[c]["kept_live"] = len(kept_live)
                     summary[c]["kept_live_ids"] = kept_live[:10]
