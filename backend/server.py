@@ -28938,8 +28938,17 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     dismissed_map: Dict[str, str] = {}
     async for dm in db.task_dismissals.find({}, {"_id": 0, "item_id": 1, "signature": 1}):
         dismissed_map[dm["item_id"]] = dm.get("signature") or ""
+    # Items still hidden by a live dismissal are returned under `hidden` so
+    # Today and the Action Center can offer an un-hide (restore) control.
+    hidden: List[dict] = []
     if dismissed_map:
-        items = [it for it in items if dismissed_map.get(it["id"]) != it["signature"]]
+        visible: List[dict] = []
+        for it in items:
+            if dismissed_map.get(it["id"]) == it["signature"]:
+                hidden.append(it)
+            else:
+                visible.append(it)
+        items = visible
 
     counts = {
         "urgent": sum(1 for it in items if it["priority"] == "urgent"),
@@ -28947,7 +28956,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         "info":   sum(1 for it in items if it["priority"] == "info"),
         "total":  len(items),
     }
-    return {"items": items, "counts": counts, "generated_at": now_dt.isoformat()}
+    return {"items": items, "hidden": hidden, "counts": counts, "generated_at": now_dt.isoformat()}
 
 
 def _today_brain_signature(item: dict) -> str:
@@ -28957,7 +28966,8 @@ def _today_brain_signature(item: dict) -> str:
     Examples:
       - low_credits → "2|1|0" (the 3 credit pools). Drop any pool → new sig → reappears.
       - vaccine_expiring → the expiry date. New expiry recorded → new sig → reappears.
-      - booking_pending → the current pending count. Count goes up → reappears.
+      - booking_pending → the business date + the current pending count. Count
+        goes up, or the business day rolls over → reappears.
       - new_signup → empty (one-time dismiss; tied to client_id in the id already).
       - monday_digest / no_checkin → today's date (auto-expires next day).
     """
@@ -28974,8 +28984,10 @@ def _today_brain_signature(item: dict) -> str:
         return f"low:{nums or title}"
     if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open", "recurring_renewal_missed"):
         # Title/subtitle carries the count → encode it as the signature.
+        # The business day is part of it too: a dismissal lasts one business
+        # day, so an open to-do comes back each morning until it is handled.
         nums = "|".join([t for t in (title + " " + subtitle).split() if t.isdigit()])
-        return f"{kind}:{nums or title}"
+        return f"{kind}:{business_today().isoformat()}:{nums or title}"
     if kind == "pipeline_ready":
         # Bucket overall_pct into 5% steps so a 1% bump doesn't re-spam.
         nums = [int(t) for t in title.replace("%", " ").split() if t.isdigit()]

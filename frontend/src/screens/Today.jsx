@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import AdminStatCard from "../components/admin/AdminStatCard";
 import PageHero from "../components/PageHero";
 import ActionRow from "../components/admin/ActionRow";
+import HiddenTasks from "../components/admin/HiddenTasks";
 import ActionMenu from "../components/admin/ActionMenu";
 import { runTodayBrainCTA } from "../lib/todayBrain";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -247,6 +248,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
             ))}
           </div>
         )}
+        <HiddenTasks items={brain?.hidden || []} onRestored={load} />
       </div>
 
       {/* 4. Today's Training Plan — read-only command center. Assignment

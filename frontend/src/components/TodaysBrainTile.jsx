@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import HiddenTasks from "./admin/HiddenTasks";
 
 const PRIORITY_META = {
   urgent: { color: "border-red-500/40 bg-red-500/5",   chip: "bg-red-500/15 text-red-300",   accent: "text-red-300",   icon: "fa-circle-exclamation" },
@@ -70,6 +71,7 @@ export default function TodaysBrainTile({ onCTA }) {
   );
 
   const { items, counts } = data;
+  const hidden = data.hidden || [];
   const top3 = items.slice(0, 3);
   const hasMore = items.length > 3;
 
@@ -80,6 +82,7 @@ export default function TodaysBrainTile({ onCTA }) {
           <i className="fas fa-list-check mr-2"/>Today's tasks · all clear
         </p>
         <p className="text-[13px] text-shTextMuted mt-1">Nothing urgent on the queue. Inbox zero, basically.</p>
+        <HiddenTasks items={hidden} onRestored={load} />
       </div>
     );
   }
@@ -111,6 +114,7 @@ export default function TodaysBrainTile({ onCTA }) {
             See all {items.length} · <i className="fas fa-arrow-right ml-1"/>
           </button>
         )}
+        <HiddenTasks items={hidden} onRestored={load} />
       </div>
       {showAll && (
         <TodaysBrainModal items={items} counts={counts}

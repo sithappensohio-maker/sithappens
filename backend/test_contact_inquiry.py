@@ -172,9 +172,10 @@ def test_new_inquiry_reaches_todays_do_this_now_feed_and_leaves_when_contacted()
     assert it["cta"] == {"type": "open_screen", "screen": "inquiries"}
     assert "inquir" in it["title"] and "waiting for a reply" in it["title"]
     assert f"{TAG} Owner / Cujo" in it["subtitle"] or "more" in it["subtitle"]
-    # The dismissal signature encodes the count so a later inquiry re-surfaces it.
+    # The dismissal signature encodes the business day and the count, so a later
+    # inquiry (or the next business day) re-surfaces it.
     n = run(server.db.inquiries.count_documents({"status": "new"}))
-    assert it["signature"] == f"contact_inquiry:{n}"
+    assert it["signature"] == f"contact_inquiry:{server.business_today().isoformat()}:{n}"
 
     # Front Desk / Today / Schedule share one poll; a clients_edit-only role
     # must still get the inquiry counted in it.

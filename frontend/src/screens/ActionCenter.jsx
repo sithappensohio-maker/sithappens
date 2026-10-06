@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ActionRow, { ACTION_PRIORITY_META as META } from "../components/admin/ActionRow";
+import HiddenTasks from "../components/admin/HiddenTasks";
 import { runTodayBrainCTA } from "../lib/todayBrain";
 import PageHero from "../components/PageHero";
 
@@ -26,6 +27,8 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
   const items = useMemo(() => data?.items || [], [data]);
   const counts = data?.counts || { urgent: 0, warn: 0, info: 0, total: 0 };
   const filtered = useMemo(() => filter === "all" ? items : items.filter((it) => it.priority === filter), [items, filter]);
+  const hidden = useMemo(() => data?.hidden || [], [data]);
+  const hiddenFiltered = useMemo(() => filter === "all" ? hidden : hidden.filter((it) => it.priority === filter), [hidden, filter]);
 
   const dismiss = async (item) => {
     setBusy(true);
@@ -81,6 +84,8 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
           {filtered.map((item) => <ActionRow key={item.id} item={item} onOpen={() => runCTA(item)} onDismiss={() => dismiss(item)} busy={busy} />)}
         </div>
       )}
+
+      {data && <HiddenTasks items={hiddenFiltered} onRestored={load} testid="action-center-hidden" />}
     </div>
   );
 }
