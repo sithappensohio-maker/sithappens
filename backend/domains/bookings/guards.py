@@ -133,12 +133,20 @@ async def load_booking_dog(db, dog_id: str, user: dict) -> dict:
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise BookingBlocked(404, "We couldn't find that dog. Refresh the page and pick your dog again.", code="dog_not_found", action="refresh")
-    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+    # Only an actual client is held to "your own dogs" — staff (admin or
+    # employee) book on behalf of any family, gated instead by
+    # _require_booking_edit before this function is ever reached. Checking
+    # `!= "admin"` here instead of `== "client"` was the same bug class
+    # audit #6 fixed for cancelling: a role: employee account (front desk,
+    # trainer, any non-admin staff) had no client_id at all, so EVERY dog
+    # it tried to book — even with booking_edit granted — was refused as
+    # "not your dog."
+    if user.get("role") == "client" and dog.get("owner_id") != user.get("client_id"):
         raise BookingBlocked(
             403, "That dog isn't on your account. Pick one of your own dogs, or contact Sit Happens if this looks wrong.",
             code="not_your_dog", action="contact_us",
         )
-    await refuse_archived_dog(db, dog, staff=user.get("role") == "admin")
+    await refuse_archived_dog(db, dog, staff=user.get("role") != "client")
     return dog
 
 

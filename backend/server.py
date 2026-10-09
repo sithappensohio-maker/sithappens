@@ -4189,6 +4189,14 @@ async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], c
 
 async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current_user)):
     _require_booking_edit(user)
+    # Every guard below this point exists to protect the CLIENT
+    # self-booking flow (online timing windows, waivers, advance-notice
+    # caps, Meet-n-Greet gating, etc.) -- a staff member personally
+    # creating or walking a booking through (Quick Check-In, an admin
+    # New Booking, the Employee Portal walk-in) is handling it directly,
+    # not submitting an unattended online request, and _require_booking_edit
+    # above already gates WHICH staff may reach this function at all.
+    is_staff = user.get("role") in ("admin", "employee")
     booking_guards.validate_booking_dates(body)
     dog = await booking_guards.load_booking_dog(db, body.dog_id, user)
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
@@ -4204,7 +4212,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # exact service's online-booking, notice, approval, and duration controls.
     selected_service = await _resolve_base_service_for_booking(body, user)
     svc_rules = _booking_flow_rules_for(settings, body.service_type, body.service_id)
-    if user.get("role") != "admin" and svc_rules.get("client_booking_enabled") is False:
+    if not is_staff and svc_rules.get("client_booking_enabled") is False:
         label = (selected_service or {}).get("name") or body.service_type.title()
         raise BookingBlocked(400, f"{label} can't be booked online right now. Please contact Sit Happens to book it, or pick another service.", code="service_not_online", action="contact_us")
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
@@ -4215,7 +4223,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # server-side regardless of how it got submitted. Admins bypass so they
     # can still clean up historical data if needed.
     fv = settings.get("feature_visibility") or {}
-    if user.get("role") != "admin" and body.service_type in fv and fv.get(body.service_type) is False:
+    if not is_staff and body.service_type in fv and fv.get(body.service_type) is False:
         raise BookingBlocked(400, f"{body.service_type.title()} isn't being offered right now. Please contact Sit Happens if you need it, or pick another service.", code="service_disabled", action="contact_us")
 
     # Sprint 110di-28 — Boarding zero-night guard. The boarding price model
@@ -4234,7 +4242,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # time, never midnight/UTC. This makes a 4 PM appointment tomorrow count as
     # the actual hours available from now in America/New_York.
     booking_start_local = None
-    if user.get("role") != "admin" and body.date:
+    if not is_staff and body.date:
         booking_start_local = _booking_start_local(body, settings)
         now_business = datetime.now(BUSINESS_TZ)
         req_date = booking_start_local.date()
@@ -4253,8 +4261,8 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     if cstat in ("prospect", "evaluation_scheduled", "rejected") and not friends_family.trusted(body.dog_id, cstat):
         # Admin override path: respect explicit override_capacity intent so
         # admin can still schedule the evaluation booking itself.
-        if user.get("role") != "admin" or not body.override_capacity:
-            if user.get("role") == "admin":
+        if not is_staff or not body.override_capacity:
+            if is_staff:
                 if cstat == "rejected":
                     raise HTTPException(status_code=400, detail="This client has been marked rejected — bookings are disabled.")
                 raise HTTPException(status_code=400, detail="This client needs to complete a Meet-n-Greet evaluation before booking. Please schedule one first.")
@@ -4269,7 +4277,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # additional booking requests when the client's canonical account_balance
     # exceeds it. Admin/staff booking remains available so the owner can make
     # an intentional exception after reviewing the account.
-    if user.get("role") != "admin":
+    if not is_staff:
         money_controls = ((settings.get("day_to_day") or {}).get("money") or {})
         try:
             decline_over = float(money_controls.get("auto_decline_if_balance_over") or 0)
@@ -4280,20 +4288,19 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
             raise BookingBlocked(409, f"New bookings are paused while your account has an unpaid balance of ${current_balance:.2f}. " "Please pay your balance (or contact Sit Happens to review it), then book again.", code="balance_over_limit", action="pay_balance", balance=current_balance)
 
     # Waiver check for clients
-    if user.get("role") != "admin" and bool(settings.get("waiver_required_for_booking", True)):
+    if not is_staff and bool(settings.get("waiver_required_for_booking", True)):
         sig = await db.waiver_signatures.find_one({"client_id": client["id"]}, sort=[("signed_at", -1)])
         current_version = int(settings.get("waiver_version", 1))
         if not sig or int(sig.get("waiver_version", 1)) < current_version:
             raise BookingBlocked(400, "Please sign our waiver before booking. It only takes a minute, then come back and book.", code="waiver_unsigned", action="sign_waiver")
-    if user.get("role") != "admin":
+    if not is_staff:
         await _require_agreements_signed(client["id"], service_type=body.service_type)
 
     # Vaccine check (multi-vaccine + per-service Day-to-Day policy).
     # `block_bookings_if_vaccines_expired` used to be decorative; it now
     # genuinely controls client booking enforcement. Staff can still use the
     # existing explicit override_vaccines path when authorized.
-    is_admin = user.get("role") == "admin"
-    if not (is_admin and body.override_vaccines):
+    if not (is_staff and body.override_vaccines):
         vaccine_problem = _booking_vaccine_block(settings, dog, body.service_type)
         if vaccine_problem:
             raise vaccine_problem
@@ -4306,18 +4313,18 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # producing duplicate charges and duplicate cards on the Run Sheet.
     # Scoped to the SAME service_type only — a dog boarding and also having
     # a same-day grooming appointment is normal and must stay allowed.
-    if not (is_admin and body.override_capacity):
+    if not (is_staff and body.override_capacity):
         dup = await _dog_conflicting_booking(body.dog_id, body.date, body.end_date, body.service_type)
         if dup:
             raise _duplicate_booking_refusal(dog.get('name') or 'This dog', dup, body.service_type)
 
     # Closed dates: clients only — staff can still book one day by hand (any day in a range counts).
-    if not is_admin:
+    if not is_staff:
         booking_guards.refuse_closed_dates(settings, _dates_in_range(body.date, body.end_date))
 
     # Advance-booking limit (clients only) — exempt daycare so regulars can
     # set up long-running recurring schedules without bumping the global cap.
-    if user.get("role") != "admin" and body.service_type != "daycare" and svc_rules.get("max_advance_days") is None:
+    if not is_staff and body.service_type != "daycare" and svc_rules.get("max_advance_days") is None:
         max_adv = int(rules.get("max_advance_days", 60))
         if max_adv > 0:
             limit_date = (business_today() + timedelta(days=max_adv)).isoformat()
@@ -4327,11 +4334,11 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # Sprint 110dm — day-to-day guardrails (min advance, same-day toggle,
     # weekend lead time, max-bookings-per-day, max-consecutive-boarding-nights).
     # Admins bypass these via override_capacity for emergency fixes.
-    if user.get("role") != "admin" or not (body.override_capacity or False):
+    if not is_staff or not (body.override_capacity or False):
         # Reuse the same Eastern-aware, actual-time calculation as the exact
         # service rules. No second midnight/UTC interpretation is allowed.
         await booking_guards.enforce_day_to_day(
-            db, settings, svc_rules, body, client_id=client.get("id"), is_admin=is_admin,
+            db, settings, svc_rules, body, client_id=client.get("id"), is_admin=is_staff,
             start_local=booking_start_local or _booking_start_local(body, settings), now_business=datetime.now(BUSINESS_TZ))
 
     # Duration is snapshotted now; the race-safe capacity/time-slot recount is
@@ -4381,7 +4388,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # Single source of truth — see _booking_outcome_for. The client wizard
     # reads the same resolution through GET /services so what it promises is
     # what gets written here.
-    status_val = _booking_outcome_for(settings, body.service_type, body.service_id, is_admin=is_admin)
+    status_val = _booking_outcome_for(settings, body.service_type, body.service_id, is_admin=is_staff)
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -4433,7 +4440,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         # group_id sent by hand, which could join another family's group.
         "group_id": body.group_id if body.group_id and body.group_id == _booking_group_ctx.get() else None,
     }
-    if is_admin and body.check_in_now:
+    if is_staff and body.check_in_now:
         doc["checked_in_at"] = now_iso()
     # NOTE: credits are no longer deducted at booking time or on approval —
     # they're only deducted at checkout (see check_out()). This makes credit
@@ -4469,18 +4476,18 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     capacity_ctx = _capacity_lock_ctx.get()
     owns_capacity_lock = False
     capacity_owner = None
-    if not (is_admin and body.override_capacity) and capacity_keys:
+    if not (is_staff and body.override_capacity) and capacity_keys:
         if capacity_ctx and set(capacity_keys).issubset(set(capacity_ctx.get("keys") or [])):
             capacity_owner = capacity_ctx.get("owner")
         else:
             capacity_owner = await _acquire_capacity_locks(capacity_keys)
             owns_capacity_lock = True
     try:
-        if not (is_admin and body.override_capacity):
+        if not (is_staff and body.override_capacity):
             await _assert_capacity_available(body, settings, selected_service)
         await db.bookings.insert_one(doc)
         try:   # the family archived while this was being checked: never left booked (audit #36)
-            await booking_guards.refuse_archived_dog(db, dog_id=doc.get("dog_id"), client_id=doc.get("client_id"), staff=is_admin)
+            await booking_guards.refuse_archived_dog(db, dog_id=doc.get("dog_id"), client_id=doc.get("client_id"), staff=is_staff)
         except HTTPException:
             await deletion_log.delete_one(db, "bookings", {"id": doc["id"]})
             raise
@@ -4570,7 +4577,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # Admin-created bookings (via Quick Check-in etc.) don't trigger an alert to themselves.
     # In bulk-create flows (recurring / multi-dates), this is suppressed and the
     # bulk endpoint sends ONE summary email after the loop.
-    if not is_admin and not _suppress_admin_booking_email.get():
+    if not is_staff and not _suppress_admin_booking_email.get():
         try:
             if doc.get("status") == "pending":
                 # Approval-required booking — the durable "needs your
@@ -53048,10 +53055,16 @@ def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
 
 def _require_booking_edit(user: Dict[str, Any]) -> None:
     """Booking creation is shared by the client self-booking flow AND staff —
-    only staff (role == 'admin') are gated by the booking_edit permission;
-    a client booking their own dog is governed entirely by the existing
-    ownership check, never by this matrix."""
-    if user.get("role") == "admin" and not _perms_for(user).get("booking_edit"):
+    every STAFF account (admin or employee) is gated by the booking_edit
+    permission; a client booking their own dog is governed entirely by the
+    existing ownership check, never by this matrix.
+
+    Audit (2026-10-09): this used to check `role == "admin"` only, so a
+    `role: employee` account (front desk, trainer, any non-admin staff) sailed
+    through regardless of what the owner's Permission Matrix said — the exact
+    class of bug audit #6 already fixed for cancelling a booking. Checking
+    "not a client" instead of "is an admin" closes it for every staff role."""
+    if user.get("role") != "client" and not _perms_for(user).get("booking_edit"):
         raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
 
 

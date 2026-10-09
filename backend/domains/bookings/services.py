@@ -35,8 +35,16 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
 
     Clients must land on an exact catalog service. Legacy/category-only calls
     are safely mapped only when there is one unambiguous active default/base
-    service. Admins may still create a broad historical/manual booking.
+    service. Staff (admin or employee) may still create a broad
+    historical/manual booking — same class of bug as _require_booking_edit:
+    this used to check role == "admin" only, so a role: employee account
+    (front desk, trainer, any non-admin staff — even a manager) got the
+    client-only "can't be booked online" refusal on a walk-in/manual booking
+    whenever the catalog had no single unambiguous default service, even
+    though _require_booking_edit already gates which staff may create a
+    booking at all.
     """
+    is_staff = user.get("role") in ("admin", "employee")
     if body.service_id:
         selected = await _db.services.find_one({"id": body.service_id}, {"_id": 0})
         if not selected or selected.get("active") is False:
@@ -67,8 +75,8 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
         {"_id": 0},
     ).sort([("is_default", -1), ("name", 1)]).to_list(50)
 
-    # Admins retain a deliberate manual fallback for historical cleanup.
-    if user.get("role") == "admin":
+    # Staff retain a deliberate manual fallback for historical cleanup.
+    if is_staff:
         if len(candidates) == 1:
             body.service_id = candidates[0].get("id")
             return await _apply_booking_service_rules_fn(_db, body, candidates[0])
