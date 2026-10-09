@@ -14,6 +14,31 @@ const fmtCredits = (n) => {
   return Number.isInteger(val) ? String(val) : val.toFixed(1);
 };
 
+// Real dog photo, with a never-broken fallback. GET /dogs/options deliberately
+// omits photo/photos (keeps the search list light); this only ever receives a
+// photo once one has been fetched for a dog actually on screen.
+function DogAvatarImg({ photo, name, sizeClass }) {
+  const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  if (photo) {
+    return <img src={photo} alt={name || "Dog"} className={`${sizeClass} rounded-full object-cover border border-shBorder shrink-0`} />;
+  }
+  return (
+    <div className={`${sizeClass} rounded-full bg-shPrimary/20 text-shPrimary font-black grid place-items-center border border-shBorder shrink-0`}>
+      {initial}
+    </div>
+  );
+}
+
+// Numbered step header for the restyled left-column layout ("Option D").
+function StepLabel({ n, text }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="w-6 h-6 rounded-full bg-shPrimary text-bgHeader font-black text-[12px] grid place-items-center shrink-0">{n}</span>
+      <span className="text-[13px] font-black text-shText uppercase tracking-widest">{text}</span>
+    </div>
+  );
+}
+
 export const addDaysISO = (iso, days) => {
   if (!iso || !Number(days)) return "";
   const d = new Date(`${iso}T12:00:00`);
@@ -302,6 +327,17 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     updateExtraDog(idx, { addon_service_ids: next });
   };
 
+  // Real dog photos (the one new feature besides the restyle). Cached per
+  // dog_id with a ref so switching back to an already-fetched dog never
+  // re-hits the network.
+  const [dogPhotos, setDogPhotos] = useState({});
+  const fetchedPhotoIdsRef = useRef(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(() => () => { unmountedRef.current = true; }, []);
+  // Quick Check-in Step 1 "search-first" dog picker (local UI state only).
+  const [dogSearchOpen, setDogSearchOpen] = useState(false);
+  const [dogSearchQuery, setDogSearchQuery] = useState("");
+
   useEffect(() => {
     (async () => {
       try {
@@ -412,6 +448,48 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       ownerLabel: clientMap[d.owner_id]?.name || "—",
     }));
   }, [dogs, clients]);
+
+  // Step 1 search filter — name, breed, or owner name.
+  const filteredDogs = useMemo(() => {
+    const q = dogSearchQuery.trim().toLowerCase();
+    if (!q) return allDogsSorted;
+    return allDogsSorted.filter(d =>
+      (d.name || "").toLowerCase().includes(q)
+      || (d.breed || "").toLowerCase().includes(q)
+      || (d.ownerLabel || "").toLowerCase().includes(q)
+    );
+  }, [allDogsSorted, dogSearchQuery]);
+
+  // Lazily fetch the real photo for any dog actually on screen (the primary
+  // dog, plus any extra/friend dogs in a group booking). The capped
+  // /dogs/options list never carries photo data (see routes.py projection) —
+  // GET /dogs/{id} does, and this file already uses that exact backfill call
+  // elsewhere. A dog row already carrying a `photo` key (e.g. backfilled at
+  // load, or handed back by WalkInModal) is used as-is, no extra request.
+  // Guarded only against real unmount — NOT against this effect's own deps
+  // changing (extraDogs gets a fresh [] identity on an unrelated client
+  // change, which must never cancel an already-in-flight photo fetch).
+  useEffect(() => {
+    const ids = [...new Set([dogId, ...extraDogs.map(e => e.dog_id)].filter(Boolean))];
+    const need = ids.filter(id => !fetchedPhotoIdsRef.current.has(id));
+    if (!need.length) return;
+    need.forEach(id => fetchedPhotoIdsRef.current.add(id));
+    (async () => {
+      for (const id of need) {
+        const row = dogs.find(d => d.id === id);
+        if (row && Object.prototype.hasOwnProperty.call(row, "photo")) {
+          if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: row.photo || "" }));
+          continue;
+        }
+        try {
+          const { data } = await api.get(`/dogs/${id}`);
+          if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: data?.photo || "" }));
+        } catch {
+          if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: "" }));
+        }
+      }
+    })();
+  }, [dogId, extraDogs, dogs]);
 
   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
   // Friends & family: the families with a dog on this booking, and who pays
@@ -857,9 +935,24 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     setSaving(false);
   };
 
+  // Shared by the Step 2 service tiles — identical to the old dropdown's
+  // onChange, just callable from a click instead of a select's change event.
+  const selectServiceById = (id) => {
+    const svc = catalogServices.find(s => s.id === id);
+    serviceTouchedRef.current = true;
+    setServiceId(id);
+    if (svc) {
+      setServiceType(svc.service_type);
+      if (svc.service_type === "grooming") {
+        const marker = `${svc.slug || ""} ${svc.name || ""}`.toLowerCase();
+        setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-2 sm:p-4 z-50" data-testid="admin-booking-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto overflow-x-hidden animate-slide-in sh-modal-surface">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-5xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto overflow-x-hidden animate-slide-in sh-modal-surface">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
@@ -868,106 +961,149 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl" /></button>
         </div>
 
-        <div className="space-y-4">
-          {isQuickCheckin ? (
-            // Quick Check-in: dog-first selection. Searching/finding a dog is
-            // faster than narrowing by client at drop-off time.
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                <select value={dogId}
-                        onChange={(e)=>{
-                          const id = e.target.value;
-                          setDogId(id);
-                          const dog = allDogsSorted.find(d => d.id === id);
-                          if (dog) setClientId(dog.owner_id);
-                        }}
-                        data-testid="ab-dog"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  {allDogsSorted.length === 0 && <option value="">No dogs on file</option>}
-                  {allDogsSorted.map(d => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} ({d.breed || "—"}) — {d.ownerLabel}
-                    </option>
-                  ))}
-                </select>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6 items-start">
+        <div className="space-y-5 min-w-0">
+
+          {/* STEP 1 — Select Dog */}
+          <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4">
+            <StepLabel n={1} text="Select Dog" />
+            {isQuickCheckin ? (
+              // Quick Check-in: search-first dog picker. Searching/finding a
+              // dog is faster than narrowing by client at drop-off time.
+              <div data-testid="ab-dog">
+                {(dogSearchOpen || !dogId) ? (
+                  <div data-testid="ab-dog-search">
+                    <div className="relative">
+                      <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-sm" />
+                      <input
+                        type="text"
+                        value={dogSearchQuery}
+                        onChange={(e) => setDogSearchQuery(e.target.value)}
+                        placeholder="Search by dog name or client name…"
+                        data-testid="ab-dog-search-input"
+                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-xl pl-9 pr-3 py-3 text-shText text-sm focus:border-shPrimary outline-none"
+                      />
+                    </div>
+                    <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-shBorder divide-y divide-shBorder" data-testid="ab-dog-results">
+                      {filteredDogs.length === 0 && (
+                        <div className="p-4 text-[13px] text-shTextMuted font-black uppercase tracking-widest">
+                          {allDogsSorted.length === 0 ? "No dogs on file" : "No matches"}
+                        </div>
+                      )}
+                      {filteredDogs.map(d => (
+                        <button key={d.id} type="button"
+                                onClick={() => {
+                                  setDogId(d.id);
+                                  setClientId(d.owner_id);
+                                  setDogSearchOpen(false);
+                                  setDogSearchQuery("");
+                                }}
+                                data-testid={`ab-dog-result-${d.id}`}
+                                className="w-full flex items-center gap-3 p-3 min-h-[60px] text-left hover:bg-shPrimary/10 transition">
+                          <DogAvatarImg photo={dogPhotos[d.id]} name={d.name} sizeClass="w-11 h-11 text-[15px]" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[15px] font-black text-shText truncate">{d.name}</div>
+                            <div className="text-[12.5px] text-shTextMuted truncate">{d.breed || "—"} · {d.ownerLabel}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 bg-[var(--sh-card-base)]/60 border border-shBorder rounded-xl p-3" data-testid="ab-dog-selected-card">
+                    <DogAvatarImg photo={dogPhotos[dogId]} name={selectedDog?.name} sizeClass="w-14 h-14 text-[18px]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[16px] font-black text-shText truncate">{selectedDog?.name || "—"}</div>
+                      <div className="text-[13px] text-shTextMuted truncate">{selectedDog?.breed || "—"} · {clients.find(c => c.id === clientId)?.name || "—"}</div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-[12px] text-shPrimary font-black uppercase tracking-widest">
+                          {clients.find(c => c.id === clientId)?.credits ?? 0} credits
+                        </span>
+                        {selectedDog && (
+                          <span className={`text-[11px] font-black uppercase tracking-widest ${rabiesOk ? "text-shPrimary" : "text-red-400"}`}>
+                            <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-1`}/>
+                            {rabiesOk ? "Rabies OK" : (rabies ? "Rabies expired" : "Rabies missing")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setDogSearchOpen(true)} data-testid="ab-dog-change"
+                            className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80 whitespace-nowrap">
+                      Change Dog
+                    </button>
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
-                <div className="w-full mt-1 bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-2 text-shText text-sm flex items-center justify-between" data-testid="ab-client-readout">
-                  <span>{clients.find(c => c.id === clientId)?.name || "—"}</span>
-                  <span className="text-[13px] text-shPrimary font-black uppercase tracking-widest">
-                    {clients.find(c => c.id === clientId)?.credits ?? 0} credits
-                  </span>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
+                    <button type="button" onClick={()=>setWalkInOpen(true)} data-testid="ab-new-walk-in"
+                            className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:opacity-80">
+                      <i className="fas fa-plus mr-1"/>New walk-in
+                    </button>
+                  </div>
+                  <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
+                          className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
+                  <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
+                          className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                    {clientDogs.length === 0 && <option value="">No dogs on file</option>}
+                    {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
+                  </select>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
-                  <button type="button" onClick={()=>setWalkInOpen(true)} data-testid="ab-new-walk-in"
-                          className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:opacity-80">
-                    <i className="fas fa-plus mr-1"/>New walk-in
-                  </button>
-                </div>
-                <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
-                </select>
+            )}
+
+            {selectedDog && (
+              <div className={`mt-3 text-[14px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shPrimary/10 text-shPrimary" : "bg-red-500/15 text-red-400"}`}>
+                <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-2`} />
+                Rabies: {rabiesOk ? `Valid through ${rabies}` : (rabies ? `Expired ${rabies}` : "Missing")}
               </div>
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  {clientDogs.length === 0 && <option value="">No dogs on file</option>}
-                  {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
-                </select>
+            )}
+
+            {conflicts.length > 0 && (
+              <div className="mt-3 text-[14px] font-black uppercase tracking-widest rounded p-3 bg-shAccent/15 text-shAccent border border-shAccent/40" data-testid="booking-conflicts">
+                <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
+                <ul className="mt-2 ml-5 list-disc space-y-1">
+                  {conflicts.map(c => <li key={c.id}>{c.service_type} ({c.status}) — {c.date}{c.end_date && c.end_date!==c.date?` → ${c.end_date}`:""}</li>)}
+                </ul>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          {selectedDog && (
-            <div className={`text-[14px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shPrimary/10 text-shPrimary" : "bg-red-500/15 text-red-400"}`}>
-              <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-2`} />
-              Rabies: {rabiesOk ? `Valid through ${rabies}` : (rabies ? `Expired ${rabies}` : "Missing")}
-            </div>
-          )}
-
-          {conflicts.length > 0 && (
-            <div className="text-[14px] font-black uppercase tracking-widest rounded p-3 bg-shAccent/15 text-shAccent border border-shAccent/40" data-testid="booking-conflicts">
-              <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
-              <ul className="mt-2 ml-5 list-disc space-y-1">
-                {conflicts.map(c => <li key={c.id}>{c.service_type} ({c.status}) — {c.date}{c.end_date && c.end_date!==c.date?` → ${c.end_date}`:""}</li>)}
-              </ul>
-            </div>
-          )}
-
-          <div>
-            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Exact Service</label>
-            <select value={serviceId} onChange={(e) => {
-                      const id = e.target.value;
-                      const svc = catalogServices.find(s => s.id === id);
-                      serviceTouchedRef.current = true;
-                      setServiceId(id);
-                      if (svc) {
-                        setServiceType(svc.service_type);
-                        if (svc.service_type === "grooming") {
-                          const marker = `${svc.slug || ""} ${svc.name || ""}`.toLowerCase();
-                          setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
-                        }
-                      }
-                    }}
-                    disabled={isEdit}
-                    data-testid="ab-service-id"
-                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              {!serviceId && <option value="">Choose a service</option>}
+          {/* STEP 2 — Service */}
+          <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4">
+            <StepLabel n={2} text="Service" />
+            <div data-testid="ab-service-id" className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {catalogServices
                 .slice()
                 .sort((a,b) => String(a.service_type).localeCompare(String(b.service_type)) || String(a.name).localeCompare(String(b.name)))
-                .map(s => <option key={s.id} value={s.id}>{serviceOptionLabel(s, clientServicePrices)}</option>)}
-            </select>
+                .map(s => {
+                  const picked = serviceId === s.id;
+                  return (
+                    <button key={s.id} type="button"
+                            onClick={() => { if (!isEdit) selectServiceById(s.id); }}
+                            disabled={isEdit}
+                            data-testid={`ab-service-tile-${s.id}`}
+                            className={`text-left p-3 rounded-lg border transition ${picked ? "bg-shPrimary/15 border-shPrimary/60 shadow" : "bg-[var(--sh-card-base)]/40 border-shBorder hover:border-shPrimary/40"} ${isEdit ? "opacity-60 cursor-not-allowed" : ""}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[14px] font-black text-shText truncate">{s.name}</span>
+                        {picked && <i className="fas fa-check-circle text-shPrimary"/>}
+                      </div>
+                      <div className="text-[12px] text-shTextMuted mt-0.5">{serviceOptionLabel(s, clientServicePrices)}</div>
+                    </button>
+                  );
+                })}
+              {catalogServices.length === 0 && (
+                <div className="text-[13px] text-shTextMuted">No services configured.</div>
+              )}
+            </div>
             <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
             {isBoardTrainStay && (
               <div className="mt-2 rounded border border-shPrimary/40 bg-shPrimary/10 p-2" data-testid="ab-board-train-stay">
@@ -1046,7 +1182,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           </div>
 
           {serviceType === "grooming" && !serviceId && !isEdit && (
-            <div data-testid="ab-grooming-types">
+            <div data-testid="ab-grooming-types" className="mt-3">
               <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">Grooming Service</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
                 {[
@@ -1062,98 +1198,100 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
-          {!isEdit && !isDateSpanService && (
-            <label className="flex items-center gap-3 cursor-pointer bg-shPrimary/5 border border-shPrimary/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
-              <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
-                     data-testid="ab-multidate-toggle"
-                     className="accent-shPrimary w-4 h-4" />
-              <span className="text-[14px] font-black uppercase tracking-widest text-shPrimary">
-                <i className="fas fa-calendar-days mr-2"/>Book multiple specific days
-              </span>
-              {isMultiDate && multiDates.length > 0 && (
-                <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-shText bg-shPrimary/20 px-2 py-0.5 rounded">
-                  {multiDates.length} picked
+          {/* STEP 3 — Date */}
+          <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4 space-y-3">
+            <StepLabel n={3} text="Date" />
+            {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
+            {!isEdit && !isDateSpanService && (
+              <label className="flex items-center gap-3 cursor-pointer bg-shPrimary/5 border border-shPrimary/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
+                <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
+                       data-testid="ab-multidate-toggle"
+                       className="accent-shPrimary w-4 h-4" />
+                <span className="text-[14px] font-black uppercase tracking-widest text-shPrimary">
+                  <i className="fas fa-calendar-days mr-2"/>Book multiple specific days
                 </span>
-              )}
-            </label>
-          )}
-
-          {isMultiDate && !isEdit ? (
-            <div data-testid="ab-multidate-section">
-              <MultiDatePicker
-                value={multiDates}
-                onChange={setMultiDates}
-                closedDates={closedDates}
-                testid="ab-multidate"
-              />
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isDateSpanService?"Drop-off Date":"Date"}</label>
-                <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
-                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
-              </div>
-              {isDateSpanService && (
-                <div>
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isBoardTrainStay ? "Program Pickup Date" : "Pickup Date"}</label>
-                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} readOnly={isBoardTrainStay} data-testid="ab-end-date"
-                         className={`w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs ${isBoardTrainStay ? "opacity-80 cursor-not-allowed" : ""}`} style={{colorScheme:"dark"}} />
-                  {isBoardTrainStay && (
-                    <p className="text-[12px] text-shPrimary font-black uppercase tracking-widest mt-1" data-testid="ab-board-train-duration">
-                      <i className="fas fa-house-chimney mr-1"/>{boardTrainSchedule.program?.format?.unit?.toLowerCase().startsWith("week")
-                    ? `${boardTrainSchedule.program?.format?.count} week${Number(boardTrainSchedule.program?.format?.count) === 1 ? "" : "s"}`
-                    : `${boardTrainDurationDays} days`} residential stay · set by Program Studio
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {serviceType === "boarding" && kennels.length > 0 && (
-            <div>
-              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Kennel / Room (optional)</label>
-              <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
-                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                <option value="">— Unassigned —</option>
-                {kennels.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
-            </div>
-          )}
-
-          {["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (
-            <div>
-              <label className="text-[14px] font-black text-shAccent uppercase tracking-widest">
-                <i className="fas fa-clock mr-2"/>Appointment Time
+                {isMultiDate && multiDates.length > 0 && (
+                  <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-shText bg-shPrimary/20 px-2 py-0.5 rounded">
+                    {multiDates.length} picked
+                  </span>
+                )}
               </label>
-              <input type="time" value={appointmentTime}
-                     onChange={(e)=>setAppointmentTime(e.target.value)}
-                     data-testid="ab-appointment-time"
-                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shAccent/40 rounded p-2 text-shText text-xs focus:border-shAccent outline-none"
-                     style={{colorScheme:"dark"}} />
-              <p className="text-[13px] text-shTextMuted normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Drop-off Time (optional)</label>
-                <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
-                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
-              </div>
-              <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Time (optional)</label>
-                <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
-                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
-              </div>
-            </div>
-          )}
+            )}
 
-          <div>
-            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Notes (optional)</label>
-            <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} placeholder="Special instructions, food, meds…"
-                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none" />
+            {isMultiDate && !isEdit ? (
+              <div data-testid="ab-multidate-section">
+                <MultiDatePicker
+                  value={multiDates}
+                  onChange={setMultiDates}
+                  closedDates={closedDates}
+                  testid="ab-multidate"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isDateSpanService?"Drop-off Date":"Date"}</label>
+                  <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
+                </div>
+                {isDateSpanService && (
+                  <div>
+                    <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isBoardTrainStay ? "Program Pickup Date" : "Pickup Date"}</label>
+                    <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} readOnly={isBoardTrainStay} data-testid="ab-end-date"
+                           className={`w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs ${isBoardTrainStay ? "opacity-80 cursor-not-allowed" : ""}`} style={{colorScheme:"dark"}} />
+                    {isBoardTrainStay && (
+                      <p className="text-[12px] text-shPrimary font-black uppercase tracking-widest mt-1" data-testid="ab-board-train-duration">
+                        <i className="fas fa-house-chimney mr-1"/>{boardTrainSchedule.program?.format?.unit?.toLowerCase().startsWith("week")
+                      ? `${boardTrainSchedule.program?.format?.count} week${Number(boardTrainSchedule.program?.format?.count) === 1 ? "" : "s"}`
+                      : `${boardTrainDurationDays} days`} residential stay · set by Program Studio
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {serviceType === "boarding" && kennels.length > 0 && (
+              <div>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Kennel / Room (optional)</label>
+                <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                  <option value="">— Unassigned —</option>
+                  {kennels.map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* STEP 4 — Times */}
+          <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4">
+            <StepLabel n={4} text="Times" />
+            {["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (
+              <div>
+                <label className="text-[14px] font-black text-shAccent uppercase tracking-widest">
+                  <i className="fas fa-clock mr-2"/>Appointment Time
+                </label>
+                <input type="time" value={appointmentTime}
+                       onChange={(e)=>setAppointmentTime(e.target.value)}
+                       data-testid="ab-appointment-time"
+                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shAccent/40 rounded p-2 text-shText text-xs focus:border-shAccent outline-none"
+                       style={{colorScheme:"dark"}} />
+                <p className="text-[13px] text-shTextMuted normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Drop-off Time (optional)</label>
+                  <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
+                </div>
+                <div>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Time (optional)</label>
+                  <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Sprint 110di-38 — Multi-dog group booking (admin). Shown only
@@ -1293,7 +1431,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               Tile-style multi-select so admins can quickly tack on a nail
               trim, bath, etc. at booking time. */}
           {!isEdit && eligibleAddons.length > 0 && (
-            <div data-testid="booking-addons-picker">
+            <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4" data-testid="booking-addons-picker">
+              <StepLabel n={5} text="Add-ons" />
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
                   <i className="fas fa-plus-circle mr-1"/>
@@ -1347,6 +1486,49 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               </div>
             </div>
           )}
+
+          {/* STEP 6 — Notes */}
+          <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-2xl p-4">
+            <StepLabel n={6} text="Notes" />
+            <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} placeholder="Special instructions, food, meds…"
+                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none" />
+          </div>
+
+          <div className="border-t border-shBorder pt-4 space-y-3">
+            {!isMultiDate && (
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shPrimary w-4 h-4" />
+                <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-clock-rotate-left mr-2 text-shPrimary"/>Check in immediately (stamps arrival time)</span>
+              </label>
+            )}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shAccent w-4 h-4" />
+              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-shield-virus mr-2 text-shAccent"/>Override vaccine requirements (admin override)</span>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" checked={overrideCapacity} onChange={(e)=>setOverrideCapacity(e.target.checked)} data-testid="ab-override-cap" className="accent-shAccent w-4 h-4" />
+              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-warehouse mr-2 text-shAccent"/>Override capacity limit</span>
+            </label>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN — Booking summary. Live-bound to the SAME quoteSummary
+            state the left column computes; nothing here re-derives a price. */}
+        <div className="lg:sticky lg:top-4 space-y-4">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-3" data-testid="ab-booking-summary">
+            <p className="text-[13px] font-black text-shPrimary uppercase tracking-widest"><i className="fas fa-clipboard-list mr-2"/>Booking Summary</p>
+            {selectedDog ? (
+              <div className="flex items-center gap-3">
+                <DogAvatarImg photo={dogPhotos[dogId]} name={selectedDog.name} sizeClass="w-10 h-10 text-[13px]" />
+                <div className="min-w-0">
+                  <div className="text-[14px] font-black text-shText truncate">{selectedDog.name}</div>
+                  <div className="text-[12px] text-shTextMuted truncate">{clients.find(c => c.id === clientId)?.name || "—"}</div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[12px] text-shTextMuted">No dog selected yet.</p>
+            )}
+          </div>
 
           {!isEdit && (
             <div className="bg-[var(--sh-card-base)] border border-shPrimary/30 rounded-lg p-4 space-y-3" data-testid="admin-booking-estimate">
@@ -1456,23 +1638,6 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          <div className="border-t border-shBorder pt-4 space-y-3">
-            {!isMultiDate && (
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shPrimary w-4 h-4" />
-                <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-clock-rotate-left mr-2 text-shPrimary"/>Check in immediately (stamps arrival time)</span>
-              </label>
-            )}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shAccent w-4 h-4" />
-              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-shield-virus mr-2 text-shAccent"/>Override vaccine requirements (admin override)</span>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={overrideCapacity} onChange={(e)=>setOverrideCapacity(e.target.checked)} data-testid="ab-override-cap" className="accent-shAccent w-4 h-4" />
-              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-warehouse mr-2 text-shAccent"/>Override capacity limit</span>
-            </label>
-          </div>
-
           {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
           <div className="flex justify-end gap-3 pt-2">
@@ -1491,6 +1656,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </button>
           </div>
         </div>
+      </div>
       </div>
 
       {walkInOpen && (
