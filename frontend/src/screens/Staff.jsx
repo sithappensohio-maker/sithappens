@@ -532,7 +532,7 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-2 sm:p-6" onClick={onClose}>
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-t-2xl sm:rounded-2xl max-w-md w-full p-5 space-y-3" onClick={e=>e.stopPropagation()} data-testid="emp-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-t-2xl sm:rounded-2xl max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()} data-testid="emp-modal">
         <div className="flex items-center justify-between">
           <h3 className="text-shText font-black uppercase italic tracking-tight">{title}</h3>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
