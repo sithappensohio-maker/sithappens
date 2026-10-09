@@ -58,6 +58,7 @@ export default function RolesPanel() {
   const [open, setOpen] = useState(true);
   const [showMatrix, setShowMatrix] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [overridesOpenFor, setOverridesOpenFor] = useState(() => new Set());
 
   // Security checkpoint — editing/viewing the role-permission matrix
   // (GET/PUT /staff/roles*, PUT /staff/{id}/role) is now owner-only on the
@@ -87,6 +88,34 @@ export default function RolesPanel() {
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
 
+  const toggleOverridesFor = (empId) => {
+    setOverridesOpenFor(prev => {
+      const next = new Set(prev);
+      if (next.has(empId)) next.delete(empId); else next.add(empId);
+      return next;
+    });
+  };
+
+  const setPermissionOverride = async (emp, key, checked) => {
+    const roleDefault = !!matrix.matrix[emp.staff_role || "read_only"]?.[key];
+    const next = { ...(emp.permission_overrides || {}) };
+    if (checked === roleDefault) delete next[key];
+    else next[key] = checked;
+    try {
+      await api.put(`/staff/${emp.id}/permission-overrides`, { overrides: next });
+      toast.success("Permission updated");
+      load();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
+  const resetOverrides = async (emp) => {
+    try {
+      await api.put(`/staff/${emp.id}/permission-overrides`, { overrides: {} });
+      toast.success("Reset to role defaults");
+      load();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
   if (loading) return null;
 
   return (
@@ -111,32 +140,74 @@ export default function RolesPanel() {
           ) : (
             <div className="space-y-2" data-testid="roles-employee-list">
               {employees.map(emp => (
-                <div key={emp.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-center gap-3 flex-wrap"
-                     data-testid={`role-row-${emp.id}`}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-shText font-black uppercase tracking-tight">
-                      {emp.display_name || emp.name}
-                      {emp.is_owner && <span className="text-[10px] font-black text-shPrimary uppercase tracking-widest ml-2">Owner</span>}
-                    </p>
-                    <p className="text-[12px] text-shTextMuted truncate">{emp.email}</p>
+                <div key={emp.id}>
+                  <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-center gap-3 flex-wrap"
+                       data-testid={`role-row-${emp.id}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-shText font-black uppercase tracking-tight">
+                        {emp.display_name || emp.name}
+                        {emp.is_owner && <span className="text-[10px] font-black text-shPrimary uppercase tracking-widest ml-2">Owner</span>}
+                      </p>
+                      <p className="text-[12px] text-shTextMuted truncate">{emp.email}</p>
+                    </div>
+                    {matrix ? (
+                      <select value={emp.staff_role || "read_only"}
+                              onChange={(e)=>setRole(emp.id, e.target.value)}
+                              disabled={emp.is_owner}
+                              data-testid={`role-select-${emp.id}`}
+                              className={`bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-black uppercase tracking-widest ${emp.is_owner?"opacity-50 cursor-not-allowed":""}`}>
+                        {matrix.roles.filter(r => r !== "owner" || emp.is_owner).map(r => (
+                          <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      // Non-owner viewer — role assignment is owner-only on the
+                      // backend, so show the current role read-only instead of
+                      // a control that would just 403 on change.
+                      <span className="text-shTextMuted text-sm font-black uppercase tracking-widest px-2" data-testid={`role-readonly-${emp.id}`}>
+                        {ROLE_LABELS[emp.staff_role || "read_only"] || emp.staff_role}
+                      </span>
+                    )}
+                    {matrix && !emp.is_owner && (
+                      <button onClick={()=>toggleOverridesFor(emp.id)}
+                              data-testid={`toggle-overrides-${emp.id}`}
+                              className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80 px-2">
+                        {Object.keys(emp.permission_overrides || {}).length === 0
+                          ? "Extra permissions"
+                          : `${Object.keys(emp.permission_overrides).length} extra`}
+                      </button>
+                    )}
                   </div>
-                  {matrix ? (
-                    <select value={emp.staff_role || "read_only"}
-                            onChange={(e)=>setRole(emp.id, e.target.value)}
-                            disabled={emp.is_owner}
-                            data-testid={`role-select-${emp.id}`}
-                            className={`bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-black uppercase tracking-widest ${emp.is_owner?"opacity-50 cursor-not-allowed":""}`}>
-                      {matrix.roles.filter(r => r !== "owner" || emp.is_owner).map(r => (
-                        <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    // Non-owner viewer — role assignment is owner-only on the
-                    // backend, so show the current role read-only instead of
-                    // a control that would just 403 on change.
-                    <span className="text-shTextMuted text-sm font-black uppercase tracking-widest px-2" data-testid={`role-readonly-${emp.id}`}>
-                      {ROLE_LABELS[emp.staff_role || "read_only"] || emp.staff_role}
-                    </span>
+
+                  {matrix && !emp.is_owner && overridesOpenFor.has(emp.id) && (
+                    <div className="bg-[var(--sh-card-base)] border border-shBorder border-t-0 rounded-b-lg p-3 -mt-1"
+                         data-testid={`overrides-panel-${emp.id}`}>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {matrix.permission_keys.map(key => {
+                          const roleDefault = !!matrix.matrix[emp.staff_role || "read_only"]?.[key];
+                          const isOverridden = Object.prototype.hasOwnProperty.call(emp.permission_overrides || {}, key);
+                          const value = isOverridden ? !!emp.permission_overrides[key] : roleDefault;
+                          return (
+                            <label key={key} data-testid={`override-${emp.id}-${key}`}
+                                   className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide">
+                              <input type="checkbox" checked={value}
+                                     onChange={(e)=>setPermissionOverride(emp, key, e.target.checked)} />
+                              <span className={isOverridden ? "text-shPrimary" : "text-shTextMuted"}>
+                                {PERM_LABELS[key] || key}
+                                {isOverridden && <span className="ml-1 text-[9px] text-shSecondary">(custom)</span>}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {Object.keys(emp.permission_overrides || {}).length > 0 && (
+                        <button onClick={()=>resetOverrides(emp)}
+                                data-testid={`reset-overrides-${emp.id}`}
+                                className="mt-3 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80">
+                          Reset to role defaults
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

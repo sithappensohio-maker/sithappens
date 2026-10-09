@@ -35119,6 +35119,7 @@ class EmployeeOut(EmployeeIn):
     # Sprint 110ex — Phase 7
     staff_role: Optional[str] = None
     must_change_password: bool = False
+    permission_overrides: Optional[Dict[str, bool]] = None
 
 
 def _employee_doc_to_out(u: dict) -> dict:
@@ -35143,6 +35144,7 @@ def _employee_doc_to_out(u: dict) -> dict:
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
         "must_change_password": bool(u.get("must_change_password", False)),
+        "permission_overrides": u.get("permission_overrides") or {},
     }
 
 
@@ -53050,7 +53052,25 @@ def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
     if sr not in ROLE_PERMISSIONS:
         sr = "read_only"
     base = dict(ROLE_PERMISSIONS[sr])
-    return _apply_role_overrides(base, sr)
+    out = _apply_role_overrides(base, sr)
+    # Per-user overrides — the most specific layer, for the one-off exception
+    # (e.g. this ONE daycare_staff worker should ALSO get take_payments/
+    # sell_credits like front_desk) that doesn't justify moving the whole
+    # role, and would otherwise grant it to every daycare_staff worker via
+    # the role-matrix override above. Stacking order is role defaults ->
+    # role-matrix overrides (admin-editable per role) -> this per-user
+    # layer (admin-editable per employee), each one more specific than the
+    # last. Skipped entirely for an owner by construction: both owner
+    # early-returns above already returned before this code ever runs, so
+    # `permission_overrides` stored on an owner's own doc (if any) can never
+    # take anything away from them.
+    user_overrides = user.get("permission_overrides") or {}
+    if user_overrides:
+        out = dict(out)
+        for k in PERMISSION_KEYS:
+            if k in user_overrides:
+                out[k] = bool(user_overrides[k])
+    return out
 
 
 def _require_booking_edit(user: Dict[str, Any]) -> None:
@@ -53180,6 +53200,47 @@ async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(requ
         raise HTTPException(status_code=400, detail="Only staff accounts take a staff role.")
     await db.users.update_one({"id": user_id}, {"$set": {"staff_role": sr, "updated_at": now_iso()}})
     return {"id": user_id, "staff_role": sr, "permissions": ROLE_PERMISSIONS[sr]}
+
+
+class PermissionOverridesIn(BaseModel):
+    overrides: Dict[str, bool]
+
+
+@api.put("/staff/{user_id}/permission-overrides")
+async def set_staff_permission_overrides(user_id: str, body: PermissionOverridesIn, _: dict = Depends(require_owner)):
+    """Per-employee exceptions on top of their role — e.g. a daycare_staff
+    worker who should ALSO take payments and sell credits like Front Desk,
+    without moving their whole role (and every other daycare_staff
+    worker) to front_desk. Consulted by `_perms_for` as the last, most
+    specific layer: role defaults -> role-matrix overrides -> this.
+
+    Replaces the full override map each call — same "set" semantics as
+    `set_staff_role` / `update_role_permissions` — so the frontend sends
+    only the sparse set of keys it wants to force away from that
+    employee's role default; an empty map resets the employee to pure
+    role defaults. Unknown keys are silently dropped (same posture as
+    update_role_permissions). Owner accounts are exempt: `_perms_for`
+    already gives the owner full perms unconditionally before this layer
+    is ever consulted (lockout protection), and only `role == "employee"`
+    accounts may take an override here, matching `set_staff_role`'s own
+    guard.
+
+    Also drops the short-lived `_load_auth_user` cache entry for this user
+    (same as password reset/deactivate above) so a revoked override can't
+    keep working for a few extra seconds off a stale cached doc — the exact
+    class of staleness the audit #7 comment on `get_current_user` already
+    calls out for the role-matrix.
+    """
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "role": 1, "staff_role": 1})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if (u.get("role") or "").lower() != "employee":
+        raise HTTPException(status_code=400, detail="Only staff accounts take permission overrides.")
+    overrides = {k: bool(v) for k, v in (body.overrides or {}).items() if k in PERMISSION_KEYS}
+    await db.users.update_one({"id": user_id}, {"$set": {"permission_overrides": overrides, "updated_at": now_iso()}})
+    _invalidate_auth_user_cache(user_id)
+    u["permission_overrides"] = overrides
+    return {"id": user_id, "permission_overrides": overrides, "permissions": _perms_for(u)}
 
 
 # ────────────────────────────────────────────────────────────────────────────
