@@ -96,3 +96,14 @@ test("picking the paying family shows the friends' dogs it pays for, named as so
   expect(q("pos-client-checkin-bk-rex").textContent).toContain("Rex · Sam's dog");
   expect(q("pos-client-checkin-bk-bo")).toBeNull();
 });
+
+test("client search results show an initial-letter avatar", async () => {
+  await mount();
+  const search = q("pos-client-search");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  await act(async () => { setter.call(search, "Pat"); search.dispatchEvent(new Event("input", { bubbles: true })); });
+  await settle();
+  const avatar = q("pos-client-result-avatar-c-pat");
+  expect(avatar).not.toBeNull();
+  expect(avatar.textContent.trim()).toBe("P");
+});

@@ -1738,8 +1738,12 @@ export default function Pos({ onOpenShopManager } = {}) {
                   <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
                     {clientResults.map((c) => (
                       <button key={c.id} onClick={() => pickClient(c)}
-                              className="w-full text-left bg-[var(--sh-card-base)] hover:border-shPrimary/50 border border-shBorder rounded p-2 text-shText text-sm">
-                        {c.name} <span className="text-shTextMuted">{c.email}</span>
+                              className="w-full flex items-center gap-2 text-left bg-[var(--sh-card-base)] hover:border-shPrimary/50 border border-shBorder rounded p-2 text-shText text-sm">
+                        <span data-testid={`pos-client-result-avatar-${c.id}`}
+                              className="w-7 h-7 text-[12px] rounded-full bg-shPrimary/20 text-shPrimary font-black grid place-items-center border border-shBorder shrink-0">
+                          {(c.name || "?").trim().charAt(0).toUpperCase() || "?"}
+                        </span>
+                        <span>{c.name} <span className="text-shTextMuted">{c.email}</span></span>
                       </button>
                     ))}
                   </div>
