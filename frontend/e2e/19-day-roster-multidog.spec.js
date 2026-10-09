@@ -63,13 +63,17 @@ test("day roster quick-add books a second household dog with per-dog add-ons", a
   await cell.click({ position: { x: 20, y: 60 } });
   await page.getByTestId("day-roster-new-btn").click();
 
-  await page.getByTestId("day-roster-dog-select").selectOption(primary.id);
+  // The dog field is now a search+photo-card picker (EntitySearchPicker),
+  // not a plain <select> — open its search and tap the primary dog's card.
+  await page.getByTestId("day-roster-dog-select-change").click();
+  await page.getByTestId(`day-roster-dog-select-result-${primary.id}`).click();
   // Add-ons for the first dog.
   await page.getByTestId(`day-roster-addon-${addon.id}`).click();
   // Sibling row appears only for multi-dog households.
   await expect(page.getByTestId("day-roster-multidog")).toBeVisible();
   await page.getByTestId("day-roster-add-dog").click();
-  await page.getByTestId("day-roster-extra-dog-select-0").selectOption(sibling.id);
+  await page.getByTestId("day-roster-extra-dog-select-0-change").click();
+  await page.getByTestId(`day-roster-extra-dog-select-0-result-${sibling.id}`).click();
   await page.getByTestId(`day-roster-extra-addon-0-${addon.id}`).click();
   await expect(page.getByTestId("day-roster-group-count")).toContainText("2 dogs");
   await H.snap(page, "day-roster-multidog-form");

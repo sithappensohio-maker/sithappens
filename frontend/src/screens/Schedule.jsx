@@ -7,6 +7,7 @@ import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import BookingDetailModal from "../components/BookingDetailModal";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 
 // Sprint 110ff — toISOString() reads the date in UTC, so dragging a
 // booking to a new day could silently save it to the previous (or next)
@@ -297,6 +298,19 @@ export default function Schedule() {
     return dogs.filter(d => d.owner_id === primary.owner_id);
   }, [dogs, newBooking?.dog_id]);
 
+  // EntitySearchPicker item list + photo map for the quick-add dog picker(s).
+  // GET /dogs (unlike the lighter /dogs/options AdminBookingModal's Quick
+  // Check-in uses) already projects out only the gallery `photos` array, not
+  // the single avatar `photo` field — so every dog already on hand here
+  // carries its real photo and no lazy per-dog-id backfill is needed.
+  const dogPickerItems = useMemo(() => dogs.map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: d.breed || "—",
+    searchText: `${d.name || ""} ${d.breed || ""}`,
+  })), [dogs]);
+  const dogPhotos = useMemo(() => Object.fromEntries(dogs.map(d => [d.id, d.photo || ""])), [dogs]);
+
   const setPrimaryDog = (dogId) => {
     // A different dog may mean a different household — start extras over.
     setNewBooking({ ...newBooking, dog_id: dogId, extra_dogs: [] });
@@ -525,13 +539,18 @@ export default function Schedule() {
                   <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Quick-add for {pretty(dayOpen)}</p>
                   <div>
                     <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                    <select value={newBooking.dog_id}
-                            onChange={(e)=>setPrimaryDog(e.target.value)}
-                            data-testid="day-roster-dog-select"
-                            className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                      <option value="">— pick a dog —</option>
-                      {dogs.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
-                    </select>
+                    <div className="mt-1">
+                      <EntitySearchPicker
+                        testid="day-roster-dog-select"
+                        items={dogPickerItems}
+                        selectedId={newBooking.dog_id}
+                        onSelect={setPrimaryDog}
+                        photos={dogPhotos}
+                        searchPlaceholder="Search by dog name or breed…"
+                        noItemsLabel="No dogs on file"
+                        changeLabel="Change Dog"
+                      />
+                    </div>
                   </div>
                   <div>
                     <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Service</label>
@@ -602,18 +621,30 @@ export default function Schedule() {
                       {newBooking.extra_dogs.map((extra, idx) => {
                         const used = new Set([newBooking.dog_id, ...newBooking.extra_dogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
                         const available = householdDogs.filter(d => !used.has(d.id));
+                        const extraDogItems = available.map(d => ({
+                          id: d.id,
+                          primaryLabel: d.name,
+                          secondaryLabel: d.breed || "—",
+                          searchText: `${d.name || ""} ${d.breed || ""}`,
+                        }));
                         return (
                           <div key={idx} className="border-t border-shBorder pt-3 space-y-2" data-testid={`day-roster-extra-dog-${idx}`}>
-                            <div className="flex gap-2 items-center">
-                              <select value={extra.dog_id}
-                                      onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
-                                      data-testid={`day-roster-extra-dog-select-${idx}`}
-                                      className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                                {available.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
-                              </select>
+                            <div className="flex gap-2 items-start">
+                              <div className="flex-1 min-w-0">
+                                <EntitySearchPicker
+                                  testid={`day-roster-extra-dog-select-${idx}`}
+                                  items={extraDogItems}
+                                  selectedId={extra.dog_id}
+                                  onSelect={(id)=>updateExtraDog(idx, { dog_id: id, addon_service_ids: [] })}
+                                  photos={dogPhotos}
+                                  searchPlaceholder="Search by dog name or breed…"
+                                  noItemsLabel="No more dogs in this household"
+                                  changeLabel="Change Dog"
+                                />
+                              </div>
                               <button type="button" onClick={()=>removeExtraDog(idx)} data-testid={`day-roster-remove-dog-${idx}`}
                                       title="Remove this dog"
-                                      className="bg-red-500/15 border border-red-500/40 text-red-300 px-2.5 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition">
+                                      className="bg-red-500/15 border border-red-500/40 text-red-300 px-2.5 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition shrink-0">
                                 <i className="fas fa-times"/>
                               </button>
                             </div>
