@@ -1047,7 +1047,10 @@ function ClientPreviewTab() {
               <div className="absolute z-10 mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded shadow-lg max-h-48 overflow-y-auto">
                 {clientResults.map((c) => (
                   <button key={c.id} onClick={() => { setPreviewClient(c); setClientQuery(""); setClientResults([]); }}
-                          className="block w-full text-left px-3 py-2 text-sm text-shText hover:bg-shPrimary/10">
+                          className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm text-shText hover:bg-shPrimary/10">
+                    <div className="w-7 h-7 rounded-full bg-shPrimary/20 text-shPrimary font-black text-[12px] grid place-items-center border border-shBorder shrink-0">
+                      {(c.name || "?").trim().charAt(0).toUpperCase() || "?"}
+                    </div>
                     {c.name}
                   </button>
                 ))}
