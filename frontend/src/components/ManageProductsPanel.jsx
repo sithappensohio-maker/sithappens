@@ -15,6 +15,7 @@ import RelatedItemsEditor from "./shop/RelatedItemsEditor";
 import ShopGalleryUpload from "./ShopGalleryUpload";
 import { galleryIds as productGallery } from "../lib/shopImage";
 import ShopCategoryFields from "./ShopCategoryFields";
+import ItemThumbnail from "./ItemThumbnail";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -748,6 +749,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                       <tr key={p.id} className="border-b border-shBorder/60" data-testid={`product-row-${p.id}`}>
                         <td className={`py-2 pr-2 text-shText font-bold ${p.archived ? "" : "cursor-pointer"}`}
                             onClick={() => { if (!p.archived) openEdit(p); }}>
+                          <div className="flex items-center gap-2">
+                          <ItemThumbnail imageId={p.image_id} alt={p.name} size={40} />
+                          <span>
                           {p.name}
                           {p.sales_destination === "shopify_external" && (
                             <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shAccent/10 text-shAccent align-middle">
@@ -766,6 +770,8 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                               No tax
                             </span>
                           )}
+                          </span>
+                          </div>
                         </td>
                         <td className="py-2 pr-2 text-shTextMuted">{shopCategoryLabel(p)}</td>
                         <td className="py-2 pr-2 text-shTextMuted">{p.sales_destination === "shopify_external" ? "—" : (p.category || "—")}</td>
