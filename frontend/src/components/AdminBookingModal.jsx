@@ -334,7 +334,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [dogPhotos, setDogPhotos] = useState({});
   const fetchedPhotoIdsRef = useRef(new Set());
   const unmountedRef = useRef(false);
-  useEffect(() => () => { unmountedRef.current = true; }, []);
+  // React 18 StrictMode (frontend/src/index.js) mounts every component once,
+  // tears it down, then mounts it again, purely in dev. A ref flipped true
+  // only in the cleanup and never reset on (re)mount stays stuck true
+  // forever after that dance, silently dropping every setState this guard
+  // protects for the rest of the component's real life.
+  useEffect(() => { unmountedRef.current = false; return () => { unmountedRef.current = true; }; }, []);
 
   useEffect(() => {
     (async () => {
