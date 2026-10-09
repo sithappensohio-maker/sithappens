@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Sprint 110eq — Phase 1: Custom Intake Forms
@@ -604,6 +605,15 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
 function SendModal({ info, setInfo, clients, dogs, templates, onCancel, onConfirm }) {
   const tpl = templates.find(t => t.id === info.template_id);
   const clientDogs = dogs.filter(d => d.owner_id === info.client_id);
+  // EntitySearchPicker item list — plain data, no JSX. Clients have no
+  // stored photo field in this codebase, so no `photos` map is passed (every
+  // row/card falls back to the initial-circle).
+  const clientPickerItems = useMemo(() => clients.map(c => ({
+    id: c.id,
+    primaryLabel: c.name,
+    secondaryLabel: "",
+    searchText: c.name || "",
+  })), [clients]);
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in" data-testid="send-modal">
@@ -614,11 +624,17 @@ function SendModal({ info, setInfo, clients, dogs, templates, onCancel, onConfir
         <div className="space-y-3">
           <div>
             <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
-            <select value={info.client_id} onChange={(e)=>setInfo({ ...info, client_id: e.target.value, dog_id: "" })} data-testid="send-client"
-                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              <option value="">— Select a client —</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <div className="mt-1">
+              <EntitySearchPicker
+                testid="send-client"
+                items={clientPickerItems}
+                selectedId={info.client_id}
+                onSelect={(v)=>setInfo({ ...info, client_id: v, dog_id: "" })}
+                searchPlaceholder="Search by client name…"
+                noItemsLabel="No clients on file"
+                changeLabel="Change Client"
+              />
+            </div>
           </div>
           {info.client_id && clientDogs.length > 0 && (
             <div>
