@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -9,12 +9,19 @@ import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
 import DailyReviewQueue from "../components/DailyReviewQueue";
 import HomeworkAnalytics from "../components/HomeworkAnalytics";
 import PageHero from "../components/PageHero";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 import { todayISO } from "../lib/date";
 import { SCHOOL_HQ_TARGET_KEY } from "../lib/schoolHq";
 
 export default function Homework() {
   const [list, setList] = useState([]);
   const [dogs, setDogs] = useState([]);
+  // Owner names only, for disambiguating same-named dogs in the Custom
+  // Practice modal's Dog picker below — same approach as Incidents.jsx: an
+  // optional read (require_admin_and_permission("clients_view")), so a 403
+  // here must never break the rest of the screen; it just falls back to no
+  // owner name.
+  const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [trackerOpen, setTrackerOpen] = useState(false);
@@ -34,12 +41,13 @@ export default function Homework() {
     const params = filter === "all"
       ? { active_first: true, limit: listLimit }
       : { status: filter, limit: listLimit };
-    const [h, d, hc] = await Promise.all([
+    const [h, d, hc, c] = await Promise.all([
       api.get("/homework", { params }),
       api.get("/dogs/options"),
       api.get("/homework/counts").catch(() => ({ data: null })),
+      api.get("/clients").catch(() => ({ data: [] })),
     ]);
-    setList(h.data || []); setDogs(d.data || []);
+    setList(h.data || []); setDogs(d.data || []); setClients(c.data || []);
     if (hc.data) setAssignmentCounts({
       all: Number(hc.data.all) || 0, assigned: Number(hc.data.assigned) || 0,
       completed: Number(hc.data.completed) || 0, active: Number(hc.data.active) || 0,
@@ -82,6 +90,44 @@ export default function Homework() {
     const timer = setTimeout(() => document.querySelector(`[data-testid="hw-${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     return () => clearTimeout(timer);
   }, [list, deepLinkTarget]);
+
+  // Real dog photo for whichever dog is currently selected in the Custom
+  // Practice modal's picker, fetched lazily by id — same pattern as
+  // Incidents.jsx's dogPhotos (/dogs/options never carries a photo field;
+  // GET /dogs/{id} does).
+  const [dogPhotos, setDogPhotos] = useState({});
+  const fetchedPhotoIdsRef = useRef(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(() => () => { unmountedRef.current = true; }, []);
+  useEffect(() => {
+    const id = form.dog_id;
+    if (!open || !id || fetchedPhotoIdsRef.current.has(id)) return;
+    fetchedPhotoIdsRef.current.add(id);
+    (async () => {
+      try {
+        const { data } = await api.get(`/dogs/${id}`);
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: data?.photo || "" }));
+      } catch {
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: "" }));
+      }
+    })();
+  }, [open, form.dog_id]);
+
+  // EntitySearchPicker item list for the Dog picker below — the owner's name
+  // (and breed, when on file) rides in secondaryLabel specifically so two
+  // same-named dogs from different families are never indistinguishable (a
+  // plain <select> showed the bare name only). Same derivation as
+  // Incidents.jsx's dogPickerItems.
+  const clientsById = useMemo(() => Object.fromEntries(clients.map(c => [c.id, c])), [clients]);
+  const dogPickerItems = useMemo(() => dogs.map(d => {
+    const ownerName = clientsById[d.owner_id]?.name || "—";
+    return {
+      id: d.id,
+      primaryLabel: d.name,
+      secondaryLabel: d.breed ? `${d.breed} · ${ownerName}` : ownerName,
+      searchText: `${d.name || ""} ${d.breed || ""} ${ownerName}`,
+    };
+  }), [dogs, clientsById]);
 
   const [digestBusy, setDigestBusy] = useState(false);
   const [mondayBusy, setMondayBusy] = useState(false);
@@ -343,10 +389,18 @@ export default function Homework() {
             <div className="space-y-4">
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id:e.target.value})} data-testid="hw-dog"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
+                <div className="mt-1">
+                  <EntitySearchPicker
+                    testid="hw-dog"
+                    items={dogPickerItems}
+                    selectedId={form.dog_id}
+                    onSelect={(id) => setForm({ ...form, dog_id: id })}
+                    photos={dogPhotos}
+                    searchPlaceholder="Search by dog name or owner…"
+                    noItemsLabel="No dogs on file"
+                    changeLabel="Change Dog"
+                  />
+                </div>
               </div>
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Title</label>
