@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { todayISO, businessTimeHHMM } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import PageHero from "../components/PageHero";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 import { toast } from "sonner";
 
 const TYPES = [
@@ -48,6 +49,11 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
   const confirm = useConfirm();
   const [incidents, setIncidents] = useState([]);
   const [dogs, setDogs] = useState([]);
+  // Owner names only, for disambiguating same-named dogs in the Dog picker
+  // below — an optional read (require_admin_and_permission("clients_view"),
+  // stricter than Incidents' own "incidents" permission), so a 403 here must
+  // never break the rest of the screen: it just falls back to no owner name.
+  const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -56,10 +62,54 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
   const [filter, setFilter] = useState("all");
 
   const load = async () => {
-    const [iRes, dRes] = await Promise.all([api.get("/incidents"), api.get("/dogs")]);
-    setIncidents(iRes.data); setDogs(dRes.data);
+    const [iRes, dRes, cRes] = await Promise.all([
+      api.get("/incidents"), api.get("/dogs"),
+      api.get("/clients").catch(() => ({ data: [] })),
+    ]);
+    setIncidents(iRes.data); setDogs(dRes.data); setClients(cRes.data || []);
   };
   useEffect(() => { load(); }, []);
+
+  // Real dog photo for whichever dog is currently selected in the modal's
+  // picker, fetched lazily by id — same pattern as AdminBookingModal's
+  // dogPhotos (list payloads never carry photos; GET /dogs/{id} does).
+  const [dogPhotos, setDogPhotos] = useState({});
+  const fetchedPhotoIdsRef = useRef(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(() => () => { unmountedRef.current = true; }, []);
+  useEffect(() => {
+    const id = form.dog_id;
+    if (!open || !id || fetchedPhotoIdsRef.current.has(id)) return;
+    fetchedPhotoIdsRef.current.add(id);
+    (async () => {
+      const row = dogs.find(d => d.id === id);
+      if (row && Object.prototype.hasOwnProperty.call(row, "photo")) {
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: row.photo || "" }));
+        return;
+      }
+      try {
+        const { data } = await api.get(`/dogs/${id}`);
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: data?.photo || "" }));
+      } catch {
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: "" }));
+      }
+    })();
+  }, [open, form.dog_id, dogs]);
+
+  // EntitySearchPicker item list for the Dog picker below — the owner's
+  // name (and breed, when on file) rides in secondaryLabel specifically so
+  // two same-named dogs from different families are never indistinguishable
+  // on this safety/legal record (a plain <select> showed the bare name only).
+  const clientsById = useMemo(() => Object.fromEntries(clients.map(c => [c.id, c])), [clients]);
+  const dogPickerItems = useMemo(() => dogs.map(d => {
+    const ownerName = clientsById[d.owner_id]?.name || "—";
+    return {
+      id: d.id,
+      primaryLabel: d.name,
+      secondaryLabel: d.breed ? `${d.breed} · ${ownerName}` : ownerName,
+      searchText: `${d.name || ""} ${d.breed || ""} ${ownerName}`,
+    };
+  }), [dogs, clientsById]);
 
   const acknowledge = async (i) => {
     try {
@@ -202,10 +252,18 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
             <div className="space-y-4">
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})} data-testid="incident-dog-select"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
+                <div className="mt-1">
+                  <EntitySearchPicker
+                    testid="incident-dog-select"
+                    items={dogPickerItems}
+                    selectedId={form.dog_id}
+                    onSelect={(id) => setForm({ ...form, dog_id: id })}
+                    photos={dogPhotos}
+                    searchPlaceholder="Search by dog name or owner…"
+                    noItemsLabel="No dogs on file"
+                    changeLabel="Change Dog"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
