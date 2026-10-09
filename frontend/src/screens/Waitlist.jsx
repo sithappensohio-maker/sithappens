@@ -8,6 +8,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import { PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 
 const SERVICE_TYPES = ["daycare", "boarding", "training", "grooming"];
 
@@ -352,6 +353,18 @@ function StatusSelector({ entry, statuses, onPick }) {
 }
 
 function AddModal({ form, setForm, dogs, availability, onSave, onClose }) {
+  // EntitySearchPicker item list + photos — GET /dogs (unlike /dogs/options)
+  // is not capacity-trimmed and already carries each dog's real `photo`
+  // (only the gallery `photos` array is stripped server-side), so no lazy
+  // per-dog fetch is needed here the way AdminBookingModal needs one.
+  const dogPickerItems = useMemo(() => dogs.map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: d.client_name || "",
+    searchText: `${d.name || ""} ${d.client_name || ""}`,
+  })), [dogs]);
+  const dogPhotos = useMemo(() => Object.fromEntries(dogs.map(d => [d.id, d.photo || ""])), [dogs]);
+
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in" data-testid="waitlist-modal">
@@ -363,11 +376,18 @@ function AddModal({ form, setForm, dogs, availability, onSave, onClose }) {
         <div className="space-y-3">
           <div>
             <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-            <select value={form.dog_id} onChange={(e)=>setForm({ ...form, dog_id: e.target.value })} data-testid="waitlist-dog"
-                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              <option value="">— Pick a dog —</option>
-              {dogs.map(d => <option key={d.id} value={d.id}>{d.name} · {d.client_name || ""}</option>)}
-            </select>
+            <div className="mt-1">
+              <EntitySearchPicker
+                testid="waitlist-dog"
+                items={dogPickerItems}
+                selectedId={form.dog_id}
+                onSelect={(id) => setForm({ ...form, dog_id: id })}
+                photos={dogPhotos}
+                searchPlaceholder="Search by dog or client name…"
+                noItemsLabel="No dogs on file"
+                changeLabel="Change Dog"
+              />
+            </div>
           </div>
 
           <div>
