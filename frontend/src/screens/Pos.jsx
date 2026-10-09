@@ -217,6 +217,31 @@ export default function Pos({ onOpenShopManager } = {}) {
   );
   const visitsVisible = visitsExpanded ? visitsFiltered : visitsFiltered.slice(0, VISITS_COLLAPSED_LIMIT);
 
+  // Real dog photo per visible roster row, fetched lazily and cached by dog
+  // id — the roster poll itself (GET /employee/roster-today) deliberately
+  // never carries photos, so a 45s auto-refresh doesn't resend the same
+  // image bytes for dogs that haven't changed. Only fetches for rows
+  // actually on screen, same pattern as AdminBookingModal's dogPhotos.
+  const [dogPhotos, setDogPhotos] = useState({});
+  const fetchedPhotoIdsRef = useRef(new Set());
+  // React 18 StrictMode (frontend/src/index.js) mounts every component once,
+  // tears it down, then mounts it again, purely in dev, to surface missing
+  // cleanup. A ref flipped true ONLY in the cleanup and never reset on
+  // (re)mount stays stuck true forever after that dance, silently dropping
+  // every setState this guard protects for the rest of the component's real
+  // life — reset it on mount too, not just on unmount.
+  const unmountedRef = useRef(false);
+  useEffect(() => { unmountedRef.current = false; return () => { unmountedRef.current = true; }; }, []);
+  useEffect(() => {
+    const ids = visitsVisible.map((r) => r.dog_id).filter((id) => id && !fetchedPhotoIdsRef.current.has(id));
+    ids.forEach((id) => {
+      fetchedPhotoIdsRef.current.add(id);
+      api.get(`/dogs/${id}`)
+        .then(({ data }) => { if (!unmountedRef.current) setDogPhotos((prev) => ({ ...prev, [id]: data?.photo || "" })); })
+        .catch(() => { if (!unmountedRef.current) setDogPhotos((prev) => ({ ...prev, [id]: "" })); });
+    });
+  }, [visitsVisible]);
+
   const captureGeo = () => new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({});
     navigator.geolocation.getCurrentPosition(
@@ -1675,7 +1700,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                     <span className="block text-[13px] font-black text-shText leading-tight">{timeLabel}</span>
                     <span className="block text-[8.5px] font-black uppercase tracking-widest text-shTextMuted mt-0.5">{bucket === "expected" ? "Drop-off" : bucket === "checked_out" ? "Arrived" : "Arrived"}</span>
                   </span>
-                  <FrontDeskDogAvatar name={row.dog_name} bucket={bucket}/>
+                  <FrontDeskDogAvatar name={row.dog_name} bucket={bucket} photo={dogPhotos[row.dog_id]}/>
                   <div className="min-w-0 flex-1">
                     <p className="text-shText font-black text-[14px] leading-tight truncate">{row.dog_name}</p>
                     <p className="text-shTextMuted text-[11.5px] truncate">

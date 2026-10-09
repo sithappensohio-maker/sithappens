@@ -82,13 +82,23 @@ export function FrontDeskStatusChip({ bucket, missed = false, label }) {
   );
 }
 
-/** Branded dog avatar fallback — the roster deliberately carries no photos,
- *  so this is an honest paw-and-initial tile, never a stock image. */
-export function FrontDeskDogAvatar({ name, bucket }) {
+/** Branded dog avatar — shows the dog's real stored photo (lazily fetched
+ *  per row by Pos.jsx, since the bulk roster poll itself deliberately omits
+ *  it to stay lean on its 45s refresh cycle) when one's on file, falling
+ *  back to the honest paw-and-initial tile when it isn't. */
+export function FrontDeskDogAvatar({ name, bucket, photo }) {
   const initial = (name || "?").trim().charAt(0).toUpperCase();
   const tone = bucket === "on_site" ? "border-shSecondary/50 bg-shSecondary/10 text-shSecondary"
     : bucket === "checked_out" ? "border-shBorder/60 bg-black/20 text-shTextMuted"
     : "border-shPrimary/50 bg-shPrimary/10 text-shPrimary";
+  if (photo) {
+    return (
+      <span className={`w-11 h-11 rounded-xl border shrink-0 relative overflow-hidden ${tone}`}>
+        <img src={photo} alt={name || "Dog"} className="w-full h-full object-cover"/>
+        <span className="absolute -bottom-1 -right-1 w-4.5 h-4.5 min-w-[18px] min-h-[18px] rounded-full bg-[var(--sh-card-base)] border border-shBorder text-[9px] font-black grid place-items-center text-shText">{initial}</span>
+      </span>
+    );
+  }
   return (
     <span className={`w-11 h-11 rounded-xl border grid place-items-center shrink-0 relative ${tone}`} aria-hidden="true">
       <i className="fas fa-dog text-[15px]"/>
