@@ -30,6 +30,8 @@ import { toast } from "sonner";
 import Clients from "./Clients";
 import Incidents from "./Incidents";
 import Pipeline from "./Pipeline";
+import { RegisterTab } from "./Staff";
+import AdminBookingModal from "../components/AdminBookingModal";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -79,6 +81,15 @@ export default function EmployeePortal() {
   // Queue the owner uses, gated by the training-sessions permission from the
   // staff-role matrix — never by admin role. Front Desk does not hold that key.
   const canTraining = can("manage_training_sessions");
+  // Register access — "the ones I give access to" (owner's Permission
+  // Matrix). Reuses the EXACT same RegisterTab component AdminShell's Front
+  // Desk mounts (Staff.jsx), which already self-gates each of its own
+  // sub-tabs (New Sale / Sell Credits / Record Payment / Refund / Till
+  // Adjustments / reports) by the matching permission — this flag only
+  // decides whether the employee sees the Register nav tab at all, not
+  // which money actions inside it they can use; that's governed entirely
+  // by the matrix, same as it already is for an admin account.
+  const canRegister = can("take_payments") || can("sell_credits") || can("finance_reports") || can("delete_records");
 
   // Same render-level guard AdminShell uses: if a live permissions refresh
   // (polled every 60s in lib/auth.js) downgrades this account while it's
@@ -88,7 +99,8 @@ export default function EmployeePortal() {
     if (tab === "clients" && !canClients) setTab("clock");
     if (tab === "incidents" && !canIncidents) setTab("clock");
     if (tab === "training" && !canTraining) setTab("clock");
-  }, [tab, canClients, canIncidents, canTraining]);
+    if (tab === "register" && !canRegister) setTab("clock");
+  }, [tab, canClients, canIncidents, canTraining, canRegister]);
 
   return (
     <div className="min-h-screen bg-bgBase flex flex-col pb-safe sh-employee-portal" data-scroll-root data-testid="employee-portal">
@@ -116,6 +128,7 @@ export default function EmployeePortal() {
             { key: "clock", label: "Clock", icon: "fa-clock", testid: "emp-tab-clock" },
             ...(canTraining ? [{ key: "training", label: "Training", icon: "fa-graduation-cap", testid: "emp-tab-training", accent: "lime" }] : []),
             { key: "roster", label: "Roster", icon: "fa-paw", testid: "emp-tab-roster", accent: "cyan" },
+            ...(canRegister ? [{ key: "register", label: "Register", icon: "fa-cash-register", testid: "emp-tab-register", accent: "lime" }] : []),
             ...(canClients ? [{ key: "clients", label: "Clients", icon: "fa-users", testid: "emp-tab-clients", accent: "cyan" }] : []),
             ...(canIncidents ? [{ key: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", testid: "emp-tab-incidents", accent: "orange" }] : []),
             { key: "tasks", label: "My Tasks", icon: "fa-list-check", testid: "emp-tab-tasks" },
@@ -128,10 +141,11 @@ export default function EmployeePortal() {
         />
       </div>
 
-      <main className={`flex-1 ${tab === "training" ? "p-0 sm:p-0" : "p-3 sm:p-5"} pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents" || tab === "training") ? "max-w-6xl" : "max-w-3xl"}`}>
+      <main className={`flex-1 ${tab === "training" ? "p-0 sm:p-0" : "p-3 sm:p-5"} pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents" || tab === "training" || tab === "register") ? "max-w-6xl" : "max-w-3xl"}`}>
         {tab === "clock" && <ClockTab />}
         {tab === "training" && canTraining && <div data-testid="emp-training"><Pipeline /></div>}
         {tab === "roster" && <RosterTab />}
+        {tab === "register" && canRegister && <div data-testid="emp-register"><RegisterTab /></div>}
         {tab === "clients" && canClients && <Clients canEditClients={can("clients_edit")} />}
         {tab === "incidents" && canIncidents && <Incidents />}
         {tab === "tasks" && <MyTasksTab />}
@@ -300,7 +314,7 @@ function ClockTab() {
 function RosterTab() {
   // Cancelling a booking needs booking_edit (server rule, DELETE /bookings/{id}).
   const auth = useAuth();
-  const canCancel = !!auth?.can?.("booking_edit");
+  const canBookingEdit = !!auth?.can?.("booking_edit");
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -308,6 +322,7 @@ function RosterTab() {
   const [services, setServices] = useState([]);
   const [checkoutFor, setCheckoutFor] = useState(null); // full booking row
   const [cancelFor, setCancelFor] = useState(null);
+  const [walkInOpen, setWalkInOpen] = useState(false);
   const confirm = useConfirm();
   const load = async () => {
     // A failed refresh keeps the last list on screen (and any open checkout
@@ -369,11 +384,24 @@ function RosterTab() {
 
   return (
     <div className="space-y-3" data-testid="roster-tab">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-white font-black uppercase italic tracking-tight">Today · {date}</h3>
-        <button onClick={load} className="text-shBlue text-[13px] font-black uppercase tracking-widest" data-testid="roster-refresh">
-          <i className="fas fa-rotate mr-1"/>Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {/* A walk-in (not already on today's schedule) couldn't be
+              registered from this portal at all before — only the full
+              admin Front Desk had Quick Check-In. Same gate the Cancel
+              button below already uses, and the one POST /bookings itself
+              now enforces for every non-admin staff account. */}
+          {canBookingEdit && (
+            <button onClick={() => setWalkInOpen(true)} data-testid="roster-walkin"
+                    className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/90">
+              <i className="fas fa-plus mr-1"/>Walk-In
+            </button>
+          )}
+          <button onClick={load} className="text-shBlue text-[13px] font-black uppercase tracking-widest" data-testid="roster-refresh">
+            <i className="fas fa-rotate mr-1"/>Refresh
+          </button>
+        </div>
       </div>
       {refreshNote}
       {roster.length === 0 && (
@@ -489,9 +517,14 @@ function RosterTab() {
       {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest" data-testid="roster-err">{err}</p>}
       {reportFor && <ReportCardModal booking={reportFor} onClose={()=>{ setReportFor(null); load(); }} />}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
-                                     onRequestCancel={canCancel ? (b)=>{ setCheckoutFor(null); setCancelFor(b); } : undefined}
+                                     onRequestCancel={canBookingEdit ? (b)=>{ setCheckoutFor(null); setCancelFor(b); } : undefined}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
       {cancelFor && <CancelBookingModal booking={cancelFor} onClose={()=>{ setCancelFor(null); load(); }} />}
+      {walkInOpen && (
+        <AdminBookingModal defaultCheckIn
+                            onClose={() => setWalkInOpen(false)}
+                            onCreated={() => { setWalkInOpen(false); load(); }} />
+      )}
     </div>
   );
 }
