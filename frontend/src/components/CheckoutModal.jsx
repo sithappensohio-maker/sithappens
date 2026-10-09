@@ -33,6 +33,21 @@ const fmtBtDay = (iso) => {
     : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 };
 
+// Purely cosmetic numbered-step badge (restyle, Oct 2026 — same pattern as
+// AdminBookingModal's StepLabel). The number is whatever the caller passes;
+// sections that don't render that render pass never allocate a number, so
+// the count skips cleanly over whichever steps aren't applicable this time.
+function StepNumber({ n, tone = "blue" }) {
+  return (
+    <span
+      data-testid={`checkout-step-${n}`}
+      className={`w-6 h-6 rounded-full ${tone === "orange" ? "bg-shOrange" : "bg-shBlue"} text-bgHeader font-black text-[12px] grid place-items-center shrink-0`}
+    >
+      {n}
+    </span>
+  );
+}
+
 function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDay, onLateDayQuestion, onLateDayUndo }) {
   const promptDialog = useOptionalPromptDialog();
   // Sprint 110ao — pauses background polling while this modal is open so
@@ -1123,9 +1138,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     );
   }
 
+  // Display-only step counter for the restyled form (see StepNumber above).
+  // Plain render-scoped state, not a hook — it never participates in the
+  // rules of hooks and never influences anything the submit() payload sends.
+  let stepN = 0;
+  const step = () => ++stepN;
+
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
             <i className="fas fa-sign-out-alt text-shBlue mr-2"/>{isGroupCheckout ? `${isFF ? "Friends & Family" : "Household"} Check Out · ${groupDogNames.length} Dogs` : `Check Out · ${booking.dog_name}`}
@@ -1197,9 +1218,19 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             </p>
           </div>
         )}
+        {/* Restyle (Oct 2026): the sections below read as numbered steps,
+            left column; the running total lives in a sticky summary panel,
+            right column, bound to the SAME derived totals computed above —
+            nothing here recomputes a price. `step()` just counts whichever
+            step cards actually render this time; it is display text only. */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5 items-start">
+        <div className="space-y-5 min-w-0">
         {/* Section 1 — How to pay the base service */}
-        {!ffNoCredits && !prepaidSession && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
+        {!ffNoCredits && !prepaidSession && (<div className="border border-bgHover rounded-lg p-4 bg-bgBase">
+          <div className="flex items-center gap-2 mb-3">
+            <StepNumber n={step()} />
+            <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Base service</p>
+          </div>
           {daycarePerNight > 0 && !hadCredit && (
             <div className="mb-3" data-testid="checkout-credit-pool">
               <p className="text-[12px] text-gray-400 mb-1.5">Pay the night{Number(lateDay?.record?.nights || 1) === 1 ? "" : "s"} with:</p>
@@ -1303,9 +1334,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         {/* Section 1a½ — Boarding EARLY checkout (leaving before booked end).
             Cash path only: credit deductions stay booked-span (server-side). */}
         {earlyQuote && !(isGroupCheckout && isFF) && (!useCredits || (!hadCredit && !prepaidSession && !isGroupCheckout)) && (
-          <div className="mb-5 border border-shBlue/40 rounded-lg p-4 bg-bgBase" data-testid="checkout-early-panel">
+          <div className="border border-shBlue/40 rounded-lg p-4 bg-bgBase" data-testid="checkout-early-panel">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[13px] uppercase tracking-widest text-shBlue font-black"><i className="fas fa-person-walking-arrow-right mr-1.5"/>Checking Out Early</p>
+              <p className="text-[13px] uppercase tracking-widest text-shBlue font-black flex items-center gap-2">
+                <StepNumber n={step()} /><span><i className="fas fa-person-walking-arrow-right mr-1.5"/>Checking Out Early</span>
+              </p>
               <span className="text-[12px] text-gray-500">Booked through {earlyQuote.original_end_date}</span>
               {isGroupCheckout && !chargeFullStay && <span className="block text-[12px] text-gray-500 w-full">Each dog leaving early in this household is charged its own early price.</span>}
             </div>
@@ -1340,9 +1373,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         {/* Section 1b — Boarding stay extension (extra nights). Not for a
             daycare visit converted to boarding: it already runs to today. */}
         {isBoarding && lateDay?.resolved !== "stayed_overnight" && (
-          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
+          <div className="border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
+              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black flex items-center gap-2">
+                <StepNumber n={step()} /><span><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</span>
+              </p>
               {booking.end_date && <span className="text-[12px] text-gray-500">{booking.extra_nights?.in_stay ? "Stay ends" : "Original end"}: {booking.end_date}</span>}
             </div>
             {/* A reopened checkout keeps the nights it added in the stay's
@@ -1389,8 +1424,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         )}
 
         {/* Section 2 — Add-ons */}
-        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services{isGroupCheckout ? ` for ${booking.dog_name}` : ""} <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
+        <div className="border border-bgHover rounded-lg p-4 bg-bgBase">
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3 flex items-center gap-2">
+            <StepNumber n={step()} /><span>Add-on services{isGroupCheckout ? ` for ${booking.dog_name}` : ""} <span className="text-gray-600">(bath, nail trim, etc.)</span></span>
+          </p>
           {/* Sprint 110an — pre-attached add-ons (added at booking or check-in)
               are already on the booking and will auto-bill at checkout. Show
               them so the admin doesn't accidentally re-add them as extras. */}
@@ -1445,16 +1482,16 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             sell nothing, and an open shelf of products would push the actual
             checkout down the screen every single time. */}
         {isFF && shopItems.length > 0 && (
-          <p className="mb-5 text-[13px] text-gray-400" data-testid="checkout-ff-shop-note">
+          <p className="text-[13px] text-gray-400" data-testid="checkout-ff-shop-note">
             <i className="fas fa-shopping-basket mr-1.5"/>Selling something? Ring it up at the Register for {payerName}.
           </p>
         )}
         {shopItems.length > 0 && !isFF && (
-          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-shop">
+          <div className="border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-shop">
             <button type="button" onClick={() => setShopOpen((v) => !v)} data-testid="checkout-shop-toggle"
                     className="w-full flex items-center justify-between gap-2 text-left">
-              <span className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
-                <i className="fas fa-shopping-basket mr-1.5"/>Buying anything?
+              <span className="text-[13px] uppercase tracking-widest text-gray-500 font-black flex items-center gap-2">
+                <StepNumber n={step()} /><span><i className="fas fa-shopping-basket mr-1.5"/>Buying anything?</span>
               </span>
               <span className="text-[13px] font-black text-white/70">
                 {shopLines.length > 0 ? `$${shopTotal.toFixed(2)}` : ""}
@@ -1521,8 +1558,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         )}
 
         {/* Section 3 — Payment method + Service value */}
-        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">{isFF ? "Price" : "Payment"}</p>
+        <div className="border border-bgHover rounded-lg p-4 bg-bgBase">
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3 flex items-center gap-2">
+            <StepNumber n={step()} /><span>{isFF ? "Price" : "Payment"}</span>
+          </p>
           {/* Audit #24: asked whenever anything is paid today — the stay, or
               merchandise when credits cover the stay (it used to stay hidden
               then, and the goods were recorded as cash whatever was paid). */}
@@ -1720,11 +1759,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         </div>
 
         {/* One-time checkout discount — applies to dollars due only. */}
-        {!isFF && canPrice && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
+        {!isFF && canPrice && (<div className="border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
-              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
-                <i className="fas fa-tag text-shOrange mr-1.5"/>One-time discount
+              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black flex items-center gap-2">
+                <StepNumber n={step()} /><span><i className="fas fa-tag text-shOrange mr-1.5"/>One-time discount</span>
               </p>
               <p className="text-[12px] text-gray-500 mt-1">Reduces only the dollar amount due. Credits and credit lots stay exactly the same.</p>
             </div>
@@ -1762,8 +1801,96 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           )}
         </div>)}
 
-        {/* Total summary */}
-        <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
+        {btBlock && (
+          /* The stay cannot just be waved through, but it must not be a dead
+             end either — an owner collecting early leaves sessions that were
+             never going to happen. So instead of a red sentence, the desk is
+             asked what happened to each one. Shown retroactively: only after
+             a first submit attempt is refused for it, never as an up-front step. */
+          <div className="rounded-xl border border-shOrange/60 bg-shOrange/[0.07] p-3.5"
+               data-testid="checkout-board-train-block">
+            <p className="text-shOrange font-black uppercase tracking-widest text-[12px] flex items-center gap-2">
+              <StepNumber n={step()} tone="orange" />
+              <span>Training sessions with no record</span>
+            </p>
+            <p className="text-white/80 text-[14px] mt-1.5">
+              {btBlock.dog_name ? `${btBlock.dog_name}'s stay has ` : "This stay has "}
+              {btSessions.length} session{btSessions.length === 1 ? "" : "s"} that were never written up.
+              Say what happened to each one and the checkout can go ahead.
+            </p>
+
+            {/* The usual case is that the whole tail of the stay has the same
+                answer — the owner came early. One control for that beats
+                tapping fourteen identical ones. */}
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-[11px] font-black uppercase tracking-widest text-white/50 shrink-0">Set all</span>
+              <select value="" data-testid="checkout-bt-all"
+                      onChange={(e) => e.target.value && answerAll(e.target.value)}
+                      className="flex-1 min-w-0 min-h-[40px] rounded-lg border border-bgHover bg-bgHeader/60 px-2.5 text-[13px] font-black text-white/60 focus:outline-none focus:border-shOrange">
+                <option value="">Same answer for all {btSessions.length}…</option>
+                {btChoices.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-3 space-y-2.5 max-h-[300px] overflow-y-auto" data-testid="checkout-bt-sessions">
+              {Object.entries(btDays).map(([day, sessions]) => (
+                <div key={day}>
+                  <p className="text-[11.5px] font-black uppercase tracking-widest text-white/50">{fmtBtDay(day)}</p>
+                  {sessions.map((s) => {
+                    const key = `${s.date}|${s.slot}`;
+                    return (
+                      /* One line per session. Three buttons each would be a
+                         wall of eighty-odd controls on a fortnight's stay,
+                         and would not fit across a phone anyway. */
+                      <div key={key} className="flex items-center gap-2 mt-1.5">
+                        <span className="w-[34px] text-[13px] font-black text-white/85 shrink-0">{s.slot}</span>
+                        <select value={btAnswers[key] || ""}
+                                onChange={(e) => setBtAnswers((prev) => ({ ...prev, [key]: e.target.value }))}
+                                data-testid={`checkout-bt-session-${s.date}-${s.slot}`}
+                                className={`flex-1 min-w-0 min-h-[40px] rounded-lg border bg-bgHeader/60 px-2.5 text-[13px] font-black focus:outline-none focus:border-shOrange ${
+                                  btAnswers[key] ? "border-shOrange/70 text-white" : "border-bgHover text-white/50"}`}>
+                          <option value="">What happened?</option>
+                          {btChoices.map((c) => (
+                            <option key={c.value} value={c.value}>{c.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {btUnanswered > 0 ? (
+              <p className="text-white/55 text-[13px] mt-3" data-testid="checkout-bt-remaining">
+                {btUnanswered} still to answer.
+              </p>
+            ) : (
+              <p className="text-white/75 text-[13px] mt-3" data-testid="checkout-bt-summary">
+                {btCounts.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(" · ")}.
+                {!isFF && canPrice
+                  ? " Nothing is adjusted automatically — use the discount above if money should come off."
+                  : " Nothing is adjusted automatically."}
+              </p>
+            )}
+          </div>
+        )}
+        </div>
+
+        {/* RIGHT COLUMN — live summary panel. Sticky on desktop, like
+            AdminBookingModal's booking summary. Bound to the SAME derived
+            totals computed above (dueToday/chargedToday/etc.) — nothing
+            here recomputes a price; it only displays what Section 1-3
+            already decided, live, as the operator changes them. */}
+        <div className="lg:sticky lg:top-4 space-y-4">
+        <div className="border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-summary-panel">
+          <p className="text-[13px] uppercase tracking-widest text-shGreen font-black mb-3">
+            <i className="fas fa-receipt mr-2"/>Summary
+          </p>
+          {/* Total summary */}
+          <div className="border-t-2 border-shGreen pt-3 flex items-end justify-between">
           <div>
             <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
             {booking.preferred_rate_applied && (
@@ -1832,105 +1959,33 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             )}
           </div>
         </div>
+        </div>{/* /checkout-summary-panel */}
 
-        {err && <p className="text-red-400 text-[15px] mb-3" data-testid="checkout-error">{err}</p>}
+        {err && <p className="text-red-400 text-[15px]" data-testid="checkout-error">{err}</p>}
         {anchorGone && (
-          <p className="text-shOrange text-[14px] mb-3" data-testid="checkout-anchor-gone">
+          <p className="text-shOrange text-[14px]" data-testid="checkout-anchor-gone">
             {booking.dog_name} has already been checked out. Close this and check out
             {groupBookings.length ? ` ${groupBookings.map(b => b.dog_name).join(" + ")}` : " the other dogs"} from their own row.
           </p>
         )}
 
-        {btBlock && (
-          /* The stay cannot just be waved through, but it must not be a dead
-             end either — an owner collecting early leaves sessions that were
-             never going to happen. So instead of a red sentence, the desk is
-             asked what happened to each one. */
-          <div className="mb-4 rounded-xl border border-shOrange/60 bg-shOrange/[0.07] p-3.5"
-               data-testid="checkout-board-train-block">
-            <p className="text-shOrange font-black uppercase tracking-widest text-[12px]">
-              Training sessions with no record
-            </p>
-            <p className="text-white/80 text-[14px] mt-1.5">
-              {btBlock.dog_name ? `${btBlock.dog_name}'s stay has ` : "This stay has "}
-              {btSessions.length} session{btSessions.length === 1 ? "" : "s"} that were never written up.
-              Say what happened to each one and the checkout can go ahead.
-            </p>
-
-            {/* The usual case is that the whole tail of the stay has the same
-                answer — the owner came early. One control for that beats
-                tapping fourteen identical ones. */}
-            <div className="flex items-center gap-2 mt-3">
-              <span className="text-[11px] font-black uppercase tracking-widest text-white/50 shrink-0">Set all</span>
-              <select value="" data-testid="checkout-bt-all"
-                      onChange={(e) => e.target.value && answerAll(e.target.value)}
-                      className="flex-1 min-w-0 min-h-[40px] rounded-lg border border-bgHover bg-bgHeader/60 px-2.5 text-[13px] font-black text-white/60 focus:outline-none focus:border-shOrange">
-                <option value="">Same answer for all {btSessions.length}…</option>
-                {btChoices.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="mt-3 space-y-2.5 max-h-[300px] overflow-y-auto" data-testid="checkout-bt-sessions">
-              {Object.entries(btDays).map(([day, sessions]) => (
-                <div key={day}>
-                  <p className="text-[11.5px] font-black uppercase tracking-widest text-white/50">{fmtBtDay(day)}</p>
-                  {sessions.map((s) => {
-                    const key = `${s.date}|${s.slot}`;
-                    return (
-                      /* One line per session. Three buttons each would be a
-                         wall of eighty-odd controls on a fortnight's stay,
-                         and would not fit across a phone anyway. */
-                      <div key={key} className="flex items-center gap-2 mt-1.5">
-                        <span className="w-[34px] text-[13px] font-black text-white/85 shrink-0">{s.slot}</span>
-                        <select value={btAnswers[key] || ""}
-                                onChange={(e) => setBtAnswers((prev) => ({ ...prev, [key]: e.target.value }))}
-                                data-testid={`checkout-bt-session-${s.date}-${s.slot}`}
-                                className={`flex-1 min-w-0 min-h-[40px] rounded-lg border bg-bgHeader/60 px-2.5 text-[13px] font-black focus:outline-none focus:border-shOrange ${
-                                  btAnswers[key] ? "border-shOrange/70 text-white" : "border-bgHover text-white/50"}`}>
-                          <option value="">What happened?</option>
-                          {btChoices.map((c) => (
-                            <option key={c.value} value={c.value}>{c.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-
-            {btUnanswered > 0 ? (
-              <p className="text-white/55 text-[13px] mt-3" data-testid="checkout-bt-remaining">
-                {btUnanswered} still to answer.
-              </p>
-            ) : (
-              <p className="text-white/75 text-[13px] mt-3" data-testid="checkout-bt-summary">
-                {btCounts.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(" · ")}.
-                {!isFF && canPrice
-                  ? " Nothing is adjusted automatically — use the discount above if money should come off."
-                  : " Nothing is adjusted automatically."}
-              </p>
+        <div className="flex flex-col gap-3">
+          <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
+                  className="w-full bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+            {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
+          </button>
+          <div className="flex items-center justify-between gap-3">
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
+            {onRequestCancel && (
+              <button onClick={() => onRequestCancel(booking)} disabled={busy} data-testid="checkout-cancel-booking"
+                      className="text-red-400 font-black uppercase text-[14px] tracking-widest hover:text-red-300 disabled:opacity-50">
+                <i className="fas fa-times-circle mr-1"/>Cancel booking instead
+              </button>
             )}
           </div>
-        )}
-
-        <div className="flex items-center justify-between gap-3">
-          {onRequestCancel ? (
-            <button onClick={() => onRequestCancel(booking)} disabled={busy} data-testid="checkout-cancel-booking"
-                    className="text-red-400 font-black uppercase text-[14px] tracking-widest hover:text-red-300 disabled:opacity-50">
-              <i className="fas fa-times-circle mr-1"/>Cancel booking instead
-            </button>
-          ) : <span/>}
-          <div className="flex gap-3">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
-            <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
-                    className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
-            </button>
-          </div>
         </div>
+        </div>{/* /sticky right column */}
+        </div>{/* /grid */}
       </div>
     </div>
   );

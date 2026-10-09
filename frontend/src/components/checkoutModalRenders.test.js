@@ -138,6 +138,21 @@ test("the total is a real number, not NaN", async () => {
   expect(total.textContent).toMatch(/^\$\d+\.\d{2}$/);
 });
 
+test("the main form is organized as numbered steps with a live summary panel", async () => {
+  // Restyle (Oct 2026): the conditional sections read as numbered steps, and
+  // the running total lives in a summary panel bound to the SAME dueToday —
+  // never a second, re-derived total.
+  await mount();
+  const step1 = container.querySelector('[data-testid="checkout-step-1"]');
+  expect(step1).toBeTruthy();
+  expect(step1.textContent).toBe("1");
+  const panel = container.querySelector('[data-testid="checkout-summary-panel"]');
+  expect(panel).toBeTruthy();
+  const panelTotal = panel.querySelector('[data-testid="checkout-total"]');
+  expect(panelTotal).toBeTruthy();
+  expect(panelTotal.textContent).toBe(container.querySelector('[data-testid="checkout-total"]').textContent);
+});
+
 // ─────────────────────────────────────────────────────── the money path
 // Mounting proves it does not crash. These prove it charges the right amount
 // and asks the server for the right thing.

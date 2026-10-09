@@ -70,8 +70,11 @@ test("the answers travel with the checkout body", () => {
 test("money is never adjusted behind the operator's back", () => {
   // Marking sessions undelivered must not silently discount the stay; it
   // says so and points at the discount field that is already on this screen.
+  // Window padded for the numbered-step badge markup (restyle, Oct 2026) —
+  // the two phrases just need to still be in the same block, not at any
+  // particular byte offset.
   const panel = src.slice(src.indexOf('data-testid="checkout-board-train-block"'),
-                          src.indexOf('data-testid="checkout-board-train-block"') + 4000);
+                          src.indexOf('data-testid="checkout-board-train-block"') + 4300);
   expect(panel).toMatch(/Nothing is adjusted automatically/);
   expect(panel).not.toMatch(/setCheckoutDiscount|body\.checkout_discount/);
 });
