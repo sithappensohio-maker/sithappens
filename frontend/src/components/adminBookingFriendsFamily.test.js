@@ -199,7 +199,8 @@ test("the one paying is always a family with a dog on the booking", async () => 
     await mount();
     await click("ab-ff-toggle");
     await choose("ab-ff-add-dog", "d-rex");
-    await choose("ab-client", "c-gran");               // a family with no dog here
+    await click("ab-client-change");                    // open the client picker
+    await click("ab-client-result-c-gran");              // a family with no dog here
     await click("ab-submit");
     expect(["c-pat", "c-sam"]).toContain(groupBody().payer_client_id);
   } finally {

@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { friendsFamilyOn } from "../lib/friendsFamily";
 import WalkInModal from "./WalkInModal";
+import EntitySearchPicker from "./EntitySearchPicker";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
@@ -334,9 +335,6 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const fetchedPhotoIdsRef = useRef(new Set());
   const unmountedRef = useRef(false);
   useEffect(() => () => { unmountedRef.current = true; }, []);
-  // Quick Check-in Step 1 "search-first" dog picker (local UI state only).
-  const [dogSearchOpen, setDogSearchOpen] = useState(false);
-  const [dogSearchQuery, setDogSearchQuery] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -449,16 +447,25 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     }));
   }, [dogs, clients]);
 
-  // Step 1 search filter — name, breed, or owner name.
-  const filteredDogs = useMemo(() => {
-    const q = dogSearchQuery.trim().toLowerCase();
-    if (!q) return allDogsSorted;
-    return allDogsSorted.filter(d =>
-      (d.name || "").toLowerCase().includes(q)
-      || (d.breed || "").toLowerCase().includes(q)
-      || (d.ownerLabel || "").toLowerCase().includes(q)
-    );
-  }, [allDogsSorted, dogSearchQuery]);
+  // EntitySearchPicker item lists — plain data, no JSX. Quick Check-in's dog
+  // picker (any dog, owner shown) and the scheduled flow's client/dog pair
+  // (client: any client, no photo; dog: scoped to that one client, real photo).
+  const dogPickerItems = useMemo(() => allDogsSorted.map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: `${d.breed || "—"} · ${d.ownerLabel}`,
+    searchText: `${d.name || ""} ${d.breed || ""} ${d.ownerLabel || ""}`,
+  })), [allDogsSorted]);
+  const clientPickerItems = useMemo(() => clients.map(c => ({
+    id: c.id,
+    primaryLabel: c.name,
+    secondaryLabel: `${c.credits ?? 0} credits`,
+  })), [clients]);
+  const clientDogPickerItems = useMemo(() => clientDogs.map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: d.breed || "—",
+  })), [clientDogs]);
 
   // Lazily fetch the real photo for any dog actually on screen (the primary
   // dog, plus any extra/friend dogs in a group booking). The capped
@@ -970,71 +977,41 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             {isQuickCheckin ? (
               // Quick Check-in: search-first dog picker. Searching/finding a
               // dog is faster than narrowing by client at drop-off time.
-              <div data-testid="ab-dog">
-                {(dogSearchOpen || !dogId) ? (
-                  <div data-testid="ab-dog-search">
-                    <div className="relative">
-                      <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-sm" />
-                      <input
-                        type="text"
-                        value={dogSearchQuery}
-                        onChange={(e) => setDogSearchQuery(e.target.value)}
-                        placeholder="Search by dog name or client name…"
-                        data-testid="ab-dog-search-input"
-                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-xl pl-9 pr-3 py-3 text-shText text-sm focus:border-shPrimary outline-none"
-                      />
-                    </div>
-                    <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-shBorder divide-y divide-shBorder" data-testid="ab-dog-results">
-                      {filteredDogs.length === 0 && (
-                        <div className="p-4 text-[13px] text-shTextMuted font-black uppercase tracking-widest">
-                          {allDogsSorted.length === 0 ? "No dogs on file" : "No matches"}
-                        </div>
-                      )}
-                      {filteredDogs.map(d => (
-                        <button key={d.id} type="button"
-                                onClick={() => {
-                                  setDogId(d.id);
-                                  setClientId(d.owner_id);
-                                  setDogSearchOpen(false);
-                                  setDogSearchQuery("");
-                                }}
-                                data-testid={`ab-dog-result-${d.id}`}
-                                className="w-full flex items-center gap-3 p-3 min-h-[60px] text-left hover:bg-shPrimary/10 transition">
-                          <DogAvatarImg photo={dogPhotos[d.id]} name={d.name} sizeClass="w-11 h-11 text-[15px]" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[15px] font-black text-shText truncate">{d.name}</div>
-                            <div className="text-[12.5px] text-shTextMuted truncate">{d.breed || "—"} · {d.ownerLabel}</div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 bg-[var(--sh-card-base)]/60 border border-shBorder rounded-xl p-3" data-testid="ab-dog-selected-card">
-                    <DogAvatarImg photo={dogPhotos[dogId]} name={selectedDog?.name} sizeClass="w-14 h-14 text-[18px]" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[16px] font-black text-shText truncate">{selectedDog?.name || "—"}</div>
-                      <div className="text-[13px] text-shTextMuted truncate">{selectedDog?.breed || "—"} · {clients.find(c => c.id === clientId)?.name || "—"}</div>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-[12px] text-shPrimary font-black uppercase tracking-widest">
-                          {clients.find(c => c.id === clientId)?.credits ?? 0} credits
+              <EntitySearchPicker
+                testid="ab-dog"
+                items={dogPickerItems}
+                selectedId={dogId}
+                onSelect={(id) => {
+                  const d = allDogsSorted.find(x => x.id === id);
+                  setDogId(id);
+                  setClientId(d?.owner_id || "");
+                }}
+                photos={dogPhotos}
+                searchPlaceholder="Search by dog name or client name…"
+                noItemsLabel="No dogs on file"
+                changeLabel="Change Dog"
+                renderSelected={() => (
+                  <>
+                    <div className="text-[16px] font-black text-shText truncate">{selectedDog?.name || "—"}</div>
+                    <div className="text-[13px] text-shTextMuted truncate">{selectedDog?.breed || "—"} · {clients.find(c => c.id === clientId)?.name || "—"}</div>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-[12px] text-shPrimary font-black uppercase tracking-widest">
+                        {clients.find(c => c.id === clientId)?.credits ?? 0} credits
+                      </span>
+                      {selectedDog && (
+                        <span className={`text-[11px] font-black uppercase tracking-widest ${rabiesOk ? "text-shPrimary" : "text-red-400"}`}>
+                          <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-1`}/>
+                          {rabiesOk ? "Rabies OK" : (rabies ? "Rabies expired" : "Rabies missing")}
                         </span>
-                        {selectedDog && (
-                          <span className={`text-[11px] font-black uppercase tracking-widest ${rabiesOk ? "text-shPrimary" : "text-red-400"}`}>
-                            <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-1`}/>
-                            {rabiesOk ? "Rabies OK" : (rabies ? "Rabies expired" : "Rabies missing")}
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
-                    <button type="button" onClick={() => setDogSearchOpen(true)} data-testid="ab-dog-change"
-                            className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80 whitespace-nowrap">
-                      Change Dog
-                    </button>
-                  </div>
+                  </>
                 )}
-              </div>
-            ) : (
+              />
+            ) : isEdit ? (
+              // Editing an existing booking keeps the plain dropdowns — the
+              // dog/client are whatever the booking already carries, and
+              // today's code never locks or restyles them for edit.
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <div className="flex items-baseline justify-between gap-2">
@@ -1056,6 +1033,48 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                     {clientDogs.length === 0 && <option value="">No dogs on file</option>}
                     {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
                   </select>
+                </div>
+              </div>
+            ) : (
+              // "Schedule on behalf of a client" — the same search+cards
+              // picker as Quick Check-in, client-first: pick the client (no
+              // photo — clients have no stored photo field), then the dog
+              // scoped to that client (real photo, same lazy dogPhotos fetch).
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
+                    <button type="button" onClick={()=>setWalkInOpen(true)} data-testid="ab-new-walk-in"
+                            className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:opacity-80">
+                      <i className="fas fa-plus mr-1"/>New walk-in
+                    </button>
+                  </div>
+                  <div className="mt-1">
+                    <EntitySearchPicker
+                      testid="ab-client"
+                      items={clientPickerItems}
+                      selectedId={clientId}
+                      onSelect={(id) => setClientId(id)}
+                      searchPlaceholder="Search by client name…"
+                      noItemsLabel="No clients on file"
+                      changeLabel="Change Client"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
+                  <div className="mt-1">
+                    <EntitySearchPicker
+                      testid="ab-dog"
+                      items={clientDogPickerItems}
+                      selectedId={dogId}
+                      onSelect={(id) => setDogId(id)}
+                      photos={dogPhotos}
+                      searchPlaceholder="Search by dog name…"
+                      noItemsLabel="No dogs on file"
+                      changeLabel="Change Dog"
+                    />
+                  </div>
                 </div>
               </div>
             )}
