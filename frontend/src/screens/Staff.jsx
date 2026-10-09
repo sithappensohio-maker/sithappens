@@ -16,6 +16,7 @@ import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
 import { toast } from "sonner";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -2225,12 +2226,36 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       {methodOptions.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
     </RegisterSelect>
   );
-  const clientSelect = (value, setter, allowBlank=true) => (
-    <RegisterSelect label="Client" value={value} onChange={setter}>
-      {allowBlank && <option value="">No client / walk-in</option>}
-      {clients.map(c => <option key={c.id} value={c.id}>{c.name}{Number(c.account_balance || 0) ? ` · balance ${money(c.account_balance)}` : ""}</option>)}
-    </RegisterSelect>
-  );
+  // EntitySearchPicker item list for the shared client picker below — plain
+  // data, no JSX. Clients have no stored photo field in this codebase, so no
+  // `photos` map is passed (every row/card falls back to the initial-circle).
+  const clientPickerItems = useMemo(() => clients.map(c => ({
+    id: c.id,
+    primaryLabel: c.name,
+    secondaryLabel: Number(c.account_balance || 0) ? `Balance ${money(c.account_balance)}` : "",
+    searchText: c.name || "",
+  })), [clients]);
+  const clientSelect = (value, setter, allowBlank=true) => {
+    const items = allowBlank
+      ? [{ id: "", primaryLabel: "No client / walk-in", secondaryLabel: "Not tied to a client account", searchText: "no client walk-in" }, ...clientPickerItems]
+      : clientPickerItems;
+    return (
+      <label className="block">
+        <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Client</span>
+        <div className="mt-1">
+          <EntitySearchPicker
+            testid="register-client"
+            items={items}
+            selectedId={value}
+            onSelect={setter}
+            searchPlaceholder="Search by client name…"
+            noItemsLabel="No clients on file"
+            changeLabel="Change Client"
+          />
+        </div>
+      </label>
+    );
+  };
 
   return (
     <div className="space-y-4" data-testid="register-tab">
