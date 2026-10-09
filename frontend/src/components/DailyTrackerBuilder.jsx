@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import CsvImportButton from "./CsvImportButton";
 import { parseDailyTrackerCsv, DAILY_TRACKER_CSV_SAMPLE } from "../lib/csvImport";
+import EntitySearchPicker from "./EntitySearchPicker";
 
 /**
  * Admin-facing wizard for building a daily-tracker homework.
@@ -58,6 +59,42 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
   const [templateName, setTemplateName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // EntitySearchPicker item list for the Dog picker below — `dogs` here is
+  // the /dogs/options slim projection (id, name, breed, owner_id, vaccines;
+  // no photo, no owner name), so secondaryLabel just uses breed when on file.
+  const dogPickerItems = useMemo(() => (dogs || []).map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: d.breed || "",
+    searchText: `${d.name || ""} ${d.breed || ""}`,
+  })), [dogs]);
+
+  // Real dog photo for whichever dog is currently selected, fetched lazily
+  // by id — same pattern as Incidents.jsx / AdminBookingModal's dogPhotos
+  // (the /dogs/options list never carries photos; GET /dogs/{id} does).
+  const [dogPhotos, setDogPhotos] = useState({});
+  const fetchedPhotoIdsRef = useRef(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(() => () => { unmountedRef.current = true; }, []);
+  useEffect(() => {
+    const id = dogId;
+    if (!id || fetchedPhotoIdsRef.current.has(id)) return;
+    fetchedPhotoIdsRef.current.add(id);
+    (async () => {
+      const row = (dogs || []).find(d => d.id === id);
+      if (row && Object.prototype.hasOwnProperty.call(row, "photo")) {
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: row.photo || "" }));
+        return;
+      }
+      try {
+        const { data } = await api.get(`/dogs/${id}`);
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: data?.photo || "" }));
+      } catch {
+        if (!unmountedRef.current) setDogPhotos(prev => ({ ...prev, [id]: "" }));
+      }
+    })();
+  }, [dogId, dogs]);
 
   const setDay = (idx, patch) => {
     setDays((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)));
@@ -288,11 +325,18 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
           <div className="p-5 space-y-4 max-w-2xl">
             <div>
               <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-              <select value={dogId} onChange={(e) => setDogId(e.target.value)} data-testid="dtb-dog"
-                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                <option value="">— pick a dog —</option>
-                {dogs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
+              <div className="mt-1">
+                <EntitySearchPicker
+                  testid="dtb-dog"
+                  items={dogPickerItems}
+                  selectedId={dogId}
+                  onSelect={(id) => setDogId(id)}
+                  photos={dogPhotos}
+                  searchPlaceholder="Search by dog name…"
+                  noItemsLabel="No dogs on file"
+                  changeLabel="Change Dog"
+                />
+              </div>
             </div>
             <div>
               <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Title</label>
