@@ -356,13 +356,19 @@ export default function Pos({ onOpenShopManager } = {}) {
   // Step 4C-1 — a custom line must say what it IS: merchandise (taxable
   // retail goods) or a service (never sales-taxable). Structured — the
   // backend decides tax from this, never from the description text.
-  const [customKind, setCustomKind] = useState("merchandise");
+  // No default: the register only taxes what staff tell it to (audit: nail-trim tax).
+  const [customKind, setCustomKind] = useState(null);
   const [customDesc, setCustomDesc] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [customReason, setCustomReason] = useState("");
+  const customReady = customDesc.trim() && Number(customAmount) > 0 && customReason.trim().length >= 3 && customKind;
   const addCustom = () => {
     if (!customDesc.trim() || !(Number(customAmount) > 0) || customReason.trim().length < 3) {
       toast.error("Custom item needs a description, a positive amount, and a reason (3+ characters).");
+      return;
+    }
+    if (!customKind) {
+      toast.error("Say whether this is merchandise (taxable) or a service (no sales tax).");
       return;
     }
     setCartLines((lines) => [...lines, {
@@ -370,7 +376,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       custom_amount: Number(customAmount), custom_reason: customReason.trim(),
       custom_kind: customKind,
     }]);
-    setCustomOpen(false); setCustomDesc(""); setCustomAmount(""); setCustomReason(""); setCustomKind("merchandise");
+    setCustomOpen(false); setCustomDesc(""); setCustomAmount(""); setCustomReason(""); setCustomKind(null);
   };
 
   // Selling a gift card. It is a cart line like any other, so it rings on
@@ -1915,7 +1921,13 @@ export default function Pos({ onOpenShopManager } = {}) {
                     </label>
                   ))}
                 </div>
-                <button onClick={addCustom} className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
+                {!customKind && (customDesc.trim() || customAmount || customReason.trim()) && (
+                  <p className="text-shTextMuted text-[11px]" data-testid="pos-custom-kind-required">
+                    Pick merchandise or service before adding it.
+                  </p>
+                )}
+                <button onClick={addCustom} disabled={!customReady}
+                        className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-40 disabled:cursor-not-allowed">
                   Add to Cart
                 </button>
               </div>
