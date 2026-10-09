@@ -347,7 +347,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         const [cRes, dRes, sRes, svcRes, progRes] = await Promise.all([
           api.get("/clients/options"),
           api.get("/dogs/options"),
-          api.get("/settings"),
+          // The public variant, not the gated admin one — this modal reads
+          // only operational fields (kennels, closed dates, booking rules,
+          // multi-dog-discount config), and /settings/public already
+          // whitelists every one of them. /settings itself needs the real
+          // Settings-page "settings" permission, which front-line staff
+          // (front desk, daycare/boarding staff, even a manager) don't hold
+          // by default — gating THIS read behind it broke every one of
+          // them straight through the shared Promise.all below, with no
+          // dog/client list at all even though those two calls succeeded.
+          api.get("/settings/public"),
           api.get("/services"),
           // Program Studio carries the authoritative 1/2/3-week Board & Train
           // duration. Keep the rest of Quick Check-In usable if this optional
