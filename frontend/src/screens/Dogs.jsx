@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDaysISO, localISOFromDate, parseLocalISO, todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
@@ -23,6 +23,7 @@ import PendingVaccineUploads from "../components/PendingVaccineUploads";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import LazyMount from "../components/LazyMount";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 import { addRecent } from "../lib/recentlyOpened";
 import DogHub from "../components/DogHub";
@@ -358,6 +359,15 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   };
 
   const ownerName = (id) => clients.find(c => c.id === id)?.name || "—";
+  // EntitySearchPicker item list for the Owner field below — plain data, no
+  // JSX. Clients have no stored photo field in this codebase, so no `photos`
+  // map is passed (every row/card falls back to the initial-circle), same
+  // pattern as the Register client picker (Staff.jsx clientPickerItems).
+  const clientPickerItems = useMemo(() => clients.map(c => ({
+    id: c.id,
+    primaryLabel: c.name,
+    searchText: c.name || "",
+  })), [clients]);
   const tabs = [
     { id: "timeline", label: "Timeline", icon: "fa-clock-rotate-left" },
     { id: "basics", label: "Basics", icon: "fa-paw" },
@@ -596,10 +606,17 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                 <>
                   <div>
                     <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Owner</label>
-                    <select value={form.owner_id} onChange={(e)=>setForm({...form, owner_id: e.target.value})} data-testid="dog-owner-select"
-                            className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                      {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    <div className="mt-1">
+                      <EntitySearchPicker
+                        testid="dog-owner-select"
+                        items={clientPickerItems}
+                        selectedId={form.owner_id}
+                        onSelect={(id)=>setForm({...form, owner_id: id})}
+                        searchPlaceholder="Search by client name…"
+                        noItemsLabel="No clients on file"
+                        changeLabel="Change Owner"
+                      />
+                    </div>
                   </div>
                   <Input label="Name" value={form.name} onChange={(v)=>setForm({...form, name:v})} testId="dog-name-input" />
                   <Input label="Breed" value={form.breed} onChange={(v)=>setForm({...form, breed:v})} />
