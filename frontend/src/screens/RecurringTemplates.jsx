@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
+import EntitySearchPicker from "../components/EntitySearchPicker";
 import { PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
 import { skipReason, shortDate } from "../lib/bookingBlocks";
 import { fmtDate } from "../lib/format";
@@ -49,6 +50,27 @@ export default function RecurringTemplates() {
   const [misses, setMisses] = useState({});    // template_id -> Action Required item (audit #35)
   const [loaded, setLoaded] = useState(false);
   const [highlight, setHighlight] = useState("");
+
+  // EntitySearchPicker item list + photo map for the Dog field below. GET
+  // /dogs (unlike the lighter /dogs/options) already carries each dog's
+  // single `photo` field — only the gallery `photos` array is stripped
+  // server-side — so every dog already loaded here carries its real photo
+  // and no extra per-dog fetch is needed (same as Schedule.jsx's picker).
+  const dogPickerItems = useMemo(() => dogs.map(d => ({
+    id: d.id,
+    primaryLabel: d.name,
+    secondaryLabel: d.breed || "—",
+    searchText: `${d.name || ""} ${d.breed || ""}`,
+  })), [dogs]);
+  const dogPhotos = useMemo(() => Object.fromEntries(dogs.map(d => [d.id, d.photo || ""])), [dogs]);
+
+  // The service the form currently has picked, so the per-occurrence price
+  // line below can read its base_price — the exact field GET /services
+  // already returns and every other service/program price display in this
+  // app (PricingTiersPanel, ServicesByCategory, …) reads the same way.
+  // Never fetched or computed independently; just a lookup into `services`,
+  // already loaded for the service <select> above.
+  const selectedService = useMemo(() => services.find(s => s.id === form.service_id) || null, [services, form.service_id]);
 
   const load = async () => {
     const [{ data: tpls }, { data: ds }, { data: svcs }, missed] = await Promise.all([
@@ -277,12 +299,18 @@ export default function RecurringTemplates() {
             <div className="space-y-4">
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
-                <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})}
-                        data-testid="template-dog-select"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  <option value="">— pick a dog —</option>
-                  {dogs.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
-                </select>
+                <div className="mt-1">
+                  <EntitySearchPicker
+                    testid="template-dog-select"
+                    items={dogPickerItems}
+                    selectedId={form.dog_id}
+                    onSelect={(id)=>setForm({...form, dog_id: id})}
+                    photos={dogPhotos}
+                    searchPlaceholder="Search by dog name or breed…"
+                    noItemsLabel="No dogs on file"
+                    changeLabel="Change Dog"
+                  />
+                </div>
               </div>
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Exact service</label>
@@ -352,6 +380,12 @@ export default function RecurringTemplates() {
                        placeholder="e.g. half-day, picked up by grandma"
                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
               </div>
+              {selectedService && (
+                <p className="text-[13px] text-shTextMuted normal-case" data-testid="template-price-estimate">
+                  <i className="fas fa-receipt mr-1.5 text-shPrimary"/>
+                  ~<span className="text-shPrimary font-black">${Number(selectedService.base_price || 0).toFixed(2)}</span> per occurrence, at {selectedService.name}'s current price.
+                </p>
+              )}
               {err && <p className="text-red-400 text-[15px]">{err}</p>}
               <div className="flex justify-end gap-3 pt-2">
                 <button onClick={()=>setOpen(false)} className="text-shTextMuted font-black uppercase text-[15px] tracking-widest">Cancel</button>
