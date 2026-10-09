@@ -61,6 +61,9 @@ const BLANK_PRODUCT_FORM = {
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
+  // Merchandise is taxable by default; this is the per-item exemption. Missing here meant it was never
+  // loaded on edit or sent on save, so an exempt item kept getting taxed no matter what the box showed.
+  taxable: true, tax_exempt_reason: "",
   publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
   requires_approval: false, requires_completed_onboarding: false,
 };
@@ -1614,6 +1617,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         publicly_visible: !!raw.publicly_visible, guest_cart_allowed: !!raw.guest_cart_allowed,
         show_public_price: raw.show_public_price !== false,
         requires_approval: !!raw.requires_approval, requires_completed_onboarding: !!raw.requires_completed_onboarding,
+        // Absent means taxable — the same default the pricing engine uses.
+        taxable: raw.taxable !== false, tax_exempt_reason: raw.tax_exempt_reason || "",
       });
     } else if (item.kind === "credit_pack") {
       const { data } = await api.get("/credit-packs", { params: { include_inactive: true } });
@@ -1661,6 +1666,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       show_public_price: productForm.show_public_price,
       requires_approval: !isShopify && productForm.publicly_visible && productForm.requires_approval,
       requires_completed_onboarding: !isShopify && productForm.publicly_visible && productForm.requires_completed_onboarding,
+      taxable: productForm.taxable,
+      tax_exempt_reason: productForm.taxable ? null : (productForm.tax_exempt_reason || "").trim() || null,
     };
     setProductSaving(true);
     try {
