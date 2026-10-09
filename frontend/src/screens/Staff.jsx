@@ -72,6 +72,7 @@ export default function Staff() {
   const [editingEntry, setEditingEntry] = useState(null);
   const [subtab, setSubtab] = useState("ops");
   const [paySnap, setPaySnap] = useState(null);
+  const [employeeFilter, setEmployeeFilter] = useState("");
 
   const loadEmployees = async () => {
     try { const r = await api.get("/admin/employees"); setEmployees(r.data); }
@@ -91,6 +92,15 @@ export default function Staff() {
   }, [start, end, userFilter]);
   useEffect(() => { loadEmployees(); loadPaySnap(); }, []);
   useEffect(() => { loadTimecards(); }, [loadTimecards]);
+
+  // Low-priority polish — the Employees roster had no search/filter, unlike
+  // every other roster screen. Client-side, case-insensitive name match over
+  // the already-loaded list; nothing else about the list changes.
+  const filteredEmployees = useMemo(() => {
+    const q = employeeFilter.trim().toLowerCase();
+    if (!q) return employees;
+    return employees.filter(e => e.name?.toLowerCase().includes(q));
+  }, [employees, employeeFilter]);
 
   const deactivate = async (emp) => {
     if (!(await confirm({ title: `Deactivate ${emp.name}?`, body: "They won't be able to log in. Past time entries are preserved.", confirmText: "Deactivate", tone: "danger" }))) return;
@@ -151,6 +161,20 @@ export default function Staff() {
 
       {/* Employee list */}
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden" data-testid="staff-list">
+        {employees.length > 0 && (
+          <div className="border-b border-shBorder p-3">
+            <label className="relative block max-w-sm">
+              <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted" />
+              <input
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+                placeholder="Search employees by name…"
+                data-testid="staff-employee-search"
+                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-lg pl-9 pr-3 py-2 text-shText text-sm placeholder:text-shTextMuted focus:outline-none focus:border-shSecondary"
+              />
+            </label>
+          </div>
+        )}
         {paySnap && paySnap.totals.this_week_gross > 0 && (
           <div className="bg-[var(--sh-card-base)]/40 border-b border-shBorder px-4 py-2 flex flex-wrap items-baseline gap-x-4 gap-y-1" data-testid="staff-pay-totals">
             <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-hand-holding-dollar mr-1 text-shPrimary"/>This week so far</p>
@@ -162,8 +186,11 @@ export default function Staff() {
         {employees.length === 0 && (
           <div className="p-10 text-center text-shTextMuted text-sm font-black uppercase tracking-widest">No employees yet. Click "Add Employee" to get started.</div>
         )}
+        {employees.length > 0 && filteredEmployees.length === 0 && (
+          <div className="p-10 text-center text-shTextMuted text-sm font-black uppercase tracking-widest" data-testid="staff-employee-search-empty">No employees match "{employeeFilter}".</div>
+        )}
         <div className="divide-y divide-shBorder/40">
-          {employees.map(e => {
+          {filteredEmployees.map(e => {
             const snap = paySnap?.snapshot?.find(s => s.user_id === e.id);
             return (
             <div key={e.id} className="p-4 flex items-center justify-between gap-3 flex-wrap" data-testid={`staff-row-${e.id}`}>
