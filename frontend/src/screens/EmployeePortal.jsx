@@ -400,7 +400,7 @@ function RosterTab() {
     <div className="space-y-3" data-testid="roster-tab">
       <InfoBanner icon="fa-paw">Check dogs in and out, log feeding/meds/bathroom breaks, and start a walk-in.</InfoBanner>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h3 className="text-white font-black uppercase italic tracking-tight">Today · {date}</h3>
+        <h3 className="sh-display text-white font-black tracking-tight">Today · {date}</h3>
         <div className="flex items-center gap-3">
           {/* A walk-in (not already on today's schedule) couldn't be
               registered from this portal at all before — only the full
@@ -1045,7 +1045,7 @@ function TimeOffFormModal({ onClose, onSaved }) {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" data-testid="timeoff-form-modal" onClick={onClose}>
       <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 max-w-md w-full space-y-3" onClick={e=>e.stopPropagation()}>
-        <h3 className="text-white font-black uppercase italic text-lg"><i className="fas fa-umbrella-beach text-shGreen mr-2"/>Request time off</h3>
+        <h3 className="sh-display text-white font-black text-lg"><i className="fas fa-umbrella-beach text-shGreen mr-2"/>Request time off</h3>
         {err && <div className="text-red-400 bg-red-500/10 rounded p-2 text-[13px]">{err}</div>}
         <div className="grid grid-cols-2 gap-2">
           <label className="block">

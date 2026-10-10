@@ -1113,7 +1113,7 @@ function StatCard({ label, value, accent, textColor, testId, onClick }) {
 
 function DashHeroTile({ icon, color, label, value }) {
   return (
-    <div className="min-w-0 sm:min-w-[150px] rounded-xl border border-shBorder/70 bg-black/20 px-3 py-2.5 flex items-center gap-3"
+    <div className="min-w-0 sm:min-w-[150px] rounded-xl border border-shBorder/70 bg-black/20 px-3 py-2.5 flex items-center gap-3 overflow-hidden sh-theme-dashboard-overlay"
          data-testid={`dash-hero-tile-${label.replace(/\s+/g,'-').toLowerCase()}`}>
       <div className="w-9 h-9 rounded-lg grid place-items-center shrink-0 border border-white/5"
            style={{ backgroundColor: `${color}18`, color }}>

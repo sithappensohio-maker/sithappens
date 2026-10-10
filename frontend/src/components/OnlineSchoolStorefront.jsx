@@ -167,7 +167,7 @@ export default function OnlineSchoolStorefront({ items = [], mode = "authenticat
   return (
     <div className="space-y-5" data-testid="online-school-storefront">
       {showHero && (
-        <section className="relative overflow-hidden rounded-2xl border border-shSecondary/35 bg-gradient-to-br from-shSecondary/15 via-[var(--sh-card-base)] to-shPrimary/10 p-5 sm:p-7"
+        <section className="relative overflow-hidden rounded-2xl border border-shSecondary/35 bg-gradient-to-br from-shSecondary/15 via-[var(--sh-card-base)] to-shPrimary/10 p-5 sm:p-7 sh-theme-section-header-client"
                  data-testid="school-storefront-hero">
           <div className="absolute inset-0 pointer-events-none opacity-80"
                style={{ background: "radial-gradient(circle at 0% 0%, rgba(0,169,224,0.18), transparent 42%), radial-gradient(circle at 100% 100%, rgba(140,198,63,0.13), transparent 44%)" }} />

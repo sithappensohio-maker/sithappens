@@ -305,7 +305,7 @@ export default function Login({ focus = false }) {
   }
 
   return (
-    <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing sh-theme-login-bg" data-testid="login-screen">
+    <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen">
       {/* ===== Top bar ===== */}
       <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
@@ -328,7 +328,16 @@ export default function Login({ focus = false }) {
       </header>
 
       {/* ===== Hero ===== */}
-      <section className="relative overflow-hidden">
+      {/* Theme Studio — loginBackground scoped to just this hero section,
+          not the whole multi-thousand-px landing page below it (the
+          focused /login route's much shorter page keeps it on its own
+          outer wrapper instead, see the `focus` branch above — there the
+          whole page IS roughly hero-sized, so no bounding is needed). A
+          full-bleed `cover` layer spanning the entire tall page would
+          scale the uploaded photo up to cover that whole height, cropping
+          away all but a thin, heavily-zoomed vertical sliver — this keeps
+          it readable at the hero's actual size instead. */}
+      <section className="relative overflow-hidden sh-theme-login-bg">
         {/* Soft radial accents matching the brand palette */}
         <div className="absolute inset-0 pointer-events-none opacity-40"
              style={{ background:

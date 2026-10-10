@@ -2041,6 +2041,18 @@ html, body, #root {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 18px;
+  /* Theme Studio — padded/rounded/positioned so the sectionHeaderBackground
+     hook below (same rule PageHero's 36 screens already use) has a real
+     card shape to sit inside, instead of painting a background behind bare
+     text sitting directly on the page. ScheduleWorkspace/TrainingWorkspace/
+     SchoolHQ use this component instead of PageHero for their top header —
+     same "shown constantly" character as PageHero's screens, so it shares
+     that same ×0.35 knockdown rather than Shop/Photography's full
+     strength. */
+  position: relative;
+  isolation: isolate;
+  border-radius: 16px;
+  padding: clamp(10px, 1.6vw, 18px);
 }
 .sh-admin-page-header__eyebrow {
   display: flex;
@@ -3196,7 +3208,8 @@ html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after 
    nearly every admin page at once; a Today-hero-strength wash everywhere
    would get old fast. staff-portal-gated: PageHero has no client-portal or
    login call sites. */
-.sh-page-hero:not([data-testid="today-page-hero"])::before {
+.sh-page-hero:not([data-testid="today-page-hero"])::before,
+.sh-admin-page-header::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -3208,7 +3221,8 @@ html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after 
   pointer-events: none;
   z-index: -2;
 }
-html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="today-page-hero"])::before {
+html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="today-page-hero"])::before,
+html[data-theme-target-staff-portal="true"] .sh-admin-page-header::before {
   background-image: var(--theme-asset-section-header-background, none);
 }
 
@@ -3250,15 +3264,27 @@ html[data-theme-target-client-portal="true"] .sh-theme-section-header-client::be
 /* Dashboard card overlay: AdminStatCard's NeonEdge shell (Today's "71 Dogs
    Here" / "$0.00" tiles, School HQ's stat row) — admin-only, so just the
    staff-portal target. NeonEdge sets its own background via inline style
-   (not a CSS rule this could collide with) and has no pre-existing
-   absolutely-positioned children, so a plain z-index:0 layer is enough.
+   (not a CSS rule this could collide with).
    Full var(--theme-decoration-opacity) — the flat scrim baked into the
    CSS var's value now dims it evenly for number/label contrast, so a
    leftover ×0.5 reduction from before the scrim existed just left
-   uploaded art nearly invisible on top of it. */
+   uploaded art nearly invisible on top of it.
+   The `> *` bump below is NOT optional the way the original comment here
+   assumed: AdminStatCard's icon/value/label/arrow children are plain
+   in-flow, non-positioned elements, which CSS paints BEFORE a sibling
+   ::after that has position:absolute + z-index:0 (z-index:0 content
+   paints in its own later step regardless of DOM order) — confirmed live
+   at "Bold" intensity with an opaque upload: without this bump, the
+   overlay doesn't just wash the text out, it fully covers it, same root
+   cause the Today-hero/login-bg hooks already guard against with their
+   own `> *` rule. */
 .sh-theme-dashboard-overlay {
   position: relative;
   isolation: isolate;
+}
+.sh-theme-dashboard-overlay > * {
+  position: relative;
+  z-index: 1;
 }
 .sh-theme-dashboard-overlay::after {
   content: "";
@@ -3310,9 +3336,17 @@ html[data-theme-target-client-portal="true"] [data-testid="client-portal"] .sh-t
 /* Announcement accent: PortalAnnouncementsCard.jsx — the client portal only
    (announcements are an admin-to-client broadcast; the admin's own
    Announcements screen is an authoring tool, not a "here's a cute message"
-   display worth decorating). NeonEdge sets its own background via inline
-   style with no pre-existing absolute children, same safe z-index:0 case
-   as the dashboard-overlay hook above. */
+   display worth decorating). Unlike the dashboard-overlay hook above, this
+   one's z-index:0 ::after genuinely IS safe without a `> *` bump — but not
+   because z-index:0 is inherently safe (it isn't — see that hook's fix
+   history). PortalAnnouncementsCard.jsx's own direct children each already
+   carry `relative z-10` for their own click/hover-highlight purposes,
+   which incidentally lifts them above this overlay too. `contain` instead
+   of `cover`: the card's height varies a lot (collapsed header-only vs. an
+   expanded scrolling list), and this is meant to read as a soft accent
+   behind the bullhorn icon/text, not a full-bleed photo — `cover` was
+   cropping a square upload down to an unrecognizable sliver on the
+   short/wide collapsed state. */
 .sh-theme-announcement-accent {
   position: relative;
   isolation: isolate;
@@ -3323,7 +3357,7 @@ html[data-theme-target-client-portal="true"] [data-testid="client-portal"] .sh-t
   inset: 0;
   border-radius: inherit;
   background-repeat: no-repeat;
-  background-size: cover;
+  background-size: contain;
   background-position: center;
   opacity: calc(var(--theme-decoration-opacity) * 0.5);
   pointer-events: none;
@@ -3337,8 +3371,14 @@ html[data-theme-target-staff-portal="true"] .app-shell .sh-theme-empty-state::af
   background-image: var(--theme-asset-empty-state-illustration, none);
 }
 
-/* Login: a full-bleed low-opacity background behind the whole page, plus a
-   small round accent badge on the auth card itself. */
+/* Login: a full-bleed background, plus a small round accent badge on the
+   auth card itself. Bound to whatever element actually carries this class —
+   the focused /login route keeps it on the page's own outer wrapper
+   (Login.jsx, `focus` branch) since that page is only about one hero's
+   worth of content tall, but the long marketing landing (`focus` false)
+   scopes it to just the hero `<section>` instead of the whole
+   multi-thousand-px page, so `cover` doesn't scale the image up to the
+   page's full scroll height and crop it down to an illegible sliver. */
 .sh-theme-login-bg {
   position: relative;
 }

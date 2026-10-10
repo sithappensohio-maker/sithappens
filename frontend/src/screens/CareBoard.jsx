@@ -171,7 +171,7 @@ export default function CareBoard() {
 
 function StatTile({ label, value, color, icon, testid }) {
   return (
-    <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-3 text-center" data-testid={testid}>
+    <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-3 text-center overflow-hidden sh-theme-dashboard-overlay" data-testid={testid}>
       <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">
         <i className={`fas ${icon} mr-1`}/>{label}
       </p>

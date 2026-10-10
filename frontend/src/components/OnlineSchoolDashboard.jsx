@@ -518,7 +518,7 @@ function HomeView({ entry, roadmap, heroMasteredPct, heroCurrentLessonName, trai
 
   return (
     <div className="space-y-4" data-testid="school-home">
-      <NeonEdge accentRgb="0,169,224" intensity="hero" className="relative min-h-[300px]" data-testid="school-hero">
+      <NeonEdge accentRgb="0,169,224" intensity="hero" className="relative min-h-[300px] sh-theme-section-header-client" data-testid="school-hero">
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div className="absolute -right-10 -top-16 w-80 h-80 rounded-full bg-shSecondary/10 blur-3xl"/>
           <div className="absolute left-[38%] -bottom-24 w-80 h-80 rounded-full bg-shPrimary/[0.07] blur-3xl"/>

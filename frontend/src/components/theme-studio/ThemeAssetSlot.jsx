@@ -26,6 +26,7 @@ export default function ThemeAssetSlot({
   accept,
   isAnimation = false,
   previewSize = "card",
+  aspectRatio = 1,
   assetId,
   originalAssetId = null,
   onChange,
@@ -94,9 +95,17 @@ export default function ThemeAssetSlot({
       <div className="text-[12px] font-black text-shText uppercase tracking-widest">{label}</div>
       {hint && <div className="text-[11px] text-shTextMuted mt-0.5">{hint}</div>}
 
-      <div className="mt-2 w-full h-32 flex items-center justify-center overflow-hidden">
+      {/* Theme Studio — the preview box's own shape now matches this slot's
+          real aspect ratio (see ThemeStudio.jsx's hintAspectRatio) instead
+          of a one-size-fits-all square. A wide/short slot (hero, sidebar
+          banner, section header, dashboard tile, event banner, login
+          background) used to show its upload center-cropped to a square
+          here — a much harder crop than the real wide/short box ever
+          applies — which could mislead an admin into thinking a landscape
+          photo would render more cropped than it actually does. */}
+      <div className="mt-2 w-full max-h-32 flex items-center justify-center overflow-hidden">
         {assetId ? (
-          <div className="w-32 h-32 border border-shBorder rounded overflow-hidden">
+          <div className="w-full max-h-32 border border-shBorder rounded overflow-hidden" style={{ aspectRatio, minHeight: 40 }}>
             <img
               src={`${API_BASE}/theme-assets/${assetId}/${size}`}
               className="w-full h-full object-cover rounded"
@@ -104,7 +113,7 @@ export default function ThemeAssetSlot({
             />
           </div>
         ) : (
-          <div className="w-32 h-32 border border-dashed border-shBorder rounded flex items-center justify-center text-shTextMuted">
+          <div className="w-full max-h-32 border border-dashed border-shBorder rounded flex items-center justify-center text-shTextMuted" style={{ aspectRatio, minHeight: 40 }}>
             <i className={isAnimation ? "fas fa-film" : "fas fa-image"} />
           </div>
         )}

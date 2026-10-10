@@ -142,7 +142,7 @@ export const THEME_ASSET_SLOT_CONFIG = {
   loginBackground:         { cssVar: "--theme-asset-login-background",          size: "pdp",       scrim: "flat" },
   loginAccent:             { cssVar: "--theme-asset-login-accent",              size: "card" },
   cornerSticker:           { cssVar: "--theme-asset-corner-sticker",            size: "card" },
-  announcementAccent:      { cssVar: "--theme-asset-announcement-accent",       size: "thumb" },
+  announcementAccent:      { cssVar: "--theme-asset-announcement-accent",       size: "card" },
   emptyStateIllustration:  { cssVar: "--theme-asset-empty-state-illustration",  size: "card" },
   ambientAnimation:        { cssVar: "--theme-asset-ambient-animation",         size: "original" },
   // A 9-slice border-image frame around every NeonEdge card (NeonEdge.jsx) —

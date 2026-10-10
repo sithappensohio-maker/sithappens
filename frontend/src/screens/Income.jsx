@@ -850,7 +850,7 @@ function DailyBarChart({ points }) {
 }
 
 function StatTile({ label, value, sub, color, icon, big = false }) {  return (
-    <div className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 ${big ? "md:col-span-1" : ""}`}>
+    <div className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 overflow-hidden sh-theme-dashboard-overlay ${big ? "md:col-span-1" : ""}`}>
       <p className="text-[13px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
       <p className={`${big ? "text-[24px]" : "text-[18px]"} font-black ${color} mt-1`}>{value}</p>
       {sub && <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">{sub}</p>}

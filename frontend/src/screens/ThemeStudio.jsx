@@ -45,16 +45,16 @@ const ASSET_SLOTS = [
     promptTemplate: "A wide 1600×300px background texture/illustration for {THEME}, featuring subtle husky silhouettes or paw prints and seasonal motifs. The page title sits in the LEFT portion and an action button sometimes sits on the right, same layout as the Hero Background — but this one is shown very faintly (roughly a third opacity) behind ~30 different admin pages at once, so skip fine detail or anything text-like anywhere in the frame; keep it a soft, low-contrast texture rather than a scene with one focal subject. JPG or PNG.",
   },
   {
-    key: "dashboardCardOverlay", label: "Dashboard Card Overlay", hint: "600 × 400px · PNG, transparent",
+    key: "dashboardCardOverlay", label: "Dashboard Card Overlay", hint: "800 × 400px · PNG, transparent",
     accept: "image/png,image/webp", previewSize: "card",
     purpose: "A light decoration on small stat-number tiles (e.g. \"71 Dogs Here\") on the admin Today page.",
-    promptTemplate: "A 600×400px PNG with a transparent background, a light {THEME} decoration for small stat tiles. Unlike the other slots, there's no safe zone here — an icon, a bold number, and a short label span almost the whole tile left-to-right, and the app dims the entire image evenly for contrast. Keep the art loose and texture-like across the full frame rather than one focal subject in a spot that'll end up under the number. Transparent PNG only.",
+    promptTemplate: "An 800×400px PNG with a transparent background, a light {THEME} decoration for small stat tiles — wider than tall, matching the tile's own shape (a short, wide pill). Unlike the other slots, there's no safe zone here — an icon, a bold number, and a short label span almost the whole tile left-to-right, and the app dims the entire image evenly for contrast. Keep the art loose and texture-like across the full frame rather than one focal subject in a spot that'll end up under the number. Transparent PNG only.",
   },
   {
-    key: "eventBanner", label: "Event Banner Image", hint: "1200 × 400px · JPG, PNG",
+    key: "eventBanner", label: "Event Banner Image", hint: "1800 × 350px · JPG, PNG",
     accept: "image/jpeg,image/png,image/webp", previewSize: "pdp",
     purpose: "The background of the \"Upcoming Event\" promo card, shown on both the admin Today page and the Client Portal home — only appears when a real event is published.",
-    promptTemplate: "A 1200×400px banner background for a dog daycare event promo card (e.g. a costume contest or holiday party), featuring a husky in a festive {THEME} setting. The event name and date sit in the LEFT majority of the card, with a compact \"Preregister\" button pinned to the RIGHT edge — the app darkens both zones automatically for contrast, so the open middle/right-of-text area is the best spot for the liveliest part of the scene. JPG or PNG.",
+    promptTemplate: "An 1800×350px banner background (short and WIDE — this card is much wider than it is tall) for a dog daycare event promo card (e.g. a costume contest or holiday party), featuring a husky in a festive {THEME} setting. The event name and date sit in the LEFT majority of the card, with a compact \"Preregister\" button pinned to the RIGHT edge — the app darkens both zones automatically for contrast, so the open middle/right-of-text area is the best spot for the liveliest part of the scene. JPG or PNG.",
   },
   {
     key: "loginBackground", label: "Login Background", hint: "1920 × 1080px · JPG, PNG",
@@ -76,7 +76,7 @@ const ASSET_SLOTS = [
   },
   {
     key: "announcementAccent", label: "Announcement Accent", hint: "400 × 400px · PNG, transparent",
-    accept: "image/png,image/webp", previewSize: "thumb",
+    accept: "image/png,image/webp", previewSize: "card",
     purpose: "A decorative accent behind the Announcements card on the Client Portal home.",
     promptTemplate: "A 400×400px PNG with a transparent background, a soft {THEME}-themed decorative pattern, subtle enough to sit behind a bullhorn icon and announcement text at low opacity. Transparent PNG only.",
   },
@@ -96,9 +96,25 @@ const ASSET_SLOTS = [
     key: "cardFrame", label: "Card Frame", hint: "600 × 600px · PNG, transparent",
     accept: "image/png,image/webp", previewSize: "card",
     purpose: "An ornate border wrapped around every card and tile across both portals (stat tiles, action cards, panels) — a full frame, not a watermark.",
-    promptTemplate: "A 600×600px PNG border frame for {THEME} — ornate decorative artwork (vines, icons, patterns fitting the theme) running around the OUTER EDGE only, forming a band roughly 15-20% of the image's width in from each side. CRITICAL technical requirements, since this gets stretched/tiled onto cards of many different sizes and shapes: (1) the entire CENTER of the image must be FULLY TRANSPARENT — nothing painted there, it's cut away and the card's own background shows through; (2) all FOUR CORNERS must also be FULLY TRANSPARENT in a rounded shape (about a 48px radius quarter-circle cut into each corner) — the app cannot round a border-image's corners itself, so the rounding has to be baked into the image's own transparency, matching this app's rounded-corner card style; (3) keep the border band's own pattern fairly even/repeatable along each edge rather than one single unrepeated scene, since the edges get tiled to fit each card's actual size. Transparent PNG only — this will look broken as a solid-background JPG.",
+    promptTemplate: "A 600×600px PNG border frame for {THEME} — ornate decorative artwork (vines, icons, patterns fitting the theme) running around the OUTER EDGE only, forming a band roughly 60-70px deep (about 10-12% of the image's width) in from each side — the app only ever samples that outer band from your upload, so a wider band just gets cut off rather than shown. CRITICAL technical requirements, since this gets stretched/tiled onto cards of many different sizes and shapes: (1) the entire CENTER of the image must be FULLY TRANSPARENT — nothing painted there, it's cut away and the card's own background shows through; (2) all FOUR CORNERS must also be FULLY TRANSPARENT in a rounded shape (about a 48px radius quarter-circle cut into each corner) — the app cannot round a border-image's corners itself, so the rounding has to be baked into the image's own transparency, matching this app's rounded-corner card style; (3) this band renders fairly small on screen (about 10px wide), so keep the pattern bold and high-contrast rather than fine/delicate — intricate linework will blur away at that size — and keep it fairly even/repeatable along each edge rather than one single unrepeated scene, since the edges get tiled to fit each card's actual size. Transparent PNG only — this will look broken as a solid-background JPG.",
   },
 ];
+
+// Derives a preview box's aspect ratio straight from each slot's own `hint`
+// text (e.g. "1800 × 350px · JPG, PNG" -> 1800/350) so the upload-slot
+// thumbnail isn't a one-size-fits-all square — a landscape upload for a
+// wide/short slot (hero, sidebar banner, section header, dashboard tile,
+// event banner, login background) was getting center-cropped to a square
+// in the preview far more aggressively than the real wide/short box ever
+// crops it, a "what you see is not what you get" mismatch an admin had no
+// way to notice before saving. Single source of truth with the hint text
+// itself, rather than a second hand-maintained number that could drift.
+function hintAspectRatio(hint) {
+  const m = /(\d+)\s*×\s*(\d+)/.exec(hint || "");
+  if (!m) return 1;
+  const [, w, h] = m;
+  return Number(w) / Number(h) || 1;
+}
 
 function buildImageGuide(themeName) {
   const theme = (themeName || "").trim() || "seasonal/holiday";
@@ -780,6 +796,7 @@ export default function ThemeStudio() {
                       accept={slot.accept}
                       isAnimation={!!slot.isAnimation}
                       previewSize={slot.previewSize}
+                      aspectRatio={hintAspectRatio(slot.hint)}
                       assetId={draft.assets?.[slot.key] || null}
                       originalAssetId={savedTheme.assets?.[slot.key] || null}
                       onChange={(id) => updateAssets({ [slot.key]: id })}

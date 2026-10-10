@@ -77,7 +77,7 @@ export default function KennelBoard() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {Object.entries(SERVICE_META).filter(([k]) => k !== "other").map(([k, m]) => (
-          <div key={k} className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-3 text-center" data-testid={`kennel-stat-${k}`}>
+          <div key={k} className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-3 text-center overflow-hidden sh-theme-dashboard-overlay" data-testid={`kennel-stat-${k}`}>
             <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas ${m.icon} mr-1`}/>{m.label}</p>
             <p className={`text-2xl font-black mt-1 ${m.color}`}>{board?.summary?.[k] || 0}</p>
           </div>

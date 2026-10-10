@@ -12,7 +12,7 @@ const fmtDate = (value) => {
 function StatCard({ icon, label, value, tone = "green" }) {
   const cls = tone === "red" ? "text-red-300" : tone === "orange" ? "text-shAccent" : tone === "blue" ? "text-shSecondary" : "text-shPrimary";
   return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 overflow-hidden sh-theme-dashboard-overlay">
       <i className={`fas ${icon} ${cls} text-xl`} />
       <div className="text-2xl font-black text-shText mt-2">{value ?? 0}</div>
       <div className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mt-1">{label}</div>
