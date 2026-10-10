@@ -357,6 +357,8 @@ export default function ThemeStudio() {
         brand_accent: draft.brand_accent,
         theme_glow_color: draft.theme_glow_color,
         theme_text_display: draft.theme_text_display,
+        brand_font_family: draft.brand_font_family,
+        brand_display_font_family: draft.brand_display_font_family,
         assets: draft.assets,
         enabled_targets: draft.enabled_targets,
         start_date: draft.start_date,
