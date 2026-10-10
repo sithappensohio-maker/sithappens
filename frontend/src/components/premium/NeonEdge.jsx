@@ -10,12 +10,13 @@
  * cards already call (`strong` → hero, default → standard) so those three
  * cards render byte-identical to before; new callers should prefer
  * `intensity` directly, including the new `subtle` tier it unlocks. */
-import { useTheme } from "../../lib/theme";
+import { useTheme, usePortalSurface } from "../../lib/theme";
 
 export default function NeonEdge({
-  as: Comp = "div", accentRgb, strong = false, intensity, className = "", style = {}, children, ...rest
+  as: Comp = "div", accentRgb, strong = false, intensity, className = "", style = {}, children, frameWidth = "10px", ...rest
 }) {
   const ctx = useTheme();
+  const surface = usePortalSurface();
   const tier = intensity || (strong ? "hero" : "standard");
   const edgeAlpha = { hero: 0.85, standard: 0.45, subtle: 0.22 }[tier];
   const bloom = {
@@ -39,14 +40,30 @@ export default function NeonEdge({
   // border-image ignores border-radius, so an uploaded frame must bake its
   // own rounded/transparent corners into the art — spelled out in the
   // image guide's prompt for this slot.
-  const hasFrame = !!ctx?.branding?.assets?.cardFrame;
+  //
+  // frameWidth lets a genuinely small call site (MiniActionCard's 68px
+  // Quick Actions tiles, AccountsReceivable's compact KPI tiles/toast)
+  // ask for a thinner frame than the 10px default — at those sizes the
+  // full-width frame ate a third or more of the tile before any content
+  // rendered. The slice stays fixed at 64 (how much of the SOURCE image
+  // is sampled) regardless, so a thin frame reads softer/less detailed
+  // than the full-size one, not just narrower — an acceptable tradeoff
+  // for a small decorative edge, which was never going to show full
+  // detail at that size anyway.
+  // Unlike every other asset slot (each gated in CSS via the matching
+  // html[data-theme-target-*] attribute), Card Frame now also respects
+  // Theme Studio's "Enable Theme On" portal toggles — surface comes from
+  // PortalSurfaceProvider (see theme.js); no provider in the tree (e.g. an
+  // isolated test) means "enabled," not "hidden."
+  const targetEnabled = surface ? (ctx?.branding?.enabled_targets?.[surface] ?? true) : true;
+  const hasFrame = !!ctx?.branding?.assets?.cardFrame && targetEnabled;
   const borderStyle = hasFrame
     ? {
-        borderWidth: "10px",
+        borderWidth: frameWidth,
         borderStyle: "solid",
         borderImageSource: "var(--theme-asset-card-frame)",
         borderImageSlice: "64",
-        borderImageWidth: "10px",
+        borderImageWidth: frameWidth,
         borderImageOutset: "0",
         borderImageRepeat: "round",
       }

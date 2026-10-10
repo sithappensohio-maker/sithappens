@@ -12,6 +12,7 @@ export default function MiniActionCard({ icon, label, accent = "lime", onClick, 
       <NeonEdge
         accentRgb={rgb}
         intensity="subtle"
+        frameWidth="5px"
         className={`flex flex-col items-center justify-center gap-1.5 min-h-[68px] px-3 py-2.5 transition duration-200 hover:-translate-y-0.5 w-full ${HOVER_BORDER_CLASS[accent] || ""}`}
       >
         <NeonIconStage icon={icon} accentRgb={rgb} rings={false} sizeClass="w-8 h-8" iconSizeClass="text-sm" />

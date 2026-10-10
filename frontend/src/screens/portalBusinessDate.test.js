@@ -44,7 +44,7 @@ jest.mock("../lib/theme", () => {
   const theme = { branding: { client_portal_controls: { announcement: {
     enabled: true, title: "Closed tomorrow", message: "Back Friday.", start_date: "2026-09-28", end_date: "2026-09-30",
   } } } };
-  return { useFeature: () => true, useTheme: () => theme };
+  return { useFeature: () => true, useTheme: () => theme, PortalSurfaceProvider: ({ children }) => children };
 });
 
 const { api } = require("../lib/api");

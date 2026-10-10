@@ -2,7 +2,7 @@ import { Toaster, toast } from "sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
-import { ThemeProvider, useTheme } from "./lib/theme";
+import { ThemeProvider, useTheme, PortalSurfaceProvider } from "./lib/theme";
 import { addRecent } from "./lib/recentlyOpened";
 import Login from "./screens/Login";
 import Today from "./screens/Today";
@@ -632,6 +632,7 @@ function AdminShell() {
   );
 
   return (
+    <PortalSurfaceProvider value="staff_portal">
     <div className="app-shell h-screen w-screen flex overflow-hidden" style={{ background: "var(--sh-card-base)" }}>
       {/* Desktop sidebar — width responds to collapsed state (w-16 icon-only
           / w-64 full). Transition kept short so the page reflow feels snappy. */}
@@ -792,6 +793,7 @@ function AdminShell() {
                            onSuccess={()=>{ setGlobalModal(null); setPendingPaymentPresetClientId(null); }} />
       )}
     </div>
+    </PortalSurfaceProvider>
   );
 }
 

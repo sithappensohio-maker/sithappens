@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr, vaccineWarningOf } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { PortalSurfaceProvider } from "../lib/theme";
 import BrandFooter from "../components/BrandFooter";
 import AdminTabs from "../components/admin/AdminTabs";
 import ReportCardModal from "../components/ReportCardModal";
@@ -116,6 +117,7 @@ export default function EmployeePortal() {
   }, [tab, canClients, canIncidents, canTraining, canRegister]);
 
   return (
+    <PortalSurfaceProvider value="staff_portal">
     <div className="min-h-screen bg-bgBase flex flex-col pb-safe sh-employee-portal" data-scroll-root data-testid="employee-portal">
       <header className="sh-employee-header sticky top-0 z-30 sh-theme-hero-staff">
         <div className="flex items-center gap-3 min-w-0">
@@ -195,6 +197,7 @@ export default function EmployeePortal() {
 
       <BrandFooter />
     </div>
+    </PortalSurfaceProvider>
   );
 }
 

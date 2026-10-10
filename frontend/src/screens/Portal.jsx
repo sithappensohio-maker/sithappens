@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAuthCart } from "../lib/useAuthCart";
-import { useFeature, useTheme } from "../lib/theme";
+import { useFeature, useTheme, PortalSurfaceProvider } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
 import PortalAgreements from "../components/PortalAgreements";
 import Lightbox from "../components/Lightbox";
@@ -1371,6 +1371,7 @@ export default function Portal() {
   };
 
   return (
+    <PortalSurfaceProvider value="client_portal">
     <div className="app-shell h-full min-h-0 flex bg-bgBase sh-client-portal" data-testid="client-portal">
       <ClientSidebar
         shopCartCount={shopCartCount}
@@ -2887,6 +2888,7 @@ export default function Portal() {
         />
       )}
     </div>
+    </PortalSurfaceProvider>
   );
 }
 

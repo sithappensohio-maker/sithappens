@@ -13,6 +13,22 @@ import { api, API_BASE } from "./api";
 const ThemeCtx = createContext(null);
 export const useTheme = () => useContext(ThemeCtx);
 
+// Which portal shell a component is currently rendering inside — "client_portal"
+// or "staff_portal", matching the keys ThemePresetIn.enabled_targets uses.
+// The ONLY current consumer is NeonEdge.jsx's Card Frame gating: every other
+// asset slot is gated in pure CSS via ancestor/attribute selectors (e.g.
+// html[data-theme-target-client-portal="true"] [data-testid="client-portal"]),
+// but NeonEdge is a single shared "card" primitive used identically by both
+// portals with no DOM-ancestor marker of its own to select on, so there's no
+// CSS-only way to ask "which portal is this instance in." Portal.jsx, App.js's
+// AdminShell, and EmployeePortal.jsx each provide their own value at their
+// root; a NeonEdge rendered outside either (tests, Storybook-style isolation)
+// sees null and falls back to "enabled," matching this feature's original,
+// un-gated behavior rather than silently hiding frames everywhere.
+const PortalSurfaceCtx = createContext(null);
+export const usePortalSurface = () => useContext(PortalSurfaceCtx);
+export const PortalSurfaceProvider = PortalSurfaceCtx.Provider;
+
 const FONT_SIZES = { S: "16px", M: "18.5px", L: "21px", XL: "24px" };
 export const TEXT_SIZE_OPTIONS = [
   { value: "S",  label: "Small" },

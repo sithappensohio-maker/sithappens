@@ -101,7 +101,7 @@ export default function AccountsReceivableTab() {
   return (
     <div className="space-y-4 sh-ar-workspace" data-testid="ar-tab">
       {statementToast && (
-        <SectionCard accent="purple" intensity="subtle" className="py-3" data-testid="ar-statement-toast">
+        <SectionCard accent="purple" intensity="subtle" frameWidth="5px" className="py-3" data-testid="ar-statement-toast">
           <p className="text-[13px] font-bold text-purple-200"><i className="fas fa-envelope-circle-check mr-2 text-purple-300"/>{statementToast}</p>
         </SectionCard>
       )}
