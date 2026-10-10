@@ -827,3 +827,230 @@ def test_schedule_fallback_resets_derived_colors_too():
         assert branding["theme_calendar_active"] == "#8cc63f"
     finally:
         _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+# ───────────────────────────── bulk image upload (filename matching) ───────
+
+def test_match_asset_slot_exact_and_fuzzy_cases():
+    # Exact, case/punctuation-insensitive.
+    assert server._match_asset_slot("heroBackground.png") == ("heroBackground", None)
+    assert server._match_asset_slot("Hero-Background (v2).PNG") == ("heroBackground", None)
+    assert server._match_asset_slot("my photos/herobackground.jpg") == ("heroBackground", None)
+    # Short name uniquely contained BY one slot.
+    assert server._match_asset_slot("sticker.png") == ("cornerSticker", None)
+    # Ambiguous: this short name is a substring of multiple slot names.
+    slot, reason = server._match_asset_slot("accent.png")
+    assert slot is None
+    assert "ambiguous between" in reason
+    # No match at all.
+    slot, reason = server._match_asset_slot("vacation-photo-42.jpg")
+    assert slot is None
+    assert "doesn't match any slot" in reason
+
+
+def test_bulk_upload_matches_named_files_and_creates_assets():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_ids = []
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Target"}).json()
+        theme_id = created["id"]
+
+        import base64
+        png_bytes = base64.b64decode(PNG_DATA_URL.split(",", 1)[1])
+        gif_bytes = base64.b64decode(GIF_DATA_URL.split(",", 1)[1])
+        pack = _make_pack_zip(
+            {"name": "unused"},  # manifest.json present but irrelevant — bulk upload ignores it
+            {
+                "heroBackground.png": png_bytes,
+                "cornerSticker.png": png_bytes,
+                "ambientAnimation.gif": gif_bytes,
+                "readme.txt": b"not an image, should be ignored",
+            },
+        )
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert set(body["matched"].keys()) == {"heroBackground", "cornerSticker", "ambientAnimation"}
+        asset_ids = list(body["matched"].values())
+
+        # Doesn't touch theme_presets at all — caller is responsible for the save.
+        stored = run(server.db.theme_presets.find_one({"id": theme_id}, {"_id": 0}))
+        assert stored["assets"]["heroBackground"] is None
+
+        # But the assets themselves are real and fetchable.
+        g = _call("GET", f"/theme-assets/{body['matched']['heroBackground']}/thumb")
+        assert g.status_code == 200, g.text
+        g2 = _call("GET", f"/theme-assets/{body['matched']['ambientAnimation']}/original")
+        assert g2.status_code == 200, g2.text
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (), asset_ids=asset_ids)
+
+
+def test_bulk_upload_reports_unmatched_and_ambiguous_files_without_erroring():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_ids = []
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Messy"}).json()
+        theme_id = created["id"]
+
+        import base64
+        png_bytes = base64.b64decode(PNG_DATA_URL.split(",", 1)[1])
+        pack = _make_pack_zip({}, {
+            "heroBackground.png": png_bytes,       # matches
+            "accent.png": png_bytes,               # ambiguous across 4 slots
+            "vacation.jpg": png_bytes,              # no match at all
+        })
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        asset_ids = list(body["matched"].values())
+        assert list(body["matched"].keys()) == ["heroBackground"]
+        skipped_names = {s["filename"] for s in body["skipped"]}
+        assert "accent.png" in skipped_names
+        assert "vacation.jpg" in skipped_names
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (), asset_ids=asset_ids)
+
+
+def test_bulk_upload_second_file_for_same_slot_is_skipped_not_overwritten():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_ids = []
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Dupe Slot"}).json()
+        theme_id = created["id"]
+
+        import base64
+        png_bytes = base64.b64decode(PNG_DATA_URL.split(",", 1)[1])
+        pack = _make_pack_zip({}, {
+            "heroBackground.png": png_bytes,
+            "hero-background-alt.png": png_bytes,  # also matches heroBackground
+        })
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        asset_ids = list(body["matched"].values())
+        assert list(body["matched"].keys()) == ["heroBackground"]
+        assert len(body["skipped"]) == 1
+        assert "already matched this slot" in body["skipped"][0]["reason"]
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (), asset_ids=asset_ids)
+
+
+def test_bulk_upload_rejects_a_non_zip_file():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Not A Zip"}).json()
+        theme_id = created["id"]
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", b"not a zip", "application/zip")})
+        assert r.status_code == 400, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_bulk_upload_on_a_nonexistent_theme_is_404():
+    owner = _mk_user("admin")
+    try:
+        pack = _make_pack_zip({})
+        r = _call_upload("POST", f"/settings/themes/{TAG}-nonexistent/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 404, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]])
+
+
+def test_bulk_upload_non_admin_is_403():
+    employee = _mk_user("employee", "daycare_staff")
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Guarded"}).json()
+        theme_id = created["id"]
+        pack = _make_pack_zip({})
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", employee,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 403, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"], employee["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_bulk_upload_parses_colors_json_alongside_images():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_ids = []
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk With Colors"}).json()
+        theme_id = created["id"]
+
+        import base64, json as _json
+        png_bytes = base64.b64decode(PNG_DATA_URL.split(",", 1)[1])
+        colors_payload = _json.dumps({
+            "primary": "#ff7518", "secondary": "#7a3bff",
+            "glow": "#ffb347", "textAccent": "#ffffff",
+        }).encode()
+        pack = _make_pack_zip({}, {
+            "heroBackground.png": png_bytes,
+            "colors.json": colors_payload,
+        })
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        asset_ids = list(body["matched"].values())
+        assert body["colors"] == {
+            "brand_primary": "#ff7518", "brand_accent": "#7a3bff",
+            "theme_glow_color": "#ffb347", "theme_text_display": "#ffffff",
+        }
+        assert body["color_warnings"] == []
+        assert list(body["matched"].keys()) == ["heroBackground"]
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (), asset_ids=asset_ids)
+
+
+def test_bulk_upload_warns_on_unrecognized_or_invalid_colors_but_keeps_the_good_ones():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Bulk Bad Colors"}).json()
+        theme_id = created["id"]
+
+        import json as _json
+        colors_payload = _json.dumps({
+            "primary": "#ff7518",       # good
+            "primary_color": "not-a-hex",  # recognized key, bad value
+            "banana": "#123456",        # unrecognized key
+        }).encode()
+        pack = _make_pack_zip({}, {"colors.json": colors_payload})
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["colors"] == {"brand_primary": "#ff7518"}
+        assert len(body["color_warnings"]) == 2
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_bulk_upload_colors_only_with_no_images_still_works():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Colors Only"}).json()
+        theme_id = created["id"]
+        import json as _json
+        pack = _make_pack_zip({}, {"colors.json": _json.dumps({"primary": "#001122"}).encode()})
+        r = _call_upload("POST", f"/settings/themes/{theme_id}/bulk-upload", owner,
+                          {"file": ("bulk.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["matched"] == {}
+        assert body["colors"] == {"brand_primary": "#001122"}
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())

@@ -103,16 +103,37 @@ function buildImageGuide(themeName) {
     ``,
     `**Brand context** (already baked into each prompt below, repeated here for reference or if you want to write your own): Sit Happens is a dog daycare, boarding, and training business. Its mascot is a **husky** — not a generic dog or golden retriever. The app's visual style is a dark navy background (#060c2e) with neon green, blue, and orange accents.`,
     ``,
-    `Every slot is optional — upload only the ones you want for this theme. "PNG, transparent" slots must have a real transparent background (not white) or they'll show a solid box instead of blending into the page.`,
+    `Every slot is optional — generate only the ones you want for this theme. "PNG, transparent" slots must have a real transparent background (not white) or they'll show a solid box instead of blending into the page.`,
+    ``,
+    `## Uploading everything at once`,
+    ``,
+    `Once you have your images, save each one using the **exact filename** listed below (e.g. \`heroBackground.png\`), put them all in one .zip — no folders needed — and use **"Upload images & colors (.zip)"** in Theme Studio. It matches each file to its slot by name, so there's no manual picking-and-uploading one at a time. Files it can't confidently match are skipped and listed, not guessed at.`,
+    ``,
+    `To set the color palette at the same time, add one more file to the same zip named \`colors.json\`:`,
+    ``,
+    "```json",
+    `{`,
+    `  "primary": "#ff7518",`,
+    `  "secondary": "#7a3bff",`,
+    `  "glow": "#ffb347",`,
+    `  "textAccent": "#ffffff"`,
+    `}`,
+    "```",
+    ``,
+    `All four keys are optional — include only the ones you want to change. Values must be 6-digit hex codes.`,
+    ``,
+    `Either way, review what landed in each slot and the color swatches, then click **Save Theme** — nothing is saved until you do.`,
     ``,
     `---`,
     ``,
   ];
   ASSET_SLOTS.forEach((slot, i) => {
+    const filename = `${slot.key}.${slot.isAnimation ? "gif" : "png"}`;
     lines.push(`## ${i + 1}. ${slot.label}`);
     lines.push(``);
     lines.push(`- **Size:** ${slot.hint}`);
     lines.push(`- **Used for:** ${slot.purpose}`);
+    lines.push(`- **Save this file as:** \`${filename}\``);
     lines.push(``);
     lines.push("**Prompt:**");
     lines.push("```");
@@ -214,7 +235,9 @@ export default function ThemeStudio() {
   const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
   const importInputRef = useRef(null);
+  const bulkUploadInputRef = useRef(null);
 
   const selectForEditing = (theme) => {
     setEditingId(theme.id);
@@ -434,6 +457,52 @@ export default function ThemeStudio() {
     }
   };
 
+  // The one unified upload: a plain .zip of loose images (matched to slots
+  // by filename, no manifest needed) plus an optional colors.json — the
+  // "generate images with an AI, maybe ask it for hex codes too, zip it up"
+  // workflow the image guide below is written for. Only touches the DRAFT,
+  // same as every other upload path on this page — Save Theme still commits
+  // it, so old-asset cleanup and the active-theme live mirror both still
+  // happen exactly once, in exactly one place.
+  const onBulkUploadFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !editingId) return;
+    setBulkUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post(`/settings/themes/${editingId}/bulk-upload`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const matchedCount = Object.keys(data.matched || {}).length;
+      const colorCount = Object.keys(data.colors || {}).length;
+      if (matchedCount) updateAssets(data.matched);
+      if (colorCount) updateDraft(data.colors);
+
+      if (matchedCount || colorCount) {
+        const parts = [];
+        if (matchedCount) parts.push(`${matchedCount} image${matchedCount === 1 ? "" : "s"}`);
+        if (colorCount) parts.push(`${colorCount} color${colorCount === 1 ? "" : "s"}`);
+        toast.success(`${parts.join(" and ")} added — click Save Theme to keep them.`);
+      }
+      const problems = [...(data.skipped || []).map((s) => `${s.filename}: ${s.reason}`),
+                         ...(data.color_warnings || [])];
+      if (problems.length) {
+        const shown = problems.slice(0, 3).join("; ");
+        const more = problems.length > 3 ? ` (+${problems.length - 3} more)` : "";
+        toast.warning(`Skipped: ${shown}${more}`);
+      }
+      if (!matchedCount && !colorCount && !problems.length) {
+        toast.error("That zip didn't contain anything usable.");
+      }
+    } catch (err) {
+      toast.error(formatErr(err.response?.data?.detail) || "Couldn't process that upload.");
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+
   const isActiveTheme = editingId && editingId === branding?.active_theme_id;
 
   return (
@@ -629,18 +698,41 @@ export default function ThemeStudio() {
               <div>
                 <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
                   <h4 className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Theme Images</h4>
-                  <button
-                    type="button"
-                    onClick={() => downloadImageGuide(draft.name)}
-                    data-testid="theme-studio-download-image-guide"
-                    className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:underline"
-                  >
-                    <i className="fas fa-file-lines mr-1" />Download image guide
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => downloadImageGuide(draft.name)}
+                      data-testid="theme-studio-download-image-guide"
+                      className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:underline"
+                    >
+                      <i className="fas fa-file-lines mr-1" />Download image guide
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => bulkUploadInputRef.current?.click()}
+                      disabled={bulkUploading}
+                      data-testid="theme-studio-bulk-upload-btn"
+                      className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:underline disabled:opacity-50"
+                    >
+                      <i className={`fas ${bulkUploading ? "fa-spinner fa-spin" : "fa-upload"} mr-1`} />
+                      {bulkUploading ? "Uploading…" : "Upload images & colors (.zip)"}
+                    </button>
+                    <input
+                      ref={bulkUploadInputRef}
+                      type="file"
+                      accept=".zip,application/zip"
+                      data-testid="theme-studio-bulk-upload-input"
+                      className="hidden"
+                      onChange={onBulkUploadFile}
+                    />
+                  </div>
                 </div>
                 <p className="text-[12px] text-shTextMuted mb-3">
                   Upload custom images for the theme. Recommended sizes are shown below each slot — or download the
-                  guide above for exact specs and ready-to-use AI image prompts for every slot.
+                  guide above for exact specs and ready-to-use AI image prompts, generate the images, then zip them
+                  up (named to match a slot, e.g. <code>heroBackground.png</code>) and upload the whole batch at
+                  once. Add a <code>colors.json</code> to the same zip to set the palette too — see the guide for
+                  the format.
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {ASSET_SLOTS.map((slot) => (
