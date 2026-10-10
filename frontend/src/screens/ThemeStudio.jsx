@@ -11,7 +11,7 @@
 // changes immediately (nothing is duplicated or kept in sync by hand).
 import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
-import { useTheme } from "../lib/theme";
+import { useTheme, FONT_OPTIONS, DISPLAY_FONT_OPTIONS } from "../lib/theme";
 import { toast } from "sonner";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
@@ -188,6 +188,34 @@ function ColorField({ label, sub, value, onChange, testid }) {
           aria-label={`${label} hex value`}
           className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText font-mono"
         />
+      </div>
+    </div>
+  );
+}
+
+function FontField({ label, sub, options, value, onChange, testid }) {
+  return (
+    <div>
+      <label className="text-[12px] font-black text-shText uppercase tracking-widest">{label}</label>
+      {sub && <p className="text-[11px] text-shTextMuted mt-0.5 mb-2">{sub}</p>}
+      <div className="flex flex-wrap gap-2 mt-2" data-testid={testid}>
+        {options.map((opt) => {
+          const active = (value || options[0].value) === opt.value;
+          const styleFam = opt.value === "System" ? "system-ui" : `'${opt.value}'`;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              data-testid={`${testid}-${opt.value}`}
+              onClick={() => onChange(opt.value)}
+              className={`min-h-12 px-4 py-3 rounded-lg border transition text-left ${active ? "border-shPrimary bg-shPrimary/10" : "border-shBorder bg-[var(--sh-card-base)] hover:border-shSecondary/50"}`}
+              style={{ fontFamily: styleFam }}
+            >
+              <span className={`block text-sm font-black ${active ? "text-shPrimary" : "text-shText"}`}>{opt.label}</span>
+              <span className="block text-[11px] text-shTextMuted mt-0.5">Sit Happens Dog Training</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -766,6 +794,31 @@ export default function ThemeStudio() {
                       testid={`theme-studio-color-${f.key}`}
                     />
                   ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1">Fonts</h4>
+                <p className="text-[12px] text-shTextMuted mb-3">
+                  Pair a bold display typeface for headlines with a plain, legible one for everyday text.
+                </p>
+                <div className="space-y-4">
+                  <FontField
+                    label="Display Font"
+                    sub="Page titles, the sidebar wordmark, hero headlines — big, bold text."
+                    options={DISPLAY_FONT_OPTIONS}
+                    value={draft.brand_display_font_family}
+                    onChange={(v) => updateDraft({ brand_display_font_family: v })}
+                    testid="theme-studio-display-font"
+                  />
+                  <FontField
+                    label="Body Font"
+                    sub="Everyday text throughout both portals."
+                    options={FONT_OPTIONS}
+                    value={draft.brand_font_family}
+                    onChange={(v) => updateDraft({ brand_font_family: v })}
+                    testid="theme-studio-body-font"
+                  />
                 </div>
               </div>
             </div>

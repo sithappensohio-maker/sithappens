@@ -34,6 +34,8 @@ export default function ThemeLivePreviewPane({ draft }) {
     "--text-muted": draft?.theme_text_muted,
     "--text-display": draft?.theme_text_display,
     "--card-glow-color": draft?.theme_glow_color || draft?.brand_accent,
+    "--sh-font": draft?.brand_font_family === "System" ? "system-ui" : `'${draft?.brand_font_family || "Inter"}'`,
+    "--sh-display": `'${draft?.brand_display_font_family || "Bowlby One SC"}', Impact, sans-serif`,
     // heroBackground/loginBackground get the same scrim gradient the real
     // app layers in (see themeAssetLayeredValue) so this preview matches
     // what actually renders, not just the raw uploaded image.
@@ -74,7 +76,7 @@ export default function ThemeLivePreviewPane({ draft }) {
 
       <div
         className="rounded-lg overflow-hidden border border-shBorder h-[320px]"
-        style={scopedStyle}
+        style={{ ...scopedStyle, fontFamily: "var(--sh-font)" }}
         data-testid="theme-preview-surface"
       >
         {surface === "client" && <ClientPortalMock assetUrl={assetUrl} />}
@@ -104,7 +106,7 @@ function ClientPortalMock({ assetUrl }) {
             backgroundColor: "var(--bg-panel)",
           }}
         >
-          <span className="font-black text-sm" style={{ color: "var(--text-display)" }}>
+          <span className="font-black text-sm" style={{ color: "var(--text-display)", fontFamily: "var(--sh-display)" }}>
             Welcome back!
           </span>
         </div>
@@ -200,7 +202,7 @@ function LoginPageMock({ assetUrl, loginAccentUrl }) {
             </div>
           )}
         </div>
-        <div className="text-center text-[11px] font-black" style={{ color: "var(--text-display)" }}>
+        <div className="text-center text-[11px] font-black" style={{ color: "var(--text-display)", fontFamily: "var(--sh-display)" }}>
           Sign in to Sit Happens
         </div>
         <div className="h-5 rounded mt-1.5" style={{ backgroundColor: "var(--bg-base)", border: "1px solid var(--bg-hover)" }} />

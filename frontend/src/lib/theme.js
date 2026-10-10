@@ -27,12 +27,28 @@ export const FONT_OPTIONS = [
   { value: "Roboto",  label: "Roboto (classic)" },
   { value: "System",  label: "System UI" },
 ];
+// Theme Studio — the big headline/title typeface (page titles, the sidebar
+// wordmark, hero headlines — everything styled with the .sh-display class),
+// independent of FONT_OPTIONS above (the body typeface). Curated to fonts
+// that stay legible bold/uppercase at large sizes — no fully script/cursive
+// faces, which the app's all-caps display style would mangle.
+export const DISPLAY_FONT_OPTIONS = [
+  { value: "Bowlby One SC", label: "Bowlby One SC (default)" },
+  { value: "Black Ops One", label: "Black Ops One (stencil)" },
+  { value: "Anton",         label: "Anton (condensed bold)" },
+  { value: "Creepster",     label: "Creepster (spooky)" },
+  { value: "Bungee",        label: "Bungee (playful block)" },
+  { value: "Monoton",       label: "Monoton (retro neon)" },
+  { value: "Staatliches",   label: "Staatliches (clean condensed)" },
+  { value: "Fredoka",       label: "Fredoka (rounded friendly)" },
+];
 
 const DEFAULT_BRANDING = {
   brand_primary: "#8cc63f",
   brand_accent:  "#00a9e0",
   brand_warning: "#f26522",
   brand_font_family: "Inter",
+  brand_display_font_family: "Bowlby One SC",
   brand_footer_text: "Sit Happens",
   brand_footer_url: "",
   interface_style: "standard",
@@ -171,6 +187,13 @@ function applyBranding(b) {
   root.style.setProperty("--sh-orange-rgb", hexToRgb(get("brand_warning")));
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
   root.style.setProperty("--sh-font", fam === "System" ? "system-ui" : `'${fam}'`);
+  // Display/headline typeface (page titles, wordmarks, hero text — the
+  // .sh-display class) — separate control from the body font above, so a
+  // theme can pair a bold seasonal display face with a plain, legible body
+  // font. Impact/sans-serif as the universal last resort, same as the
+  // hardcoded --sh-display default in index.css.
+  const displayFam = b.brand_display_font_family || DEFAULT_BRANDING.brand_display_font_family;
+  root.style.setProperty("--sh-display", `'${displayFam}', Impact, sans-serif`);
 
   root.style.setProperty("--bg-base",   get("theme_bg_base"));
   root.style.setProperty("--bg-panel",  get("theme_bg_panel"));

@@ -10690,6 +10690,7 @@ class SettingsIn(BaseModel):
     brand_accent: Optional[str] = None       # CSS color for accents/highlights (default #00a9e0 blue)
     brand_warning: Optional[str] = None      # CSS color for warnings/alerts (default #f26522 orange)
     brand_font_family: Optional[str] = None  # one of: Inter, Nunito, Poppins, Roboto, System
+    brand_display_font_family: Optional[str] = None  # the big headline/title typeface — see THEME_FIELD_KEYS
     # Footer pill (Sprint 76)
     brand_footer_text: Optional[str] = None  # text shown in the bottom-right pill (default "Sit Happens")
     brand_footer_url: Optional[str] = None   # link target (default "" = no link, just text)
@@ -10720,6 +10721,12 @@ class SettingsIn(BaseModel):
 THEME_FIELD_KEYS = (
     "brand_primary", "brand_accent", "brand_warning", "brand_font_family",
     "brand_footer_text", "brand_footer_url", "interface_style",
+    # Theme Studio — the big display/headline typeface (page titles, the
+    # sidebar wordmark, hero headlines), separate from brand_font_family
+    # (the body typeface) so a theme can pair a bold seasonal display face
+    # with a plain, highly-legible body font instead of forcing one
+    # typeface to do both jobs.
+    "brand_display_font_family",
     "theme_bg_base", "theme_bg_panel", "theme_bg_header", "theme_bg_hover",
     "theme_text_primary", "theme_text_muted", "theme_text_display",
     "theme_btn_primary_bg", "theme_btn_primary_fg",
@@ -10742,6 +10749,7 @@ _THEME_DEFAULTS = {
     "brand_accent": "#00a9e0",
     "brand_warning": "#f26522",
     "brand_font_family": "Inter",
+    "brand_display_font_family": "Bowlby One SC",
     "brand_footer_text": "Sit Happens",
     "brand_footer_url": "",
     "interface_style": "standard",
@@ -10795,6 +10803,7 @@ class ThemePresetIn(BaseModel):
     brand_accent: Optional[str] = None
     brand_warning: Optional[str] = None
     brand_font_family: Optional[str] = None
+    brand_display_font_family: Optional[str] = None
     brand_footer_text: Optional[str] = None
     brand_footer_url: Optional[str] = None
     interface_style: Optional[Literal["subtle", "standard", "bold"]] = None
@@ -10928,6 +10937,7 @@ async def fetch_branding():
         "brand_accent":      _tv("brand_accent")      or "#00a9e0",
         "brand_warning":     _tv("brand_warning")     or "#f26522",
         "brand_font_family": _tv("brand_font_family") or "Inter",
+        "brand_display_font_family": _tv("brand_display_font_family") or "Bowlby One SC",
         "brand_footer_text": _tv("brand_footer_text") or "Sit Happens",
         "brand_footer_url":  _tv("brand_footer_url")  or "",
         "interface_style":   _tv("interface_style")   or "standard",
