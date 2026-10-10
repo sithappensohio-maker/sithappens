@@ -46,6 +46,7 @@ export const ADMIN_PATH_BY_TAB = {
   bulkemail: "/admin/bulk-email",
   audit: "/admin/audit-log",
   settings: "/admin/settings",
+  theme_studio: "/admin/theme-studio",
   tutorials: "/admin/help",
 };
 
@@ -144,6 +145,7 @@ const SIMPLE_ROUTE_TO_TAB = {
   "announcements": "announcements",
   "bulk-email": "bulkemail",
   "audit-log": "audit",
+  "theme-studio": "theme_studio",
   "help": "tutorials",
 };
 

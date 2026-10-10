@@ -8,6 +8,18 @@ test("major admin destinations have durable canonical URLs", () => {
   expect(adminPathForTab("income")).toBe("/admin/finance");
 });
 
+test("Theme Studio has a durable canonical URL that round-trips back to its tab id", () => {
+  // Regression: adding a nav entry to App.js's NAV_ITEMS/NAV_GROUPS alone is
+  // not enough — adminPathForTab() silently falls back to "/admin/today" for
+  // any tab id missing from ADMIN_PATH_BY_TAB, and parseAdminLocation() does
+  // the same for any URL segment missing from SIMPLE_ROUTE_TO_TAB. Clicking
+  // the Theme Studio sidebar link hit exactly this before both maps got an
+  // entry — it silently bounced back to Today with no error.
+  expect(adminPathForTab("theme_studio")).toBe("/admin/theme-studio");
+  expect(parseAdminLocation("/admin/theme-studio").tab).toBe("theme_studio");
+  expect(parseAdminLocation("/admin/theme-studio").needsCanonicalRedirect).toBeFalsy();
+});
+
 test("Schedule and Training child destinations get nested URLs while retaining legacy tab ids", () => {
   expect(adminPathForTab("bookings")).toBe("/admin/schedule/bookings");
   expect(adminPathForTab("waitlist")).toBe("/admin/schedule/waitlist");

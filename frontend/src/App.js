@@ -18,6 +18,7 @@ import Dogs from "./screens/Dogs";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
 import Settings from "./screens/Settings";
+import ThemeStudio from "./screens/ThemeStudio";
 import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Income from "./screens/Income";
@@ -192,7 +193,7 @@ function AdminShell() {
     { label: "Shop", ids: ["shop_manager"] },
     { label: "Money", ids: ["income", "gift_cards", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
-    { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "tutorials"] },
+    { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "theme_studio", "tutorials"] },
   ];
   // The three core operating areas are open by default; secondary/admin groups stay collapsed.
   const DEFAULT_COLLAPSED_GROUPS = Object.fromEntries(
@@ -761,6 +762,7 @@ function AdminShell() {
             initialSection={searchTarget?.kind === "settings" ? searchTarget.section : "__overview__ops"}
             onSectionChange={(section)=>navigateAdmin("settings", { kind: "settings", section })}
           />}
+          {tab === "theme_studio" && navAllowed("theme_studio") && <ThemeStudio />}
           {tab === "tutorials" && navAllowed("tutorials") && <Tutorials role="admin" />}
         </div>
       </main>
@@ -905,6 +907,7 @@ export const NAV_ITEMS = [
     { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "manage_communications" },
     { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "audit_log" },
     { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
+    { id: "theme_studio", label: "Theme Studio", icon: "fa-palette", perm: "settings" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
 ];
 

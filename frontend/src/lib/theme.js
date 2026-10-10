@@ -55,6 +55,7 @@ const DEFAULT_BRANDING = {
   theme_calendar_active:      "#8cc63f",
   theme_table_hover:          "#1a225a",
   theme_row_border:           "#1a225a",
+  theme_glow_color:           "#00a9e0",
 };
 
 const INTERFACE_STYLES = {
@@ -105,7 +106,7 @@ function hexToHueDeg(hex) {
 // Studio uploads reuse (thumb/card/pdp/zoom); `original` is the one
 // exception, for the animation slot, which is never resized so a GIF/WEBP
 // keeps its animation frames intact.
-const THEME_ASSET_SLOT_CONFIG = {
+export const THEME_ASSET_SLOT_CONFIG = {
   heroBackground:          { cssVar: "--theme-asset-hero-background",           size: "pdp" },
   sidebarAccentTop:        { cssVar: "--theme-asset-sidebar-accent-top",        size: "card" },
   sidebarAccentBottom:     { cssVar: "--theme-asset-sidebar-accent-bottom",     size: "card" },
@@ -120,7 +121,9 @@ const THEME_ASSET_SLOT_CONFIG = {
   ambientAnimation:        { cssVar: "--theme-asset-ambient-animation",         size: "original" },
 };
 
-function themeAssetUrl(assetId, size) {
+// Exported so Theme Studio's live-preview pane can resolve the exact same
+// URLs for a DRAFT (unsaved) theme without duplicating this logic.
+export function themeAssetUrl(assetId, size) {
   return `${API_BASE}/theme-assets/${encodeURIComponent(assetId)}/${size}`;
 }
 
@@ -166,18 +169,23 @@ function applyBranding(b) {
   const splatterRotate = Math.round(splatterHue - SPLATTER_BASELINE_HUE);
   root.style.setProperty("--splatter-filter", splatterRotate === 0 ? "none" : `hue-rotate(${splatterRotate}deg) saturate(1.15)`);
 
-  // One app-wide card chrome setting. Border/glow color follows the current
-  // brand accent, so the UI remains coherent when the brand palette changes.
+  // One app-wide card chrome setting. Border follows the current brand
+  // accent; glow has its own field (Theme Studio's 4th quick-palette
+  // swatch) so a theme can glow a different color than its accent/link
+  // color — it defaults to the same accent value when unset, so every
+  // theme saved before this field existed renders identically to before.
   const styleId = INTERFACE_STYLES[b.interface_style] ? b.interface_style : "standard";
   const style = INTERFACE_STYLES[styleId];
   const accent = get("brand_accent");
   const accentRgb = hexToRgb(accent);
+  const glow = b.theme_glow_color || accent;
+  const glowRgb = hexToRgb(glow);
   root.setAttribute("data-interface-style", styleId);
   root.style.setProperty("--card-border-color", accent);
   root.style.setProperty("--card-border-rgba", `rgba(${accentRgb}, ${style.borderOpacity})`);
   root.style.setProperty("--card-border-width", `${style.borderWidth}px`);
-  root.style.setProperty("--card-glow-color", accent);
-  root.style.setProperty("--card-glow-rgba", `rgba(${accentRgb}, ${style.glowOpacity})`);
+  root.style.setProperty("--card-glow-color", glow);
+  root.style.setProperty("--card-glow-rgba", `rgba(${glowRgb}, ${style.glowOpacity})`);
   root.style.setProperty("--card-glow-blur", `${style.glowBlur}px`);
   root.style.setProperty("--card-inner-highlight-color", "#FFFFFF");
   root.style.setProperty("--card-inner-highlight-rgba", `rgba(255, 255, 255, ${style.innerOpacity})`);

@@ -10727,6 +10727,11 @@ THEME_FIELD_KEYS = (
     "theme_btn_danger_bg", "theme_btn_danger_fg",
     "theme_input_bg", "theme_input_border", "theme_input_focus",
     "theme_calendar_active", "theme_table_hover", "theme_row_border",
+    # Theme Studio (Stage 2) — the 4th quick-palette swatch. Independent of
+    # brand_accent now (which it silently rode on before this existed) so a
+    # theme can keep its accent color for links/info while using a
+    # different color for card glow/highlight.
+    "theme_glow_color",
 )
 
 # Copied verbatim from GET /branding's fallback chain (fetch_branding, below)
@@ -10759,6 +10764,7 @@ _THEME_DEFAULTS = {
     "theme_calendar_active": "#8cc63f",
     "theme_table_hover": "#1a225a",
     "theme_row_border": "#1a225a",
+    "theme_glow_color": "#00a9e0",
 }
 
 
@@ -10793,6 +10799,7 @@ class ThemePresetIn(BaseModel):
     theme_input_focus: Optional[str] = None
     theme_calendar_active: Optional[str] = None
     theme_table_hover: Optional[str] = None
+    theme_glow_color: Optional[str] = None
     theme_row_border: Optional[str] = None
     # Theme Studio (Stage 1) — metadata, asset slots, deployment/scheduling,
     # and inheritance. Additive on top of the color/font layer above; none
@@ -10919,6 +10926,7 @@ async def fetch_branding():
         "theme_text_primary":       s.get("theme_text_primary")       or "#e2e8f0",
         "theme_text_muted":         s.get("theme_text_muted")         or "#94a3b8",
         "theme_text_display":       s.get("theme_text_display")       or "#ffffff",
+        "theme_glow_color":         s.get("theme_glow_color")         or "#00a9e0",
         "theme_btn_primary_bg":     s.get("theme_btn_primary_bg")     or s.get("brand_primary") or "#8cc63f",
         "theme_btn_primary_fg":     s.get("theme_btn_primary_fg")     or "#03061a",
         "theme_btn_secondary_border": s.get("theme_btn_secondary_border") or "#1a225a",

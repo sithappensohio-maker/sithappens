@@ -199,6 +199,38 @@ def test_activate_mirrors_extended_fields_onto_branding():
         _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
 
 
+def test_theme_glow_color_is_independent_of_accent():
+    """Stage 2's 4th quick-palette swatch — must round-trip separately from
+    brand_accent, and default to the accent value for a preset that never
+    set it (every preset saved before this field existed)."""
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        r = _call("POST", "/settings/themes", owner, {
+            "name": "Glow Theme", "brand_accent": "#111111", "theme_glow_color": "#ff00ff",
+        })
+        assert r.status_code == 200, r.text
+        body = r.json()
+        theme_id = body["id"]
+        assert body["brand_accent"] == "#111111"
+        assert body["theme_glow_color"] == "#ff00ff"
+
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+        branding = _call("GET", "/branding").json()
+        assert branding["brand_accent"] == "#111111"
+        assert branding["theme_glow_color"] == "#ff00ff"
+
+        r2 = _call("POST", "/settings/themes", owner, {"name": "No Glow Set"})
+        theme_id_2 = r2.json()["id"]
+        try:
+            assert r2.json()["theme_glow_color"] == "#00a9e0"
+        finally:
+            _cleanup(theme_ids=[theme_id_2])
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
 def test_branding_extended_defaults_when_no_theme_active():
     owner = _mk_user("admin")
     try:
