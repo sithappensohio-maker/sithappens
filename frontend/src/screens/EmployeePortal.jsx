@@ -32,6 +32,19 @@ import Incidents from "./Incidents";
 import Pipeline from "./Pipeline";
 import { RegisterTab } from "./Staff";
 import AdminBookingModal from "../components/AdminBookingModal";
+import StepHeader from "../components/StepHeader";
+
+// Every tab's content opens with one of these — a quick one-line "what is
+// this screen for" banner, same visual language as Register's own banner
+// (Staff.jsx), just using this file's own bgPanel/shBlue tokens (the same
+// CSS variables under different names — see StepHeader's own comment).
+function InfoBanner({ icon, children }) {
+  return (
+    <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300 mb-4">
+      <i className={`fas ${icon} text-shBlue mr-2`} />{children}
+    </div>
+  );
+}
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -233,6 +246,7 @@ function ClockTab() {
 
   return (
     <div className="space-y-5" data-testid="clock-tab">
+      <InfoBanner icon="fa-clock">Clock in and out, and keep an eye on today's hours and pay.</InfoBanner>
       <div className={`rounded-xl p-5 border ${open ? "bg-shGreen/10 border-shGreen/40" : "bg-bgPanel border-bgHover"}`} data-testid="clock-status">
         <p className="text-[13px] font-black uppercase tracking-widest text-gray-400 mb-2">
           {open ? <span className="text-shGreen">Currently clocked in</span> : "Not clocked in"}
@@ -295,7 +309,7 @@ function ClockTab() {
 
       {data.today_entries?.length > 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="today-entries">
-          <p className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">Today's entries</p>
+          <StepHeader icon="fa-list" title="Today's Entries" />
           <div className="space-y-2">
             {data.today_entries.map(e => (
               <div key={e.id} className="bg-bgBase/60 rounded p-2 text-sm flex justify-between gap-2">
@@ -384,6 +398,7 @@ function RosterTab() {
 
   return (
     <div className="space-y-3" data-testid="roster-tab">
+      <InfoBanner icon="fa-paw">Check dogs in and out, log feeding/meds/bathroom breaks, and start a walk-in.</InfoBanner>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-white font-black uppercase italic tracking-tight">Today · {date}</h3>
         <div className="flex items-center gap-3">
@@ -587,6 +602,7 @@ function TimecardTab() {
 
   return (
     <div className="space-y-4" data-testid="timecard-tab">
+      <InfoBanner icon="fa-receipt">Your hours, pay, and punch history — request a correction if something's off.</InfoBanner>
       {/* Live-pay tile while clocked in */}
       {data.live && (
         <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-4" data-testid="timecard-live">
@@ -629,6 +645,7 @@ function TimecardTab() {
           </button>
         </div>
       </div>
+      <StepHeader icon="fa-calendar-days" title="Daily Breakdown" />
       {Object.keys(grouped).length === 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No entries in this window.</div>
       )}
@@ -716,14 +733,15 @@ function ProfileTab({ user }) {
   };
   return (
     <div className="space-y-4" data-testid="profile-tab">
+      <InfoBanner icon="fa-user">Your account info, and a place to update your password.</InfoBanner>
       <div className="bg-bgPanel border border-bgHover rounded-xl p-5 space-y-2">
-        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Profile</p>
+        <StepHeader n={1} icon="fa-id-card" title="Profile" />
         <p className="text-base text-white"><span className="text-gray-500">Name:</span> {user.name}</p>
         <p className="text-base text-white"><span className="text-gray-500">Email:</span> {user.email}</p>
         <p className="text-base text-white"><span className="text-gray-500">Role:</span> Employee</p>
       </div>
       <div className="bg-bgPanel border border-bgHover rounded-xl p-5 space-y-3">
-        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Change password</p>
+        <StepHeader n={2} icon="fa-lock" title="Change Password" />
         <input type="password" value={pw.current} onChange={(e)=>setPw({...pw,current:e.target.value})} placeholder="Current password"
                autoComplete="current-password" data-testid="pw-current"
                className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
@@ -771,7 +789,8 @@ function MyTasksTab() {
 
   return (
     <div className="space-y-5" data-testid="my-tasks-tab">
-      <Section title="Assigned to me" testid="mine-list">
+      <InfoBanner icon="fa-list-check">Tasks assigned to you, today's bookings, and anything open to claim.</InfoBanner>
+      <Section title="Assigned to me" icon="fa-user-check" testid="mine-list">
         {data.tasks.length === 0 && <p className="text-gray-500 text-sm">Nothing assigned yet.</p>}
         {data.tasks.map(t => (
           <div key={t.id} className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid={`mine-task-${t.id}`}>
@@ -784,7 +803,7 @@ function MyTasksTab() {
           </div>
         ))}
       </Section>
-      <Section title="Today's bookings on me" testid="my-bookings">
+      <Section title="Today's bookings on me" icon="fa-paw" testid="my-bookings">
         {data.today_bookings.length === 0 && <p className="text-gray-500 text-sm">No bookings assigned today.</p>}
         {data.today_bookings.map(b => (
           <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={`my-booking-${b.id}`}>
@@ -794,7 +813,7 @@ function MyTasksTab() {
         ))}
       </Section>
       {data.vaccine_reviews.length > 0 && (
-        <Section title="Vaccine reviews on me" testid="my-vax">
+        <Section title="Vaccine reviews on me" icon="fa-syringe" testid="my-vax">
           {data.vaccine_reviews.map((v, i) => (
             <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-3">
               <p className="font-black text-white">{v.dog_name} · {v.vaccine}</p>
@@ -803,7 +822,7 @@ function MyTasksTab() {
           ))}
         </Section>
       )}
-      <Section title="Unassigned · claim if you can take it" testid="unassigned-list">
+      <Section title="Unassigned · claim if you can take it" icon="fa-hand" testid="unassigned-list">
         {data.unassigned_tasks.length === 0 && <p className="text-gray-500 text-sm">Nothing to claim.</p>}
         {data.unassigned_tasks.map(t => (
           <div key={t.id} className="bg-bgPanel border border-shGreen/30 rounded-xl p-4" data-testid={`claimable-${t.id}`}>
@@ -820,10 +839,10 @@ function MyTasksTab() {
   );
 }
 
-function Section({ title, testid, children }) {
+function Section({ title, icon = "fa-circle-dot", testid, children }) {
   return (
     <div data-testid={testid}>
-      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-2">{title}</p>
+      <StepHeader icon={icon} title={title} />
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -846,7 +865,7 @@ function MyScheduleTab() {
 
   return (
     <div className="space-y-3" data-testid="my-schedule-tab">
-      <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Next 14 days</p>
+      <InfoBanner icon="fa-calendar-week">Your upcoming shifts for the next 14 days.</InfoBanner>
       {data.shifts.length === 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No upcoming shifts.</div>
       )}
@@ -958,8 +977,9 @@ function TimeOffTab() {
 
   return (
     <div className="space-y-3" data-testid="timeoff-tab">
+      <InfoBanner icon="fa-umbrella-beach">Request time off and track where each request stands.</InfoBanner>
       <div className="flex justify-between items-center">
-        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">My requests</p>
+        <StepHeader icon="fa-list" title="My Requests" />
         <button onClick={()=>setShowForm(true)} data-testid="timeoff-new-btn"
                 className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
           <i className="fas fa-plus mr-1"/>Request time off
@@ -1534,6 +1554,7 @@ function TriviaTab() {
   const q = questions[idx];
   return (
     <div className="space-y-4" data-testid="trivia-tab">
+      <InfoBanner icon="fa-brain">Quick trivia to sharpen your dog-care know-how.</InfoBanner>
       <div className="flex items-center justify-between text-[12px] font-black uppercase tracking-widest">
         <span className="text-gray-500">Question {idx + 1} / {questions.length}</span>
         <span className="text-gray-400">

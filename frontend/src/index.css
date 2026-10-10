@@ -2453,7 +2453,42 @@ html, body, #root {
 .sh-employee-logout:hover { color:#fca5a5; border-color:rgba(239,68,68,.4); }
 .sh-employee-nav { padding:7px 10px; border-bottom:1px solid var(--sh-border); background:rgba(5,8,16,.93); backdrop-filter:blur(12px); }
 .sh-employee-nav .sh-admin-tabs { border:0; background:transparent; box-shadow:none; }
-.sh-employee-nav .sh-admin-tabs__track { padding:0; }
+.sh-employee-nav .sh-admin-tabs__track { padding:0; gap:7px; }
+/* Each tab reads as its own button at rest, not just plain text in a row —
+   the shared .sh-admin-tabs__item only gets a visible border/background on
+   hover or when active, which read fine inside the admin shell's own
+   bordered track but disappeared entirely once the track's own border/
+   background were stripped for this nav (right above). */
+.sh-employee-nav .sh-admin-tabs__item {
+  background: rgba(255,255,255,.035);
+  border-color: var(--sh-border);
+  box-shadow: inset 0 1px rgba(255,255,255,.02);
+}
+.sh-employee-nav .sh-admin-tabs__item:hover:not(:disabled) {
+  background: rgba(255,255,255,.07);
+  border-color: color-mix(in srgb, var(--sh-secondary) 35%, var(--sh-border));
+}
+/* Taller buttons, better touch targets. The 3-class selector (vs. the
+   2-class global `.sh-admin-tabs--compact .sh-admin-tabs__item`, which this
+   nav also carries) out-specifies it regardless of source order, including
+   inside the global mobile media query further down this file. */
+.sh-employee-nav .sh-admin-tabs--compact .sh-admin-tabs__item {
+  min-height: 48px;
+  padding: 11px 16px;
+}
+/* Each tab now carries its accent modifier class at rest (not just when
+   active — see AdminTabs.jsx), so the row reads as genuinely different
+   colors per section instead of every tab being the same neutral gray
+   until clicked. Kept subtle at rest; the existing .is-active rules stay
+   the much bolder "this is the one you're on" signal. */
+.sh-employee-nav .sh-admin-tabs__item--lime { border-color: color-mix(in srgb, var(--sh-primary) 28%, var(--sh-border)); background: color-mix(in srgb, var(--sh-primary) 7%, rgba(255,255,255,.035)); }
+.sh-employee-nav .sh-admin-tabs__item--cyan { border-color: color-mix(in srgb, var(--sh-secondary) 28%, var(--sh-border)); background: color-mix(in srgb, var(--sh-secondary) 7%, rgba(255,255,255,.035)); }
+.sh-employee-nav .sh-admin-tabs__item--orange { border-color: color-mix(in srgb, var(--sh-accent) 28%, var(--sh-border)); background: color-mix(in srgb, var(--sh-accent) 7%, rgba(255,255,255,.035)); }
+.sh-employee-nav .sh-admin-tabs__item--purple { border-color: rgba(168,85,247,.3); background: rgba(168,85,247,.07); }
+.sh-employee-nav .sh-admin-tabs__item--lime .sh-admin-tabs__icon { color: var(--sh-primary); opacity: .9; }
+.sh-employee-nav .sh-admin-tabs__item--cyan .sh-admin-tabs__icon { color: var(--sh-secondary); opacity: .9; }
+.sh-employee-nav .sh-admin-tabs__item--orange .sh-admin-tabs__icon { color: var(--sh-accent); opacity: .9; }
+.sh-employee-nav .sh-admin-tabs__item--purple .sh-admin-tabs__icon { color: #a855f7; opacity: .9; }
 .sh-employee-portal main > .bg-bgPanel,
 .sh-employee-portal main > div > .bg-bgPanel,
 .sh-employee-portal main .bg-bgPanel.border {

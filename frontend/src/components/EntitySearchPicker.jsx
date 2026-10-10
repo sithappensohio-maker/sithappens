@@ -90,15 +90,26 @@ export default function EntitySearchPicker({
           </div>
         </div>
       ) : (
-        <div className="flex items-center gap-3 bg-[var(--sh-card-base)]/60 border border-shBorder rounded-xl p-3" data-testid={`${testid}-selected-card`}>
-          <EntityAvatarImg photo={photos[selectedId]} label={selected?.primaryLabel} sizeClass="w-14 h-14 text-[18px]" />
-          <div className="flex-1 min-w-0">
-            {renderSelected ? renderSelected(selected) : (
-              <>
-                <div className="text-[16px] font-black text-shText truncate">{selected?.primaryLabel || "—"}</div>
-                <div className="text-[13px] text-shTextMuted truncate">{selected?.secondaryLabel}</div>
-              </>
-            )}
+        // flex-wrap + a minimum width on the avatar/name group: on a narrow
+        // column (a guided-flow card, not the old full-width grid cell this
+        // was built for) there isn't always room for avatar + name + the
+        // "Change" button on one line. Without this, the name group still
+        // gets squeezed to near-zero width and `truncate` reduces a real
+        // name down to a single letter — the button never gives up space
+        // since nothing forces it to. Letting the button wrap to its own
+        // line below keeps the name legible; on a wide column both still
+        // sit on one row exactly as before.
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-[var(--sh-card-base)]/60 border border-shBorder rounded-xl p-3" data-testid={`${testid}-selected-card`}>
+          <div className="flex items-center gap-3 flex-1 min-w-[160px]">
+            <EntityAvatarImg photo={photos[selectedId]} label={selected?.primaryLabel} sizeClass="w-14 h-14 text-[18px]" />
+            <div className="flex-1 min-w-0">
+              {renderSelected ? renderSelected(selected) : (
+                <>
+                  <div className="text-[16px] font-black text-shText truncate">{selected?.primaryLabel || "—"}</div>
+                  <div className="text-[13px] text-shTextMuted truncate">{selected?.secondaryLabel}</div>
+                </>
+              )}
+            </div>
           </div>
           <button type="button" onClick={() => setSearchOpen(true)} data-testid={`${testid}-change`}
                   className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80 whitespace-nowrap">

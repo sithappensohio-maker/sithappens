@@ -114,7 +114,8 @@ test("Sell Credits: no 'walk-in' option (client required) and the picked client 
   await searchAndPickClient("Alex", "c1");
   expect(q("register-client-selected-card").textContent).toContain("Alex Morgan");
 
-  await setFieldValue(labelField("Credit pack / single-day credit"), "pk1");
+  // Sell Credits picks the pack via a tappable card, not a <select>.
+  await click(q("pack-option-pk1"));
   await click(buttonWithText("Sell credit order"));
 
   const packCall = posted.find((p) => p.path === "/clients/c1/sell-packs");

@@ -17,6 +17,7 @@ import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
 import { toast } from "sonner";
 import EntitySearchPicker from "../components/EntitySearchPicker";
+import StepHeader from "../components/StepHeader";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -57,6 +58,44 @@ function RegisterSelect({ label, value, onChange, children }) {
         {children}
       </select>
     </RegisterFormInput>
+  );
+}
+
+// A selectable credit-pack card — same tappable-card language as
+// EntitySearchPicker's result rows, for the "pick one of a few options"
+// step of a guided Register flow.
+function PackOptionCard({ pack, selected, onSelect, testid }) {
+  const icon = { daycare: "fa-paw", boarding: "fa-house", training: "fa-graduation-cap", grooming: "fa-shower" }[pack.service_type] || "fa-ticket";
+  return (
+    <button type="button" onClick={() => onSelect(pack.id)} data-testid={testid}
+            className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition ${selected ? "border-shPrimary bg-shPrimary/10" : "border-shBorder hover:border-shPrimary/50 bg-[var(--sh-card-base)]/60"}`}>
+      <span className="flex items-center gap-3 min-w-0">
+        <span className={`w-10 h-10 rounded-lg grid place-items-center shrink-0 ${selected ? "bg-shPrimary/20 text-shPrimary" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
+          <i className={`fas ${icon}`} />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-shText font-black text-[14px] truncate">{pack.name}</span>
+          <span className="block text-shTextMuted text-[12px] truncate">{Number(pack.qty || 0) > 1 ? `Use for ${pack.qty} ${pack.service_type} visits` : `Use for one ${pack.service_type} visit`}</span>
+        </span>
+      </span>
+      <span className="text-shText font-black text-[15px] shrink-0">${Number(pack.price || 0).toFixed(2)}</span>
+    </button>
+  );
+}
+
+// -/count/+ quantity control for the order-details step of a guided
+// Register flow, in place of a plain number input.
+function QuantityStepper({ value, onChange, min = 1, testid }) {
+  const n = Math.max(min, Number(value) || min);
+  return (
+    <div className="flex items-center gap-2" data-testid={testid}>
+      <button type="button" onClick={() => onChange(String(Math.max(min, n - 1)))} data-testid={testid ? `${testid}-dec` : undefined}
+              className="w-8 h-8 rounded bg-[var(--sh-card-base)] border border-shBorder text-shText font-black grid place-items-center hover:border-shPrimary">−</button>
+      <input type="number" min={min} value={value} onChange={e => onChange(e.target.value)} data-testid={testid ? `${testid}-input` : undefined}
+             className="w-16 text-center bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+      <button type="button" onClick={() => onChange(String(n + 1))} data-testid={testid ? `${testid}-inc` : undefined}
+              className="w-8 h-8 rounded bg-shPrimary text-bgHeader font-black grid place-items-center hover:bg-shPrimary/90">+</button>
+    </div>
   );
 }
 
@@ -2003,6 +2042,11 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const expenseLineTotal = expenseUnit > 0 ? expenseQty * expenseUnit : Number(expense.amount || 0);
   const packQty = Math.max(1, Number(packSale.quantity || 1));
   const packOrderTotal = selectedPack ? Number(selectedPack.price || 0) * packQty : 0;
+  // Multi-visit bundles vs. single-day credits get their own visual group in
+  // the Sell Credits pack picker, matching how the business itself talks
+  // about the two (a "pack" vs. "a single day").
+  const multiPacks = packs.filter(p => Number(p.qty || 0) > 1);
+  const singlePacks = packs.filter(p => Number(p.qty || 0) <= 1);
   const money = (n) => `$${Number(n || 0).toFixed(2)}`;
   const moneyOrMissing = (n) => n === null || n === undefined ? "Not entered" : money(n);
   const suggestedOpening = data?.opening_rollover?.suggested_cash;
@@ -2444,43 +2488,93 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         <button disabled={busy || !sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log sale"}</button>
       </div>}
 
-      {active === "pack" && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
-        <h4 className="text-shText font-black uppercase italic"><i className="fas fa-ticket text-shSecondary mr-2"/>Sell Credit Pack</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {clientSelect(packSale.client_id, v=>setPackSale({...packSale, client_id:v}), false)}
-          <RegisterSelect label="Credit pack / single-day credit" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
-            <option value="">Choose pack…</option>{packs.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} {p.service_type} · {money(p.price)}</option>)}
-          </RegisterSelect>
-          <RegisterFormInput label="Quantity to sell" type="number" step="1" value={packSale.quantity} onChange={v=>setPackSale({...packSale, quantity:v})} placeholder="1"/>
-          {methodSelect(packSale.payment_method, v=>setPackSale({...packSale, payment_method:v}))}
-          <RegisterFormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(packOrderTotal)}` : "blank = full price"}/>
-          <RegisterFormInput label="Note" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})}/>
+      {active === "pack" && <div data-testid="register-pack-tab">
+        <div className="bg-shSecondary/10 border border-shSecondary/40 rounded p-3 text-[13px] text-shTextMuted mb-3">
+          <i className="fas fa-ticket text-shSecondary mr-2"/>Sell a prepaid credit pack or single-day credit onto a client's account.
         </div>
-        {selectedPack && <div className="bg-[var(--sh-card-base)]/70 border border-shBorder rounded p-3 text-[13px] text-shTextMuted space-y-1">
-          <div><span className="font-black text-shText">Credits added:</span> {packQty * Number(selectedPack.qty || 0)} {selectedPack.service_type || "service"} credits</div>
-          <div><span className="font-black text-shText">Order total:</span> {packQty} × {money(selectedPack.price)} = {money(packOrderTotal)}</div>
-          <div className="text-[11px] text-shTextMuted">Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</div>
-        </div>}
-        <button disabled={busy || !packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Sell credit order"}</button>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+            <StepHeader n={1} icon="fa-user" title="Select Client"/>
+            {clientSelect(packSale.client_id, v=>setPackSale({...packSale, client_id:v}), false)}
+          </div>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+            <StepHeader n={2} icon="fa-tag" title="Select Credit Pack or Single-Day Credit"/>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {packs.length === 0 && <p className="text-[13px] text-shTextMuted italic">No credit packs configured.</p>}
+              {multiPacks.map(p => (
+                <PackOptionCard key={p.id} pack={p} selected={packSale.pack_id === p.id} testid={`pack-option-${p.id}`}
+                                 onSelect={v=>setPackSale({...packSale, pack_id:v})}/>
+              ))}
+              {singlePacks.length > 0 && (
+                <>
+                  <p className="text-center text-[10px] font-black uppercase tracking-widest text-shTextMuted pt-1">or purchase a single-day credit</p>
+                  {singlePacks.map(p => (
+                    <PackOptionCard key={p.id} pack={p} selected={packSale.pack_id === p.id} testid={`pack-option-${p.id}`}
+                                     onSelect={v=>setPackSale({...packSale, pack_id:v})}/>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+            <StepHeader n={3} icon="fa-cart-shopping" title="Order Details"/>
+            {selectedPack ? (
+              <div className="pb-2 border-b border-shBorder">
+                <p className="text-shText font-black text-[14px] truncate">{selectedPack.name}</p>
+                <p className="text-shTextMuted text-[12px]">{money(selectedPack.price)} each</p>
+              </div>
+            ) : <p className="text-[13px] text-shTextMuted italic pb-2 border-b border-shBorder">Pick a pack to continue.</p>}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Quantity</span>
+              <QuantityStepper value={packSale.quantity} onChange={v=>setPackSale({...packSale, quantity:v})} testid="pack-qty"/>
+            </div>
+            {methodSelect(packSale.payment_method, v=>setPackSale({...packSale, payment_method:v}))}
+            <RegisterFormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(packOrderTotal)}` : "blank = full price"}/>
+            <RegisterFormInput label="Note (optional)" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})} placeholder="e.g. promotion, reason, internal note…"/>
+            {selectedPack && <div className="bg-[var(--sh-card-base)]/70 border border-shBorder rounded p-3 text-[13px] text-shTextMuted space-y-1">
+              <div><span className="font-black text-shText">Credits added:</span> {packQty * Number(selectedPack.qty || 0)} {selectedPack.service_type || "service"} credits</div>
+              <div><span className="font-black text-shText">Order total:</span> {packQty} × {money(selectedPack.price)} = {money(packOrderTotal)}</div>
+              <div className="text-[11px] text-shTextMuted">Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</div>
+            </div>}
+            <button disabled={busy || !packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale}
+                    className="w-full bg-shPrimary disabled:opacity-50 text-bgHeader py-3 rounded-lg text-[13px] font-black uppercase tracking-widest">
+              <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-ticket"} mr-2`}/>{busy ? "Saving…" : `Sell credit order${selectedPack ? ` • ${money(packOrderTotal)}` : ""}`}
+            </button>
+          </div>
+        </div>
       </div>}
 
-      {active === "payment" && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
-        <h4 className="text-shText font-black uppercase italic"><i className="fas fa-hand-holding-dollar text-shPrimary mr-2"/>Record Client Payment</h4>
-        <p className="text-[12px] text-shTextMuted">Use this for a client paying an account balance/tab outside a booking checkout.</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {clientSelect(payment.client_id, v=>setPayment({...payment, client_id:v}), false)}
-          <RegisterFormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
-          {methodSelect(payment.method, v=>setPayment({...payment, method:v}))}
-          {payment.method === "cash" && (
-            <RegisterFormInput label="Cash received" type="number" step="0.01" value={payment.tendered_amount} onChange={v=>setPayment({...payment, tendered_amount:v})} placeholder="Bills handed over"/>
-          )}
-          <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
+      {active === "payment" && <div data-testid="register-payment-tab">
+        <div className="bg-shSecondary/10 border border-shSecondary/40 rounded p-3 text-[13px] text-shTextMuted mb-3">
+          <i className="fas fa-hand-holding-dollar text-shSecondary mr-2"/>Use this for a client paying an account balance/tab outside a booking checkout.
         </div>
-        {payment.method === "cash" && Number(payment.tendered_amount || 0) > Number(payment.amount || 0) && (
-          <p className="text-[12px] text-shPrimary font-black">Change due: {money(Number(payment.tendered_amount) - Number(payment.amount || 0))}</p>
-        )}
-        {selectedClient(payment.client_id) && <p className="text-[12px] text-shTextMuted">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-shText">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
-        <button disabled={busy || !payment.client_id || !Number(payment.amount) || (payment.method === "cash" && Number(payment.tendered_amount || 0) < Number(payment.amount || 0) - 0.005)} onClick={submitPayment} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record payment"}</button>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+            <StepHeader n={1} icon="fa-user" title="Select Client"/>
+            {clientSelect(payment.client_id, v=>setPayment({...payment, client_id:v}), false)}
+            {selectedClient(payment.client_id) && (
+              <p className="text-[12px] text-shTextMuted mt-3 pt-3 border-t border-shBorder">
+                Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-shText">{money(selectedClient(payment.client_id).account_balance)}</span>
+              </p>
+            )}
+          </div>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+            <StepHeader n={2} icon="fa-dollar-sign" title="Payment Details"/>
+            <RegisterFormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
+            {methodSelect(payment.method, v=>setPayment({...payment, method:v}))}
+            {payment.method === "cash" && (
+              <RegisterFormInput label="Cash received" type="number" step="0.01" value={payment.tendered_amount} onChange={v=>setPayment({...payment, tendered_amount:v})} placeholder="Bills handed over"/>
+            )}
+            <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
+            {payment.method === "cash" && Number(payment.tendered_amount || 0) > Number(payment.amount || 0) && (
+              <p className="text-[12px] text-shPrimary font-black">Change due: {money(Number(payment.tendered_amount) - Number(payment.amount || 0))}</p>
+            )}
+            <button disabled={busy || !payment.client_id || !Number(payment.amount) || (payment.method === "cash" && Number(payment.tendered_amount || 0) < Number(payment.amount || 0) - 0.005)} onClick={submitPayment}
+                    className="w-full bg-shPrimary disabled:opacity-50 text-bgHeader py-3 rounded-lg text-[13px] font-black uppercase tracking-widest">
+              <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-2`}/>{busy ? "Saving…" : `Record payment${Number(payment.amount) > 0 ? ` • ${money(payment.amount)}` : ""}`}
+            </button>
+          </div>
+        </div>
       </div>}
 
       {active === "refund" && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">

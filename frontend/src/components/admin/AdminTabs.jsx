@@ -33,7 +33,7 @@ export default function AdminTabs({
               disabled={disabled}
               data-testid={item.testid}
               title={item.title}
-              className={`sh-admin-tabs__item ${active ? `is-active ${ACCENTS[item.accent || accent] || ACCENTS.lime}` : ""}`}
+              className={`sh-admin-tabs__item ${ACCENTS[item.accent || accent] || ACCENTS.lime} ${active ? "is-active" : ""}`}
             >
               {item.icon && <i className={`fas ${item.icon} sh-admin-tabs__icon`} />}
               <span>{item.label}</span>
