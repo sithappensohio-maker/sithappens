@@ -71,6 +71,7 @@ html, body, #root {
   --theme-asset-announcement-accent: none;
   --theme-asset-empty-state-illustration: none;
   --theme-asset-ambient-animation: none;
+  --theme-asset-card-frame: none;
 }
 
 /* ==========================================================================

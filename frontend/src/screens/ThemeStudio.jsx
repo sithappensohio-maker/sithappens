@@ -1,5 +1,5 @@
 // Theme Studio — Admin → Theme Studio. The full visual editor for a saved
-// theme preset: upload seasonal/holiday artwork into the 12 asset slots,
+// theme preset: upload seasonal/holiday artwork into the 13 asset slots,
 // pick the 4 quick-palette colors, preview it live across three surfaces,
 // and choose when/where it deploys — all on top of the Stage 1 backend
 // (theme_presets' extended fields + the /theme-assets endpoints).
@@ -91,6 +91,12 @@ const ASSET_SLOTS = [
     accept: "image/gif,image/webp", previewSize: "original", isAnimation: true,
     purpose: "A small looping animated sticker in the same hero corner spot as the corner sticker — shown instead of it when animation is turned on.",
     promptTemplate: "A short, SIMPLE looping animation (GIF or animated WEBP), 400×400px, transparent background, of one small {THEME} element with gentle motion (e.g. a twinkling star, falling snow). Keep the file small — well under 5MB — and the loop short and seamless. Avoid fast flashing or strobing.",
+  },
+  {
+    key: "cardFrame", label: "Card Frame", hint: "600 × 600px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "An ornate border wrapped around every card and tile across both portals (stat tiles, action cards, panels) — a full frame, not a watermark.",
+    promptTemplate: "A 600×600px PNG border frame for {THEME} — ornate decorative artwork (vines, icons, patterns fitting the theme) running around the OUTER EDGE only, forming a band roughly 15-20% of the image's width in from each side. CRITICAL technical requirements, since this gets stretched/tiled onto cards of many different sizes and shapes: (1) the entire CENTER of the image must be FULLY TRANSPARENT — nothing painted there, it's cut away and the card's own background shows through; (2) all FOUR CORNERS must also be FULLY TRANSPARENT in a rounded shape (about a 48px radius quarter-circle cut into each corner) — the app cannot round a border-image's corners itself, so the rounding has to be baked into the image's own transparency, matching this app's rounded-corner card style; (3) keep the border band's own pattern fairly even/repeatable along each edge rather than one single unrepeated scene, since the edges get tiled to fit each card's actual size. Transparent PNG only — this will look broken as a solid-background JPG.",
   },
 ];
 

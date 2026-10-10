@@ -21,6 +21,19 @@ export default function ThemeLivePreviewPane({ draft }) {
 
   const loginAccentUrl = assetUrl("loginAccent", "card");
   const cornerStickerUrl = assetUrl("cornerSticker", "card");
+  const cardFrameUrl = assetUrl("cardFrame", "card");
+  // Mirrors NeonEdge.jsx's own border-image logic (see its comment for why
+  // this needs a real borderWidth change, not just swapping an image url)
+  // at a smaller scale that fits this preview's tiny mock tiles.
+  const cardFrameStyle = cardFrameUrl ? {
+    borderWidth: "6px",
+    borderStyle: "solid",
+    borderImageSource: `url("${cardFrameUrl}")`,
+    borderImageSlice: "64",
+    borderImageWidth: "6px",
+    borderImageOutset: "0",
+    borderImageRepeat: "round",
+  } : null;
 
   const scopedStyle = {
     "--sh-green": draft?.brand_primary,
@@ -79,15 +92,15 @@ export default function ThemeLivePreviewPane({ draft }) {
         style={{ ...scopedStyle, fontFamily: "var(--sh-font)" }}
         data-testid="theme-preview-surface"
       >
-        {surface === "client" && <ClientPortalMock assetUrl={assetUrl} />}
-        {surface === "staff" && <StaffPortalMock />}
+        {surface === "client" && <ClientPortalMock assetUrl={assetUrl} cardFrameStyle={cardFrameStyle} />}
+        {surface === "staff" && <StaffPortalMock cardFrameStyle={cardFrameStyle} />}
         {surface === "login" && <LoginPageMock assetUrl={assetUrl} loginAccentUrl={loginAccentUrl} />}
       </div>
     </div>
   );
 }
 
-function ClientPortalMock({ assetUrl }) {
+function ClientPortalMock({ assetUrl, cardFrameStyle }) {
   const heroUrl = assetUrl("heroBackground", "card");
   return (
     <div className="flex h-full">
@@ -119,7 +132,7 @@ function ClientPortalMock({ assetUrl }) {
             <div
               key={item.label}
               className="flex-1 rounded p-2 text-center"
-              style={{ backgroundColor: "var(--bg-panel)", border: "1px solid var(--card-glow-color)" }}
+              style={{ backgroundColor: "var(--bg-panel)", ...(cardFrameStyle || { border: "1px solid var(--card-glow-color)" }) }}
             >
               <i className={`fas ${item.icon} text-xs`} style={{ color: "var(--text-primary)" }} />
               <div className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
@@ -133,7 +146,7 @@ function ClientPortalMock({ assetUrl }) {
   );
 }
 
-function StaffPortalMock() {
+function StaffPortalMock({ cardFrameStyle }) {
   return (
     <div className="flex h-full">
       <div className="w-12 bg-bgHeader flex flex-col items-center gap-3 py-3">
@@ -148,7 +161,7 @@ function StaffPortalMock() {
             { value: "3", label: "Arriving" },
             { value: "$240", label: "Amount Due" },
           ].map((tile) => (
-            <div key={tile.label} className="flex-1 rounded p-2 text-center" style={{ backgroundColor: "var(--bg-panel)" }}>
+            <div key={tile.label} className="flex-1 rounded p-2 text-center" style={{ backgroundColor: "var(--bg-panel)", ...(cardFrameStyle || {}) }}>
               <div className="text-lg font-black" style={{ color: "var(--sh-green)" }}>
                 {tile.value}
               </div>

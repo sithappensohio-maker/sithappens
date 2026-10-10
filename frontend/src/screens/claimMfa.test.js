@@ -5,7 +5,15 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
-jest.mock("axios", () => ({ get: jest.fn(), post: jest.fn() }));
+// get/post are mocked for this test's own direct axios calls; create is the
+// REAL axios.create so lib/api.js (now pulled in transitively via
+// NeonEdge -> lib/theme -> lib/api, since NeonEdge reads theme context for
+// the Card Frame asset) gets a real, fully-featured instance to attach its
+// interceptors to — it never actually fires a request during this test.
+jest.mock("axios", () => {
+  const actual = jest.requireActual("axios");
+  return { get: jest.fn(), post: jest.fn(), create: actual.create };
+});
 jest.mock("../components/PublicBrandShell", () => ({
   __esModule: true,
   default: ({ children, title }) => <div data-testid="shell"><h1>{title}</h1>{children}</div>,

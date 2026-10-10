@@ -145,6 +145,12 @@ export const THEME_ASSET_SLOT_CONFIG = {
   announcementAccent:      { cssVar: "--theme-asset-announcement-accent",       size: "thumb" },
   emptyStateIllustration:  { cssVar: "--theme-asset-empty-state-illustration",  size: "card" },
   ambientAnimation:        { cssVar: "--theme-asset-ambient-animation",         size: "original" },
+  // A 9-slice border-image frame around every NeonEdge card (NeonEdge.jsx) —
+  // stat tiles, action cards, panels, in both portals. No scrim (it's a
+  // border, not a background behind text) and no per-surface targeting
+  // (card chrome has always been one app-wide control via interface_style,
+  // never split by client/staff portal — this matches that precedent).
+  cardFrame:               { cssVar: "--theme-asset-card-frame",               size: "card" },
 };
 
 // Exported so Theme Studio's live-preview pane can resolve the exact same

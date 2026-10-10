@@ -10845,7 +10845,7 @@ class ThemePresetIn(BaseModel):
     extends_theme_id: Optional[str] = None  # unset asset/color on this theme falls back to the parent's
 
 
-# The 12 asset slots a theme may fill. Each value is a theme_assets id (see
+# The 13 asset slots a theme may fill. Each value is a theme_assets id (see
 # the /theme-assets endpoints below) or None — an empty slot renders nothing,
 # never a broken image. Kept as an explicit allowlisted sub-model (same
 # "strict, not extra=allow" posture as ThemePresetIn) rather than a bare
@@ -10856,6 +10856,7 @@ THEME_ASSET_SLOTS = (
     "sectionHeaderBackground", "dashboardCardOverlay", "eventBanner",
     "loginBackground", "loginAccent", "cornerSticker",
     "announcementAccent", "emptyStateIllustration", "ambientAnimation",
+    "cardFrame",
 )
 
 
@@ -10872,6 +10873,7 @@ class ThemeAssetsIn(BaseModel):
     announcementAccent: Optional[str] = None
     emptyStateIllustration: Optional[str] = None
     ambientAnimation: Optional[str] = None
+    cardFrame: Optional[str] = None
 
 
 class ThemeTargetsIn(BaseModel):
@@ -11476,7 +11478,7 @@ def _normalize_asset_filename(name: str) -> str:
 
 
 def _match_asset_slot(filename: str):
-    """Which of the 12 slots this filename is for, by name alone — the whole
+    """Which of the 13 slots this filename is for, by name alone — the whole
     point of bulk upload is that it needs no manifest. Returns (slot, None)
     on a confident match or (None, reason) to explain why it didn't, so the
     caller can tell the admin exactly which file to rename and how.
@@ -11551,7 +11553,7 @@ def _parse_colors_json(raw: bytes):
 @api.post("/settings/themes/{theme_id}/bulk-upload")
 async def bulk_upload_theme_assets(theme_id: str, file: UploadFile = File(...), user: dict = Depends(require_admin_and_permission("settings"))):
     """The one unified "I generated/collected a batch of stuff for this
-    theme" upload — a plain .zip of loose image files (matched to the 12
+    theme" upload — a plain .zip of loose image files (matched to the 13
     slots by filename via _match_asset_slot) plus an OPTIONAL colors.json
     for the 4 quick-palette colors. No manifest.json needed — that's what
     import_theme_pack is for (round-tripping a pack THIS app exported
