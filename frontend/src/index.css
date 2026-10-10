@@ -2041,14 +2041,26 @@ html, body, #root {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 18px;
-  /* Theme Studio — padded/rounded/positioned so the sectionHeaderBackground
-     hook below (same rule PageHero's 36 screens already use) has a real
-     card shape to sit inside, instead of painting a background behind bare
-     text sitting directly on the page. ScheduleWorkspace/TrainingWorkspace/
-     SchoolHQ use this component instead of PageHero for their top header —
-     same "shown constantly" character as PageHero's screens, so it shares
-     that same ×0.35 knockdown rather than Shop/Photography's full
-     strength. */
+}
+/* Theme Studio — padded/rounded/positioned so the sectionHeaderBackground
+   hook below (same rule PageHero's 36 screens already use) has a real
+   card shape to sit inside, instead of painting a background behind bare
+   text sitting directly on the page. ScheduleWorkspace/TrainingWorkspace/
+   SchoolHQ use this component instead of PageHero for their top header —
+   same "shown constantly" character as PageHero's screens, so it shares
+   that same ×0.35 knockdown rather than Shop/Photography's full
+   strength.
+   --decorated is added by AdminPageHeader.jsx itself only when a real
+   image is active — NOT unconditional. The padding/rounding has nothing
+   to do with these 3 screens otherwise, and applying it regardless of
+   whether there's an image broke their alignment against the tab bar/
+   content directly below (which has no matching padding of its own) on
+   every page view, theme or no theme — caught live after the fact.
+   Note for later: `isolation: isolate` traps a future `action` prop's
+   z-index (e.g. a dropdown menu) within this element's stacking context
+   while decorated — no current call site passes `action`, so this is
+   dormant, not a live bug, but worth remembering if one ever does. */
+.sh-admin-page-header--decorated {
   position: relative;
   isolation: isolate;
   border-radius: 16px;
@@ -2951,8 +2963,19 @@ html[data-theme-intensity="bold"] {
    `position:relative`, destroying their layout — so instead its pseudo-
    elements sit at z-index:-2, one level further back than PageHero's own
    decorations, letting them paint without touching any of its children. */
+/* :not(.sticky) on the staff selector matters: EmployeePortal's header
+   (the only real sh-theme-hero-staff call site) carries Tailwind's
+   `sticky top-0` utility. A bare `position: relative` here has the same
+   specificity as `.sticky` and loads later in the stylesheet, so it won
+   the tie and silently turned the header from sticky into a normal
+   in-flow element — same root cause, same fix shape, as the mobile nav
+   drawer's `position: fixed` collision found earlier (see
+   .sh-theme-sidebar-client/-staff below). `position: sticky` already
+   establishes its own stacking context and containing block for the
+   ::before/::after decorations below, same as `fixed` did there, so it
+   never needed `relative`/`isolate` to begin with. */
 .sh-theme-hero-client,
-.sh-theme-hero-staff {
+.sh-theme-hero-staff:not(.sticky) {
   position: relative;
   isolation: isolate;
 }
@@ -3209,7 +3232,7 @@ html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after 
    would get old fast. staff-portal-gated: PageHero has no client-portal or
    login call sites. */
 .sh-page-hero:not([data-testid="today-page-hero"])::before,
-.sh-admin-page-header::before {
+.sh-admin-page-header--decorated::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -3222,7 +3245,7 @@ html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after 
   z-index: -2;
 }
 html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="today-page-hero"])::before,
-html[data-theme-target-staff-portal="true"] .sh-admin-page-header::before {
+html[data-theme-target-staff-portal="true"] .sh-admin-page-header--decorated::before {
   background-image: var(--theme-asset-section-header-background, none);
 }
 
@@ -3376,9 +3399,12 @@ html[data-theme-target-staff-portal="true"] .app-shell .sh-theme-empty-state::af
    the focused /login route keeps it on the page's own outer wrapper
    (Login.jsx, `focus` branch) since that page is only about one hero's
    worth of content tall, but the long marketing landing (`focus` false)
-   scopes it to just the hero `<section>` instead of the whole
-   multi-thousand-px page, so `cover` doesn't scale the image up to the
-   page's full scroll height and crop it down to an illegible sliver. */
+   and the rest of the public website (PublicHome/PublicTraining/
+   PublicPages' About-Photography-Contact/PublicEvent/PublicPhotoSpecial —
+   all share Login's landing page's `sh-public-landing` shell) scope it to
+   just their own hero `<section>` instead of the whole multi-thousand-px
+   page, so `cover` doesn't scale the image up to the page's full scroll
+   height and crop it down to an illegible sliver. */
 .sh-theme-login-bg {
   position: relative;
 }
