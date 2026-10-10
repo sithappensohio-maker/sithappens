@@ -2896,6 +2896,23 @@ a.bg-shGreen::after,
 :root {
   --theme-decoration-opacity: 0.75;
   --theme-decoration-badge-opacity: 1;
+  /* A dark layer painted BETWEEN the real UI and any uploaded photo/
+     illustration — on top of the image in paint order (the first listed
+     background-image is the topmost), so legibility never depends on how
+     bright or busy the admin's own art happens to be. Intensity still
+     scales how much of the IMAGE shows through underneath (via
+     --theme-decoration-opacity on the whole layer), but the scrim itself
+     stays constant — "Bold" was always meant to mean "show more of my
+     picture," never "stop protecting the text sitting on top of it".
+     Two shapes: "directional" darkens the left zone (title/eyebrow text)
+     and right zone (header actions / avatar menu) harder than the middle,
+     for hero banners where real content sits at both edges; "flat" dims
+     the whole layer evenly, for badges/overlays with centered content. */
+  --theme-decoration-scrim-directional: linear-gradient(to right,
+    rgba(3, 6, 15, 0.82) 0%, rgba(3, 6, 15, 0.78) 10%,
+    rgba(3, 6, 15, 0.32) 38%, rgba(3, 6, 15, 0.32) 62%,
+    rgba(3, 6, 15, 0.7) 90%, rgba(3, 6, 15, 0.78) 100%);
+  --theme-decoration-scrim-flat: linear-gradient(rgba(3, 6, 15, 0.52), rgba(3, 6, 15, 0.52));
 }
 html[data-theme-intensity="subtle"] {
   --theme-decoration-opacity: 0.4;
@@ -2926,6 +2943,21 @@ html[data-theme-intensity="bold"] {
   position: relative;
   isolation: isolate;
 }
+/* Taller, so an uploaded hero image actually has room to read as a banner
+   rather than a thin strip. The staff header (EmployeePortal) stays more
+   modest than the other two — it's `sticky top-0`, so it eats into the
+   viewport for the whole time someone's scrolled past it, unlike Today's
+   hero and the client portal header, which are both normal in-flow
+   elements that scroll away like anything else. */
+.sh-theme-hero-client {
+  min-height: 200px;
+}
+.sh-theme-hero-staff {
+  min-height: 140px;
+}
+[data-testid="today-page-hero"] {
+  min-height: 220px;
+}
 .sh-theme-hero-client > *,
 .sh-theme-hero-staff > * {
   position: relative;
@@ -2937,9 +2969,17 @@ html[data-theme-intensity="bold"] {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background-repeat: no-repeat;
-  background-size: cover;
-  background-position: center;
+  /* 2 layers whenever an asset is actually set (scrim + photo — see
+     THEME_SCRIM_BY_SLOT in lib/theme.js, which bakes the scrim into this
+     SAME custom property's value, conditionally, only when a real asset
+     url is there), 1 layer ("none") when it isn't — background-repeat/
+     -size/-position only need to describe as many layers as are ever
+     actually present, since a CSS layer list is matched left-to-right and
+     any extra repeat/size/position values beyond the image count are
+     simply unused, never an error. */
+  background-repeat: no-repeat, no-repeat;
+  background-size: cover, cover;
+  background-position: center, center;
   opacity: var(--theme-decoration-opacity);
   pointer-events: none;
   z-index: 0;
@@ -2949,9 +2989,9 @@ html[data-theme-intensity="bold"] {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background-repeat: no-repeat;
-  background-size: cover;
-  background-position: center;
+  background-repeat: no-repeat, no-repeat;
+  background-size: cover, cover;
+  background-position: center, center;
   opacity: var(--theme-decoration-opacity);
   pointer-events: none;
   z-index: -2;
@@ -3079,6 +3119,23 @@ html[data-theme-target-client-portal="true"] .sh-theme-sidebar-header-client::be
 }
 html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::before {
   background-image: var(--theme-asset-sidebar-accent-top, none);
+}
+/* When the logo/wordmark is hidden in favor of a full header image (App.js
+   hasStaffHeaderImage / Portal.jsx hasSidebarHeaderImage), the image is the
+   ONLY thing in this box — it should fill it edge-to-edge at full opacity,
+   not sit "contain"-sized and scaled by theme intensity like a watermark
+   behind real content that no longer exists here. min-height keeps the box
+   a real banner instead of collapsing to just the collapse/close button row. */
+.sh-theme-sidebar-header-filled::before,
+.sh-theme-sidebar-header-filled-compact::before {
+  background-size: cover;
+  opacity: 1;
+}
+.sh-theme-sidebar-header-filled {
+  min-height: 112px;
+}
+.sh-theme-sidebar-header-filled-compact {
+  min-height: 56px;
 }
 
 /* Event banner: both cards render nothing at all when there's no upcoming

@@ -106,14 +106,24 @@ function hexToHueDeg(hex) {
 // Studio uploads reuse (thumb/card/pdp/zoom); `original` is the one
 // exception, for the animation slot, which is never resized so a GIF/WEBP
 // keeps its animation frames intact.
+// `scrim` marks the slots that are full backgrounds sitting directly behind
+// real UI (text, header actions, stat numbers) — these get a dark layer
+// painted on top of the image, via themeAssetLayeredValue below, so
+// legibility never depends on how bright the admin's own upload is.
+// "directional" darkens the left (title/eyebrow text) and right (header
+// actions / avatar menu) zones harder than the middle, for banners with
+// real content at both edges; "flat" dims evenly, for centered content
+// (stat tiles). Small accents/badges/illustrations (corner sticker, login
+// accent, empty-state art, etc.) are left unscrimmed — they're decorative
+// elements in their own right, not backgrounds text needs to sit on top of.
 export const THEME_ASSET_SLOT_CONFIG = {
-  heroBackground:          { cssVar: "--theme-asset-hero-background",           size: "pdp" },
+  heroBackground:          { cssVar: "--theme-asset-hero-background",           size: "pdp",      scrim: "directional" },
   sidebarAccentTop:        { cssVar: "--theme-asset-sidebar-accent-top",        size: "card" },
   sidebarAccentBottom:     { cssVar: "--theme-asset-sidebar-accent-bottom",     size: "card" },
-  sectionHeaderBackground: { cssVar: "--theme-asset-section-header-background", size: "card" },
-  dashboardCardOverlay:    { cssVar: "--theme-asset-dashboard-card-overlay",    size: "card" },
-  eventBanner:             { cssVar: "--theme-asset-event-banner",              size: "pdp" },
-  loginBackground:         { cssVar: "--theme-asset-login-background",          size: "pdp" },
+  sectionHeaderBackground: { cssVar: "--theme-asset-section-header-background", size: "card",      scrim: "directional" },
+  dashboardCardOverlay:    { cssVar: "--theme-asset-dashboard-card-overlay",    size: "card",      scrim: "flat" },
+  eventBanner:             { cssVar: "--theme-asset-event-banner",              size: "pdp",       scrim: "directional" },
+  loginBackground:         { cssVar: "--theme-asset-login-background",          size: "pdp",       scrim: "flat" },
   loginAccent:             { cssVar: "--theme-asset-login-accent",              size: "card" },
   cornerSticker:           { cssVar: "--theme-asset-corner-sticker",            size: "card" },
   announcementAccent:      { cssVar: "--theme-asset-announcement-accent",       size: "thumb" },
@@ -125,6 +135,24 @@ export const THEME_ASSET_SLOT_CONFIG = {
 // URLs for a DRAFT (unsaved) theme without duplicating this logic.
 export function themeAssetUrl(assetId, size) {
   return `${API_BASE}/theme-assets/${encodeURIComponent(assetId)}/${size}`;
+}
+
+// The value a slot's CSS var should actually hold: "none" when nothing's
+// uploaded (so a theme with no hero image shows no gradient either — the
+// scrim is conditional on there being a real photo to protect text FROM,
+// never applied on its own), otherwise the plain image url for an
+// unscrimmed slot, or "scrim-gradient, image-url" for a scrimmed one. Baked
+// in here, once, in JS — rather than composed in CSS via var(a), var(b,
+// none) — specifically because CSS can't conditionally drop a layer based
+// on whether ANOTHER var resolved to "none"; the scrim would otherwise
+// paint unconditionally even on a theme with no image for that slot at all.
+export function themeAssetLayeredValue(slot, assetId, size) {
+  if (!assetId) return "none";
+  const url = `url("${themeAssetUrl(assetId, size)}")`;
+  const scrim = THEME_ASSET_SLOT_CONFIG[slot]?.scrim;
+  if (scrim === "directional") return `var(--theme-decoration-scrim-directional), ${url}`;
+  if (scrim === "flat") return `var(--theme-decoration-scrim-flat), ${url}`;
+  return url;
 }
 
 function applyBranding(b) {
@@ -197,8 +225,7 @@ function applyBranding(b) {
   // (data-theme-target-* below); this just makes the pictures addressable.
   const assets = b.assets || {};
   for (const [slot, { cssVar, size }] of Object.entries(THEME_ASSET_SLOT_CONFIG)) {
-    const assetId = assets[slot];
-    root.style.setProperty(cssVar, assetId ? `url("${themeAssetUrl(assetId, size)}")` : "none");
+    root.style.setProperty(cssVar, themeAssetLayeredValue(slot, assets[slot], size));
   }
 
   // Per-surface opt-in (Client Portal / Staff Portal / Login), theme

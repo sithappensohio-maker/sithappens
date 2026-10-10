@@ -36,6 +36,7 @@ export default function ClientSidebar({
   showPhotography = false,
   showMessages = true,
   showHelp = false,
+  hasHeaderImage = false,
   onHome, onBook, onSchool, onShop, onPhotography, onMessages,
   onMyDogs, onPayments, onCredits, onRewards, onRefer, onHelp,
 }) {
@@ -51,10 +52,16 @@ export default function ClientSidebar({
       style={{ background: "var(--sh-card-base)" }}
       data-testid="client-sidebar"
     >
-      <div className="relative px-5 py-6 flex items-center justify-start border-b border-shBorder overflow-hidden sh-theme-sidebar-header-client">
-        <span aria-hidden="true" className="pointer-events-none absolute inset-0"
-              style={{ background: "radial-gradient(80% 120% at 20% 30%, rgba(140,198,63,0.12), transparent 60%), radial-gradient(70% 100% at 90% 80%, rgba(0,169,224,0.08), transparent 60%)" }}/>
-        <img src="/logo.png" alt="Sit Happens" className="relative z-10 h-14 w-auto" />
+      {/* A theme-uploaded sidebar banner replaces the stock logo entirely
+          (rather than sitting faintly behind it) and fills this area. */}
+      <div className={`relative px-5 py-6 flex items-center justify-start border-b border-shBorder overflow-hidden sh-theme-sidebar-header-client ${hasHeaderImage ? "sh-theme-sidebar-header-filled" : ""}`}>
+        {!hasHeaderImage && (
+          <>
+            <span aria-hidden="true" className="pointer-events-none absolute inset-0"
+                  style={{ background: "radial-gradient(80% 120% at 20% 30%, rgba(140,198,63,0.12), transparent 60%), radial-gradient(70% 100% at 90% 80%, rgba(0,169,224,0.08), transparent 60%)" }}/>
+            <img src="/logo.png" alt="Sit Happens" className="relative z-10 h-14 w-auto" />
+          </>
+        )}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
         <NavItem icon="fa-house" label="Home" itemKey="home" active={activeKey === "home"} onSelect={setActiveKey} onClick={onHome} />

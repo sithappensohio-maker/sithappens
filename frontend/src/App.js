@@ -419,11 +419,18 @@ function AdminShell() {
 
   const handleNav = (id) => { setTab(id); setDrawerOpen(false); };
 
+  // A theme-uploaded sidebar banner replaces the stock logo/wordmark
+  // entirely (rather than sitting faintly behind it) — it only makes sense
+  // as a full custom header, not a watermark competing with real branding.
+  const hasStaffHeaderImage = !!branding?.assets?.sidebarAccentTop && (branding?.enabled_targets?.staff_portal ?? true);
+
   const sidebarContent = (prefix, collapsed = false) => (
     <>
       {/* Real logo, subtle lime/cyan halo — unchanged from before, just
-          converted to the new near-black/border tokens. */}
-      <div className={`relative shrink-0 border-b border-shBorder overflow-hidden sh-theme-sidebar-header-staff ${collapsed ? "p-2" : "p-3"}`}>
+          converted to the new near-black/border tokens. Hidden entirely
+          when a theme's sidebar banner image is active (see
+          hasStaffHeaderImage) — the image fills this whole area instead. */}
+      <div className={`relative shrink-0 border-b border-shBorder overflow-hidden sh-theme-sidebar-header-staff ${hasStaffHeaderImage ? (collapsed ? "sh-theme-sidebar-header-filled-compact" : "sh-theme-sidebar-header-filled") : ""} ${collapsed ? "p-2" : "p-3"}`}>
         <div className="flex items-center justify-between gap-2 mb-2">
           {prefix === "" && (
             <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
@@ -440,7 +447,7 @@ function AdminShell() {
             </button>
           )}
         </div>
-        {!collapsed && (
+        {!collapsed && !hasStaffHeaderImage && (
           <div className="relative px-1 pb-1">
             <div className="absolute inset-0 pointer-events-none opacity-45 blur-2xl"
                  style={{ background: "radial-gradient(circle at 35% 25%, rgba(140,198,63,0.30) 0%, rgba(0,169,224,0.18) 48%, transparent 76%)" }}/>
@@ -455,7 +462,7 @@ function AdminShell() {
             </div>
           </div>
         )}
-        {collapsed && (
+        {collapsed && !hasStaffHeaderImage && (
           <img src="/logo.png" alt="Sit Happens"
                className="h-9 mx-auto drop-shadow-[0_4px_12px_rgba(0,0,0,0.55)]"
                data-testid={`${prefix}sidebar-logo`} />

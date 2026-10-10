@@ -5,7 +5,7 @@
 // div (never touches document.documentElement — that's the live global
 // theme, this is just a preview of an in-progress edit).
 import { useState } from "react";
-import { themeAssetUrl } from "../../lib/theme";
+import { themeAssetUrl, themeAssetLayeredValue } from "../../lib/theme";
 
 const TABS = [
   { key: "client", label: "Client Portal" },
@@ -19,8 +19,6 @@ export default function ThemeLivePreviewPane({ draft }) {
   const assetUrl = (slot, size) =>
     draft?.assets?.[slot] ? themeAssetUrl(draft.assets[slot], size) : null;
 
-  const heroUrl = assetUrl("heroBackground", "card");
-  const loginBgUrl = assetUrl("loginBackground", "card");
   const loginAccentUrl = assetUrl("loginAccent", "card");
   const cornerStickerUrl = assetUrl("cornerSticker", "card");
 
@@ -36,8 +34,11 @@ export default function ThemeLivePreviewPane({ draft }) {
     "--text-muted": draft?.theme_text_muted,
     "--text-display": draft?.theme_text_display,
     "--card-glow-color": draft?.theme_glow_color || draft?.brand_accent,
-    "--theme-asset-hero-background": heroUrl ? `url("${heroUrl}")` : "none",
-    "--theme-asset-login-background": loginBgUrl ? `url("${loginBgUrl}")` : "none",
+    // heroBackground/loginBackground get the same scrim gradient the real
+    // app layers in (see themeAssetLayeredValue) so this preview matches
+    // what actually renders, not just the raw uploaded image.
+    "--theme-asset-hero-background": themeAssetLayeredValue("heroBackground", draft?.assets?.heroBackground, "card"),
+    "--theme-asset-login-background": themeAssetLayeredValue("loginBackground", draft?.assets?.loginBackground, "card"),
     "--theme-asset-login-accent": loginAccentUrl ? `url("${loginAccentUrl}")` : "none",
     "--theme-asset-corner-sticker": cornerStickerUrl ? `url("${cornerStickerUrl}")` : "none",
   };

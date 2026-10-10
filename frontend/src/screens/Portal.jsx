@@ -787,6 +787,10 @@ export default function Portal() {
   // installs keep working.
   const { branding: _brandingCpc } = useTheme();
   const cpc = _brandingCpc?.client_portal_controls || {};
+  // A theme-uploaded sidebar banner replaces the stock logo entirely
+  // (see ClientSidebar's hasHeaderImage prop) rather than sitting faintly
+  // behind it.
+  const hasSidebarHeaderImage = !!_brandingCpc?.assets?.sidebarAccentTop && (_brandingCpc?.enabled_targets?.client_portal ?? true);
   const sectionOn = (name) => {
     // Each section can have an implicit Feature Visibility master.
     const masterMap = { trivia_rewards: "rewards", messages: "client_messaging" };
@@ -1374,6 +1378,7 @@ export default function Portal() {
         showPhotography={feat.photography}
         showMessages={sectionOn("messages")}
         showHelp={sectionOn("help_button")}
+        hasHeaderImage={hasSidebarHeaderImage}
         onHome={goHome} onBook={goBook} onShop={goShop} onPhotography={goPhotography} onMessages={goMessages}
         onMyDogs={goMyDogs} onPayments={goPayments} onCredits={goCredits} onRewards={goRewards} onRefer={goRefer} onHelp={goHelp}
       />
