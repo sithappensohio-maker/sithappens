@@ -10,7 +10,7 @@ export default function EmptyState({ icon = "fa-circle-info", accent = "lime", t
       type={onClick ? "button" : undefined}
       onClick={onClick}
       data-testid={testId}
-      className={`w-full border border-dashed border-shBorder rounded-xl p-5 text-center transition duration-200 ${onClick ? `hover:-translate-y-0.5 ${HOVER_BORDER_CLASS[accent] || ""}` : ""}`}
+      className={`w-full border border-dashed border-shBorder rounded-xl p-5 text-center transition duration-200 sh-theme-empty-state ${onClick ? `hover:-translate-y-0.5 ${HOVER_BORDER_CLASS[accent] || ""}` : ""}`}
     >
       <span
         className="inline-flex w-12 h-12 rounded-full items-center justify-center"

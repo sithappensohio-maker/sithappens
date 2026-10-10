@@ -3112,6 +3112,94 @@ html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after 
   background-image: var(--theme-asset-event-banner, none);
 }
 
+/* Section header background: the SAME generic PageHero every other admin
+   screen uses (Shop Manager, Income, Staff, Clients, ~36 screens in all) —
+   excluding the Today hero specifically, which already carries its own
+   heroBackground + badge on its own ::before/::after and has nothing left
+   to layer this onto. .sh-page-hero already ships its own
+   position:relative; isolation:isolate (and its own -1 z-index glow/rail
+   decorations), so this just adds one more layer behind them at -2 — no
+   new positioning rules needed here, and nothing above DOM-order z-index
+   0 ever gets touched. Scaled down hard (×0.35) since this one shows up on
+   nearly every admin page at once; a Today-hero-strength wash everywhere
+   would get old fast. staff-portal-gated: PageHero has no client-portal or
+   login call sites. */
+.sh-page-hero:not([data-testid="today-page-hero"])::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: calc(var(--theme-decoration-opacity) * 0.35);
+  pointer-events: none;
+  z-index: -2;
+}
+html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="today-page-hero"])::before {
+  background-image: var(--theme-asset-section-header-background, none);
+}
+
+/* Dashboard card overlay: AdminStatCard's NeonEdge shell (Today's "71 Dogs
+   Here" / "$0.00" tiles, School HQ's stat row) — admin-only, so just the
+   staff-portal target. NeonEdge sets its own background via inline style
+   (not a CSS rule this could collide with) and has no pre-existing
+   absolutely-positioned children, so a plain z-index:0 layer is enough. */
+.sh-theme-dashboard-overlay {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-dashboard-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: calc(var(--theme-decoration-opacity) * 0.5);
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-dashboard-overlay::after {
+  background-image: var(--theme-asset-dashboard-card-overlay, none);
+}
+
+/* Empty-state illustration: ONE shared component (components/premium/
+   EmptyState.jsx) rendered across all three surfaces — client portal,
+   staff/admin, even the public site — so there's no single surface-gated
+   class to add in React. Instead this keys off the ancestor wrapper each
+   surface already renders ([data-testid="client-portal"] on Portal.jsx,
+   [data-testid="employee-portal"] on EmployeePortal.jsx, .app-shell for
+   the admin shell) combined with the matching data-theme-target-*
+   attribute, so the SAME .sh-theme-empty-state class picks the right
+   asset/gating per surface automatically. Public-site empty states (no
+   matching ancestor) simply show no image, same fallback-to-nothing
+   pattern as every other hook. */
+.sh-theme-empty-state {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-empty-state::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: calc(var(--theme-decoration-opacity) * 0.5);
+  pointer-events: none;
+  z-index: -1;
+}
+html[data-theme-target-client-portal="true"] [data-testid="client-portal"] .sh-theme-empty-state::after {
+  background-image: var(--theme-asset-empty-state-illustration, none);
+}
+html[data-theme-target-staff-portal="true"] [data-testid="employee-portal"] .sh-theme-empty-state::after,
+html[data-theme-target-staff-portal="true"] .app-shell .sh-theme-empty-state::after {
+  background-image: var(--theme-asset-empty-state-illustration, none);
+}
+
 /* Login: a full-bleed low-opacity background behind the whole page, plus a
    small round accent badge on the auth card itself. */
 .sh-theme-login-bg {

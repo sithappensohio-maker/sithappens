@@ -6,7 +6,7 @@ export default function AdminStatCard({ icon, value, label, detail, accent = "li
   const Tag = onClick ? "button" : "div";
   return (
     <NeonEdge as={Tag} onClick={onClick} accentRgb={accentRgb(accent)} intensity={intensity}
-              className={`sh-admin-stat text-left w-full ${onClick ? "hover:-translate-y-0.5 transition" : ""}`}
+              className={`sh-admin-stat sh-theme-dashboard-overlay text-left w-full ${onClick ? "hover:-translate-y-0.5 transition" : ""}`}
               data-testid={testid}>
       <NeonIconStage icon={icon} accentRgb={accentRgb(accent)} rings={false} sizeClass="w-11 h-11 sm:w-12 sm:h-12" iconSizeClass="text-base sm:text-lg" />
       <div className="min-w-0 flex-1">
