@@ -47,11 +47,11 @@ export default function ClientSidebar({
 
   return (
     <aside
-      className="hidden md:flex md:flex-col w-52 shrink-0 border-r border-shBorder h-full"
+      className="hidden md:flex md:flex-col w-52 shrink-0 border-r border-shBorder h-full sh-theme-sidebar-client"
       style={{ background: "var(--sh-card-base)" }}
       data-testid="client-sidebar"
     >
-      <div className="relative px-5 py-6 flex items-center justify-start border-b border-shBorder overflow-hidden">
+      <div className="relative px-5 py-6 flex items-center justify-start border-b border-shBorder overflow-hidden sh-theme-sidebar-header-client">
         <span aria-hidden="true" className="pointer-events-none absolute inset-0"
               style={{ background: "radial-gradient(80% 120% at 20% 30%, rgba(140,198,63,0.12), transparent 60%), radial-gradient(70% 100% at 90% 80%, rgba(0,169,224,0.08), transparent 60%)" }}/>
         <img src="/logo.png" alt="Sit Happens" className="relative z-10 h-14 w-auto" />

@@ -2874,3 +2874,254 @@ a.bg-shGreen::after,
 .bg-bgPanel:has(.text-5xl.italic.uppercase)::before {
   content: none !important;
 }
+
+/* ── Theme Studio — seasonal decoration layer (Stage 3) ──────────────────────
+   Pure CSS, keyed off the data-theme-* attributes ThemeProvider sets on
+   <html> (lib/theme.js) and the --theme-asset-* vars it already sets there.
+   No JS touches any of this: a theme with nothing uploaded renders nothing
+   extra (every background-image falls through to `none`), and intensity is
+   just an opacity multiplier — so a half-configured or asset-less theme can
+   never break layout here, only show less decoration.
+
+   Each hook below is a NEW class added to one specific, already-existing
+   element (see Portal.jsx, ClientSidebar.jsx, EmployeePortal.jsx, App.js,
+   Login.jsx) — never the bare `aside`/`header` element selectors the retired
+   splatter system used, so the `content: none !important` block directly
+   above this one has no effect on any of it.
+
+   Surface gating matters because the client portal and staff portal share
+   the exact same <aside> shape (`.app-shell > aside`) and both have a
+   <header> — without per-surface classes a single theme asset would bleed
+   across portals that the admin explicitly turned off for it. */
+:root {
+  --theme-decoration-opacity: 0.75;
+  --theme-decoration-badge-opacity: 1;
+}
+html[data-theme-intensity="subtle"] {
+  --theme-decoration-opacity: 0.4;
+  --theme-decoration-badge-opacity: 0.7;
+}
+html[data-theme-intensity="bold"] {
+  --theme-decoration-opacity: 1;
+  --theme-decoration-badge-opacity: 1;
+}
+
+/* Hero: a full-bleed background layer (::before) behind the real content,
+   plus a small top-right badge layer (::after) that shows the animation
+   asset when one exists and is turned on, otherwise the static corner
+   sticker, otherwise nothing — see the shared override rules below that
+   apply to all three hero hooks at once.
+
+   The Today hero (`[data-testid="today-page-hero"]`) is deliberately NOT in
+   the `position/isolation` + `> *` z-index-bump rules below, unlike the
+   other two: it's the shared PageHero component, which already ships its
+   own `position:relative; isolation:isolate` AND its own absolutely
+   positioned `.sh-page-hero__glow`/`__rail` decorations at z-index:-1. A
+   blanket `> *` bump would flip those from `position:absolute` to
+   `position:relative`, destroying their layout — so instead its pseudo-
+   elements sit at z-index:-2, one level further back than PageHero's own
+   decorations, letting them paint without touching any of its children. */
+.sh-theme-hero-client,
+.sh-theme-hero-staff {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-hero-client > *,
+.sh-theme-hero-staff > * {
+  position: relative;
+  z-index: 1;
+}
+.sh-theme-hero-client::before,
+.sh-theme-hero-staff::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+[data-testid="today-page-hero"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: -2;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-hero-client::before {
+  background-image: var(--theme-asset-hero-background, none);
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-hero-staff::before,
+html[data-theme-target-staff-portal="true"] [data-testid="today-page-hero"]::before {
+  background-image: var(--theme-asset-hero-background, none);
+}
+
+.sh-theme-hero-client::after,
+.sh-theme-hero-staff::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 64px;
+  height: 64px;
+  background-repeat: no-repeat, no-repeat;
+  background-size: contain, contain;
+  background-position: top right, top right;
+  opacity: var(--theme-decoration-badge-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+[data-testid="today-page-hero"]::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 64px;
+  height: 64px;
+  background-repeat: no-repeat, no-repeat;
+  background-size: contain, contain;
+  background-position: top right, top right;
+  opacity: var(--theme-decoration-badge-opacity);
+  pointer-events: none;
+  z-index: -2;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-hero-client::after {
+  background-image: var(--theme-asset-ambient-animation, none), var(--theme-asset-corner-sticker, none);
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-hero-staff::after,
+html[data-theme-target-staff-portal="true"] [data-testid="today-page-hero"]::after {
+  background-image: var(--theme-asset-ambient-animation, none), var(--theme-asset-corner-sticker, none);
+}
+/* Animation turned off (Theme Studio's "Play GIF / Animation" toggle), or
+   the viewer asked for reduced motion: drop straight to the static sticker
+   layer, same as if no animation asset had ever been uploaded. */
+html[data-theme-animation="off"] .sh-theme-hero-client::after,
+html[data-theme-animation="off"] .sh-theme-hero-staff::after,
+html[data-theme-animation="off"] [data-testid="today-page-hero"]::after {
+  background-image: var(--theme-asset-corner-sticker, none);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sh-theme-hero-client::after,
+  .sh-theme-hero-staff::after,
+  [data-testid="today-page-hero"]::after {
+    background-image: var(--theme-asset-corner-sticker, none) !important;
+  }
+}
+
+/* Sidebar accents: a top image and a bottom image. Client and staff portal
+   sidebars get their own classes (both are plain <aside> elements under the
+   same .app-shell shape) so each only ever shows the slot the admin enabled
+   for that specific surface.
+
+   The "bottom" accent sits on the <aside> itself at z-index:-2, same
+   reasoning as the Today hero fix above: the sidebar's nav list and footer
+   are both fully opaque and have no spare "empty" band, so this stays
+   mostly a subtle watermark that shows through whatever transparent gaps
+   exist, rather than fighting real content for the same pixels.
+
+   The "top" accent gets a MORE SPECIFIC hook instead of fighting the same
+   battle: it's a separate class on the logo-row div itself
+   (sh-theme-sidebar-header-client / -staff, added in ClientSidebar.jsx /
+   App.js), which already has real transparent padding and an existing
+   radial-gradient halo behind its logo — genuine empty space a watermark
+   can actually show through, unlike the packed nav list below it. */
+.sh-theme-sidebar-client,
+.sh-theme-sidebar-staff {
+  position: relative;
+}
+.sh-theme-sidebar-client::after,
+.sh-theme-sidebar-staff::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 96px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: -2;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-sidebar-client::after {
+  background-image: var(--theme-asset-sidebar-accent-bottom, none);
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-staff::after {
+  background-image: var(--theme-asset-sidebar-accent-bottom, none);
+}
+.sh-theme-sidebar-header-client,
+.sh-theme-sidebar-header-staff {
+  isolation: isolate;
+}
+.sh-theme-sidebar-header-client::before,
+.sh-theme-sidebar-header-staff::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-sidebar-header-client::before {
+  background-image: var(--theme-asset-sidebar-accent-top, none);
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::before {
+  background-image: var(--theme-asset-sidebar-accent-top, none);
+}
+
+/* Login: a full-bleed low-opacity background behind the whole page, plus a
+   small round accent badge on the auth card itself. */
+.sh-theme-login-bg {
+  position: relative;
+}
+.sh-theme-login-bg > * {
+  position: relative;
+  z-index: 1;
+}
+.sh-theme-login-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme-target-login="true"] .sh-theme-login-bg::before {
+  background-image: var(--theme-asset-login-background, none);
+}
+.sh-theme-login-accent {
+  position: relative;
+}
+.sh-theme-login-accent::after {
+  content: "";
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 9999px;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: var(--theme-decoration-badge-opacity);
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+html[data-theme-target-login="true"] .sh-theme-login-accent::after {
+  background-image: var(--theme-asset-login-accent, none);
+}

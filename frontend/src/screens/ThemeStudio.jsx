@@ -9,7 +9,7 @@
 // is the full editor for ONE theme at a time — it reads/writes the exact
 // same `theme_presets` documents, so either surface sees the other's
 // changes immediately (nothing is duplicated or kept in sync by hand).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
@@ -95,16 +95,41 @@ export default function ThemeStudio() {
     setDraft(cloneTheme(theme));
   };
 
+  // Picking which theme to default into only happens ONCE (guarded by this
+  // ref), not every time `branding` changes — otherwise a later
+  // reloadBranding() (e.g. from this screen's own activate(), or anything
+  // else that touches branding while this page happens to be mounted) would
+  // silently blow away whatever the admin is mid-edit on. But the FIRST
+  // pick can't just read `branding` once on mount either: ThemeProvider's
+  // own `/branding` fetch is still async at that point, so `ctx.branding`
+  // is still DEFAULT_BRANDING — an object that has no `active_theme_id` KEY
+  // at all (fetch_branding() always includes the key, `null` or not, so its
+  // presence is what actually distinguishes "real data" from "placeholder",
+  // not just truthiness). A hard reload landing directly on this page would
+  // otherwise default to whatever theme sorts first rather than the one
+  // that's actually live. So the guard is only satisfied once `branding`
+  // demonstrably came from a real fetch; until then this re-fires (via the
+  // dependency array below) on every `branding` identity change, and simply
+  // keeps the loading spinner up rather than flashing the wrong theme.
+  const initialPickDone = useRef(false);
+
   const load = async (selectId) => {
     setLoading(true);
     try {
       const { data } = await api.get("/settings/themes");
       const list = Array.isArray(data) ? data : [];
       setThemes(list);
-      const pick = (selectId && list.find((t) => t.id === selectId))
-        || list.find((t) => t.id === branding?.active_theme_id)
-        || list[0];
-      if (pick) selectForEditing(pick);
+      const brandingReady = !!branding && "active_theme_id" in branding;
+      let pick = null;
+      if (selectId) {
+        pick = list.find((t) => t.id === selectId) || list[0];
+      } else if (!initialPickDone.current && brandingReady) {
+        pick = list.find((t) => t.id === branding.active_theme_id) || list[0];
+      }
+      if (pick) {
+        selectForEditing(pick);
+        if (!selectId) initialPickDone.current = true;
+      }
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Couldn't load themes.");
     } finally {
@@ -112,7 +137,7 @@ export default function ThemeStudio() {
     }
   };
 
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [branding?.active_theme_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!ctx) return null;
 

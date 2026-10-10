@@ -423,7 +423,7 @@ function AdminShell() {
     <>
       {/* Real logo, subtle lime/cyan halo — unchanged from before, just
           converted to the new near-black/border tokens. */}
-      <div className={`relative shrink-0 border-b border-shBorder overflow-hidden ${collapsed ? "p-2" : "p-3"}`}>
+      <div className={`relative shrink-0 border-b border-shBorder overflow-hidden sh-theme-sidebar-header-staff ${collapsed ? "p-2" : "p-3"}`}>
         <div className="flex items-center justify-between gap-2 mb-2">
           {prefix === "" && (
             <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
@@ -628,7 +628,7 @@ function AdminShell() {
     <div className="app-shell h-screen w-screen flex overflow-hidden" style={{ background: "var(--sh-card-base)" }}>
       {/* Desktop sidebar — width responds to collapsed state (w-16 icon-only
           / w-64 full). Transition kept short so the page reflow feels snappy. */}
-      <aside className={`border-r border-shBorder flex-col hidden md:flex transition-[width] duration-200 ${sidebarCollapsed ? "w-16" : "w-64"}`}
+      <aside className={`border-r border-shBorder flex-col hidden md:flex transition-[width] duration-200 sh-theme-sidebar-staff ${sidebarCollapsed ? "w-16" : "w-64"}`}
              style={{ background: "var(--sh-card-base)" }}>
         {sidebarContent("", sidebarCollapsed)}
       </aside>
@@ -638,7 +638,7 @@ function AdminShell() {
            onClick={()=>setDrawerOpen(false)} data-testid="drawer-backdrop">
         <div className="absolute inset-0 bg-black/70" />
       </div>
-      <aside className={`app-mobile-drawer md:hidden fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] border-r border-shBorder flex flex-col min-h-0 transition-transform duration-200 ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
+      <aside className={`app-mobile-drawer md:hidden fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] border-r border-shBorder flex flex-col min-h-0 transition-transform duration-200 sh-theme-sidebar-staff ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
              style={{ background: "var(--sh-card-base)" }}
              data-testid="mobile-drawer">
         {sidebarContent("mobile-")}

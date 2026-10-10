@@ -117,7 +117,7 @@ export default function EmployeePortal() {
 
   return (
     <div className="min-h-screen bg-bgBase flex flex-col pb-safe sh-employee-portal" data-scroll-root data-testid="employee-portal">
-      <header className="sh-employee-header sticky top-0 z-30">
+      <header className="sh-employee-header sticky top-0 z-30 sh-theme-hero-staff">
         <div className="flex items-center gap-3 min-w-0">
           <img src="/logo.png" alt="Sit Happens" className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0" />
           <div className="min-w-0">

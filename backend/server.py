@@ -11238,6 +11238,22 @@ async def update_theme_preset(theme_id: str, body: ThemePresetIn, _: dict = Depe
     if patch:
         patch["updated_at"] = now_iso()
         await db.theme_presets.update_one({"id": theme_id}, {"$set": patch})
+        # Editing the theme that's CURRENTLY LIVE must take effect right away.
+        # activate_theme_preset only COPIES a preset's fields onto settings at
+        # the moment of activation — it's a snapshot, not a live join — so
+        # without this, saving changes to an already-active theme would
+        # silently not reach the real site/portals until the admin
+        # re-activated it, and Theme Studio doesn't even show an activate
+        # button once a theme is already active (there'd be nothing to do).
+        # This mirrors the SAME direction the existing "editing live Brand &
+        # Appearance settings auto-updates the active preset" behavior
+        # already uses in create_theme_preset/PUT /settings, just reversed.
+        current_settings = await get_settings()
+        if current_settings.get("active_theme_id") == theme_id:
+            live_patch = {k: v for k, v in patch.items()
+                          if k in THEME_FIELD_KEYS or k in THEME_EXTENDED_FIELD_KEYS}
+            if live_patch:
+                await db.settings.update_one({"id": "global"}, {"$set": {**live_patch, "updated_at": now_iso()}})
     return await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
 
 

@@ -1385,7 +1385,7 @@ export default function Portal() {
             is hidden); lower-value utility actions (How to Use / Install /
             Logout) moved into ClientProfileMenu instead of permanent
             buttons. Same underlying behaviour for all of them. */}
-        <header className="shrink-0 bg-bgHeader border-b border-shBorder flex items-center justify-between gap-3 px-3 sm:px-6 py-3">
+        <header className="shrink-0 bg-bgHeader border-b border-shBorder flex items-center justify-between gap-3 px-3 sm:px-6 py-3 sh-theme-hero-client">
           <div className="flex items-center gap-3 min-w-0">
             <img src="/logo.png" alt="Sit Happens" className="h-9 w-auto shrink-0 md:hidden" data-testid="portal-logo" />
             <div className="hidden sm:block min-w-0">

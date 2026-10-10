@@ -164,7 +164,7 @@ export default function Login({ focus = false }) {
       <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
         {mode === "register" ? "Create your Sit Happens account" : "Already a client, or ready to sign up now?"}
       </p>
-      <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
+      <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card sh-theme-login-accent">
         <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
           <button onClick={() => { setMode("login"); setCheckEmail(null); }} data-testid="tab-login"
                   className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
@@ -269,7 +269,7 @@ export default function Login({ focus = false }) {
   // now, so this screen is just the door — brand, the auth card, a way back.
   if (focus) {
     return (
-      <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen" data-focus="true">
+      <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing sh-theme-login-bg" data-testid="login-screen" data-focus="true">
         <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             <a href="/" className="flex items-center gap-3 min-w-0" data-testid="login-back-home">
@@ -305,7 +305,7 @@ export default function Login({ focus = false }) {
   }
 
   return (
-    <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen">
+    <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing sh-theme-login-bg" data-testid="login-screen">
       {/* ===== Top bar ===== */}
       <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">

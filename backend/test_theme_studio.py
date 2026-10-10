@@ -159,6 +159,62 @@ def test_put_partial_merges_assets_without_wiping_other_slots():
         _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
 
 
+def test_put_on_the_active_theme_takes_effect_on_branding_immediately():
+    """activate_theme_preset only COPIES a preset's fields onto settings at
+    the moment of activation — a snapshot, not a live join. Without this,
+    saving an edit to the theme that's ALREADY active would silently not
+    reach /branding until someone re-activated it, and Theme Studio doesn't
+    even offer a re-activate button once a theme is already active."""
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Already Live", "brand_primary": "#111111", "assets": {"heroBackground": "hero-v1"},
+        }).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        before = _call("GET", "/branding").json()
+        assert before["brand_primary"] == "#111111"
+        assert before["assets"]["heroBackground"] == "hero-v1"
+
+        r = _call("PUT", f"/settings/themes/{theme_id}", owner, {
+            "brand_primary": "#222222", "assets": {"heroBackground": "hero-v2"},
+        })
+        assert r.status_code == 200, r.text
+
+        after = _call("GET", "/branding").json()
+        assert after["brand_primary"] == "#222222"
+        assert after["assets"]["heroBackground"] == "hero-v2"
+        # The other eleven slots stay untouched by this same live mirror.
+        assert after["assets"]["cornerSticker"] is None
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_put_on_a_non_active_theme_does_not_touch_branding():
+    owner = _mk_user("admin")
+    active_id = None
+    other_id = None
+    try:
+        active = _call("POST", "/settings/themes", owner, {"name": "Stays Live", "brand_primary": "#333333"}).json()
+        active_id = active["id"]
+        act = _call("POST", f"/settings/themes/{active_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        other = _call("POST", "/settings/themes", owner, {"name": "Not Live Yet", "brand_primary": "#444444"}).json()
+        other_id = other["id"]
+
+        r = _call("PUT", f"/settings/themes/{other_id}", owner, {"brand_primary": "#555555"})
+        assert r.status_code == 200, r.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["brand_primary"] == "#333333"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[t for t in (active_id, other_id) if t])
+
+
 def test_put_partial_merges_enabled_targets():
     owner = _mk_user("admin")
     theme_id = None
