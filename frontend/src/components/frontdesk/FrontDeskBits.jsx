@@ -22,7 +22,7 @@ export function FrontDeskStatCard({ icon, tone = "blue", value, label, action, o
   const Tag = onClick ? "button" : "div";
   return (
     <Tag onClick={onClick} data-testid={testid}
-         className={`sh-hue-card ${t.hue} rounded-2xl p-3.5 flex items-center gap-3 text-left min-h-[74px] ${onClick ? "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary" : ""}`}>
+         className={`sh-hue-card ${t.hue} rounded-2xl p-3.5 flex items-center gap-3 text-left min-h-[74px] overflow-hidden sh-theme-dashboard-overlay ${onClick ? "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary" : ""}`}>
       <span className={`w-11 h-11 rounded-full grid place-items-center border shrink-0 ${t.chip}`} aria-hidden="true">
         <i className={`fas ${icon} text-[16px]`}/>
       </span>

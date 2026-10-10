@@ -197,7 +197,7 @@ export default function PublicEvent() {
   return (
     <PublicSiteShell testid="public-event">
       {/* ===== Hero ===== */}
-      <section className="relative overflow-hidden" data-testid="event-hero">
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="event-hero">
         <div className="absolute inset-0 pointer-events-none opacity-50" style={{ background: "radial-gradient(circle at 10% 10%, var(--sh-orange) 0%, transparent 36%), radial-gradient(circle at 90% 80%, var(--sh-green) 0%, transparent 40%), radial-gradient(circle at 70% 5%, var(--sh-blue) 0%, transparent 28%)" }} />
         <div className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-8 pb-8 sm:pt-14 sm:pb-12 sh-splatter">
           <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_.9fr] gap-6 lg:gap-10 items-center">

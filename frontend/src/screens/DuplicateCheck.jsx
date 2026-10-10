@@ -13,7 +13,7 @@ function ConfidenceBadge({ value }) {
 
 function Stat({ label, value, icon }) {
   return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 overflow-hidden sh-theme-dashboard-overlay">
       <div className="text-shPrimary text-xl mb-2"><i className={`fas ${icon}`} /></div>
       <div className="text-2xl font-black text-shText">{value ?? 0}</div>
       <div className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mt-1">{label}</div>

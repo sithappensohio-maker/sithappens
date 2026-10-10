@@ -91,7 +91,11 @@ export default function PublicHome() {
       <UpcomingEventBanner />
 
       {/* ===== Hero ===== */}
-      <section className="relative overflow-hidden" data-testid="site-hero">
+      {/* Theme Studio — loginBackground scoped to just this hero section,
+          same pattern as Login.jsx's marketing landing (which shares this
+          page's PublicSiteShell/sh-public-landing shell). Full page would
+          cover its whole scroll height and crop the image to a sliver. */}
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="site-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40"
              style={{ background: "radial-gradient(circle at 10% 15%, var(--sh-blue) 0%, transparent 36%), radial-gradient(circle at 90% 80%, var(--sh-green) 0%, transparent 40%), radial-gradient(circle at 72% 8%, var(--sh-orange) 0%, transparent 28%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-12 sm:pt-16 sm:pb-16 sh-splatter">

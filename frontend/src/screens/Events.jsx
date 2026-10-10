@@ -494,7 +494,7 @@ export default function Events({ can }) {
           {/* Summary cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3" data-testid="event-summary">
             {SUMMARY_CARDS.map(([key, label, icon]) => (
-              <div key={key} className={`bg-bgPanel border rounded-2xl p-3 sm:p-4 ${key === "checked_in" ? "border-shGreen/50" : "border-bgHover"}`} data-testid={`event-stat-${key}`}>
+              <div key={key} className={`bg-bgPanel border rounded-2xl p-3 sm:p-4 overflow-hidden sh-theme-dashboard-overlay ${key === "checked_in" ? "border-shGreen/50" : "border-bgHover"}`} data-testid={`event-stat-${key}`}>
                 <p className="text-[10px] sm:text-[11px] font-black uppercase tracking-widest text-shTextMuted leading-tight"><i className={`fas ${icon} mr-1`} />{label}</p>
                 <p className="text-[26px] sm:text-[32px] font-black text-white leading-none mt-1.5 tabular-nums" data-testid={`event-stat-${key}-value`}>{summary ? summary[key] : "—"}</p>
               </div>

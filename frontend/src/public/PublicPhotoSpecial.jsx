@@ -222,7 +222,7 @@ export default function PublicPhotoSpecial() {
   return (
     <PublicSiteShell testid="public-photo-special">
       {/* Hero */}
-      <Section testid="photo-special-hero">
+      <Section testid="photo-special-hero" className="sh-theme-login-bg">
         <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr] lg:items-center">
           <div>
             <Eyebrow icon="fa-camera-retro">{special.headline || "Portrait session"}</Eyebrow>

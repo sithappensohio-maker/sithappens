@@ -243,7 +243,7 @@ export default function GiftCards() {
 
       {/* What you owe. One number, because that is the one that matters. */}
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="sh-front-desk-panel p-4" data-testid="gift-outstanding">
+        <div className="sh-front-desk-panel p-4 overflow-hidden sh-theme-dashboard-overlay" data-testid="gift-outstanding">
           <p className={label}>Outstanding</p>
           <p className="text-shPrimary text-3xl font-black">{money(data?.outstanding_balance)}</p>
           <p className="text-[12px] text-shTextMuted mt-1">

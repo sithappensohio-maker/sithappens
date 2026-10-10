@@ -1376,7 +1376,7 @@ function TaxEstimatorTab() {
 
 function TaxKpi({ label, value, color, emphasis = false }) {
   return (
-    <div className={`bg-[var(--sh-card-base)] border ${emphasis ? "border-shPrimary/40" : "border-shBorder"} rounded-xl p-3 ${emphasis ? "md:col-span-1" : ""}`}>
+    <div className={`bg-[var(--sh-card-base)] border ${emphasis ? "border-shPrimary/40" : "border-shBorder"} rounded-xl p-3 overflow-hidden sh-theme-dashboard-overlay ${emphasis ? "md:col-span-1" : ""}`}>
       <p className={`text-[11px] font-black uppercase tracking-widest text-${color}`}>{label}</p>
       <p className={`text-${emphasis ? "2xl" : "xl"} font-black text-${color} mt-1`}>${value.toFixed(2)}</p>
     </div>

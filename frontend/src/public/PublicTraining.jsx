@@ -45,7 +45,9 @@ export default function PublicTraining() {
 
   return (
     <PublicSiteShell testid="public-training">
-      <section className="relative overflow-hidden" data-testid="site-training-hero">
+      {/* Theme Studio — loginBackground scoped to just this hero, see
+          PublicHome.jsx's matching hero for why. */}
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="site-training-hero">
         {/* Purple stays literal — training's identity color isn't one of the
             three brand slots (same reasoning as TYPE_COLOR.service_dog). */}
         <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 15% 20%, #a855f7 0%, transparent 36%), radial-gradient(circle at 85% 70%, var(--sh-green) 0%, transparent 40%)" }} />

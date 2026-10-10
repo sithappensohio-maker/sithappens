@@ -16,7 +16,7 @@ export function PublicAbout() {
   const meetGreetEnabled = data?.meet_greet_enabled !== false;
   return (
     <PublicSiteShell testid="public-about">
-      <section className="relative overflow-hidden" data-testid="site-about-hero">
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="site-about-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-green) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-blue) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_.8fr] gap-8 items-center">
@@ -85,7 +85,7 @@ export function PublicPhotography() {
   const page = data?.photography_page || {};
   return (
     <PublicSiteShell testid="public-photography">
-      <section className="relative overflow-hidden" data-testid="site-photo-hero">
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="site-photo-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-orange) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-blue) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <Eyebrow icon="fa-camera-retro" color="text-shOrange">{PHOTOGRAPHY.eyebrow}</Eyebrow>
@@ -133,7 +133,7 @@ export function PublicContact() {
   const tel = (site?.phone || "").replace(/[^\d+]/g, "");
   return (
     <PublicSiteShell testid="public-contact">
-      <section className="relative overflow-hidden" data-testid="site-contact-hero">
+      <section className="relative overflow-hidden sh-theme-login-bg" data-testid="site-contact-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-blue) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-green) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <Eyebrow icon="fa-comments">Contact</Eyebrow>

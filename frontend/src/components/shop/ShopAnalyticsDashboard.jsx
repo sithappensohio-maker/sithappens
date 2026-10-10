@@ -30,7 +30,7 @@ const RANGES = [
 
 function Card({ label, value, hint }) {
   return (
-    <div className="border border-shBorder rounded-xl p-3" style={{ background: "var(--sh-card-base)" }}>
+    <div className="border border-shBorder rounded-xl p-3 overflow-hidden sh-theme-dashboard-overlay" style={{ background: "var(--sh-card-base)" }}>
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shTextMuted">{label}</p>
       <p className="text-[22px] font-black text-shText mt-1 leading-none">{value}</p>
       {hint && <p className="text-[11px] text-shTextMuted mt-1">{hint}</p>}
