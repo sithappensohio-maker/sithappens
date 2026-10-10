@@ -3073,8 +3073,17 @@ html[data-theme-animation="off"] [data-testid="today-page-hero"]::after {
    App.js), which already has real transparent padding and an existing
    radial-gradient halo behind its logo — genuine empty space a watermark
    can actually show through, unlike the packed nav list below it. */
-.sh-theme-sidebar-client,
-.sh-theme-sidebar-staff {
+/* :not(.fixed) matters: the staff mobile nav drawer (App.js) carries this
+   SAME class plus Tailwind's `fixed` utility. A bare `position: relative`
+   here has equal specificity to `.fixed` and loads later in the
+   stylesheet, so it silently won the tie and turned the drawer from fixed
+   into a normal in-flow flex child — it then ate ~319px of real layout
+   width in .app-shell's flex row, shoving all page content off to the
+   right on mobile portrait. Excluding `.fixed` leaves that drawer's own
+   positioning untouched; it doesn't need this rule anyway, since `fixed`
+   already establishes its own positioning context for the ::after below. */
+.sh-theme-sidebar-client:not(.fixed),
+.sh-theme-sidebar-staff:not(.fixed) {
   position: relative;
 }
 .sh-theme-sidebar-client::after,
