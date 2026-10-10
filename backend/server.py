@@ -33,6 +33,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
+from bson.binary import Binary
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator, ValidationError
 import stripe
@@ -10793,6 +10794,85 @@ class ThemePresetIn(BaseModel):
     theme_calendar_active: Optional[str] = None
     theme_table_hover: Optional[str] = None
     theme_row_border: Optional[str] = None
+    # Theme Studio (Stage 1) — metadata, asset slots, deployment/scheduling,
+    # and inheritance. Additive on top of the color/font layer above; none
+    # of these participate in THEME_FIELD_KEYS (the live-palette BrandPanel
+    # editor's own field set), so BrandPanel's existing save flow is
+    # completely unaffected by any of this.
+    slug: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None
+    author: Optional[str] = None
+    assets: Optional["ThemeAssetsIn"] = None
+    enabled_targets: Optional["ThemeTargetsIn"] = None
+    start_date: Optional[str] = None  # ISO date (YYYY-MM-DD) or None = always-on once activated
+    end_date: Optional[str] = None
+    intensity: Optional[Literal["subtle", "standard", "bold"]] = None
+    animation_enabled: Optional[bool] = None
+    extends_theme_id: Optional[str] = None  # unset asset/color on this theme falls back to the parent's
+
+
+# The 12 asset slots a theme may fill. Each value is a theme_assets id (see
+# the /theme-assets endpoints below) or None — an empty slot renders nothing,
+# never a broken image. Kept as an explicit allowlisted sub-model (same
+# "strict, not extra=allow" posture as ThemePresetIn) rather than a bare
+# Dict[str, str], so an imported theme-pack manifest can't smuggle an
+# arbitrary key into the stored document.
+THEME_ASSET_SLOTS = (
+    "heroBackground", "sidebarAccentTop", "sidebarAccentBottom",
+    "sectionHeaderBackground", "dashboardCardOverlay", "eventBanner",
+    "loginBackground", "loginAccent", "cornerSticker",
+    "announcementAccent", "emptyStateIllustration", "ambientAnimation",
+)
+
+
+class ThemeAssetsIn(BaseModel):
+    heroBackground: Optional[str] = None
+    sidebarAccentTop: Optional[str] = None
+    sidebarAccentBottom: Optional[str] = None
+    sectionHeaderBackground: Optional[str] = None
+    dashboardCardOverlay: Optional[str] = None
+    eventBanner: Optional[str] = None
+    loginBackground: Optional[str] = None
+    loginAccent: Optional[str] = None
+    cornerSticker: Optional[str] = None
+    announcementAccent: Optional[str] = None
+    emptyStateIllustration: Optional[str] = None
+    ambientAnimation: Optional[str] = None
+
+
+class ThemeTargetsIn(BaseModel):
+    client_portal: Optional[bool] = None
+    staff_portal: Optional[bool] = None
+    login: Optional[bool] = None
+
+
+ThemePresetIn.model_rebuild()
+
+# Which surfaces a theme applies to by default — every surface, matching the
+# existing "app-wide" posture (one active theme, same everywhere) unless the
+# admin explicitly narrows it in Theme Studio (Stage 2).
+_THEME_TARGET_DEFAULTS = {"client_portal": True, "staff_portal": True, "login": True}
+_THEME_ASSET_DEFAULTS = {slot: None for slot in THEME_ASSET_SLOTS}
+
+# Mirrored onto the global settings doc on activate (like THEME_FIELD_KEYS'
+# colors already are) so GET /branding — the single unauthenticated source
+# every surface reads — stays the one place the frontend looks, without a
+# second round trip. Kept separate from THEME_FIELD_KEYS deliberately: these
+# never flow through PUT /settings' live-palette path, only through the
+# dedicated theme-preset endpoints below.
+THEME_EXTENDED_FIELD_KEYS = (
+    "assets", "enabled_targets", "start_date", "end_date",
+    "intensity", "animation_enabled",
+)
+_THEME_EXTENDED_DEFAULTS = {
+    "assets": dict(_THEME_ASSET_DEFAULTS),
+    "enabled_targets": dict(_THEME_TARGET_DEFAULTS),
+    "start_date": None,
+    "end_date": None,
+    "intensity": "standard",
+    "animation_enabled": True,
+}
 
 
 @api.get("/settings")
@@ -10818,6 +10898,17 @@ async def fetch_branding():
         # without a second round trip. None for every install that has
         # never touched the Theme Gallery.
         "active_theme_id": s.get("active_theme_id"),
+        # Theme Studio (Stage 1) — asset slots, deployment targets, schedule
+        # window, intensity, and the animation toggle for whichever theme is
+        # currently active. Defaults keep every install that's never opened
+        # Theme Studio rendering exactly as before: every slot empty (no
+        # image, ever), every surface enabled, no schedule window.
+        "assets": {**_THEME_ASSET_DEFAULTS, **(s.get("assets") or {})},
+        "enabled_targets": {**_THEME_TARGET_DEFAULTS, **(s.get("enabled_targets") or {})},
+        "start_date": s.get("start_date"),
+        "end_date": s.get("end_date"),
+        "theme_intensity": s.get("intensity") or "standard",
+        "theme_animation_enabled": s.get("animation_enabled") if s.get("animation_enabled") is not None else True,
         # Sprint 110di-8 — expanded theme controls. Backgrounds / text /
         # buttons / forms / calendar+table. Defaults match the historical
         # Sit Happens palette; admins override via Settings → Brand & Theme.
@@ -11099,6 +11190,20 @@ async def create_theme_preset(body: ThemePresetIn, _: dict = Depends(require_adm
         raise HTTPException(status_code=400, detail="A theme name is required.")
     fields = body.model_dump(exclude_unset=True)
     doc = {k: (fields.get(k) if fields.get(k) is not None else _THEME_DEFAULTS.get(k)) for k in THEME_FIELD_KEYS}
+    # Theme Studio fields — assets/enabled_targets are a PARTIAL dict from the
+    # caller (e.g. just one slot), merged onto the full default shape so the
+    # stored document always carries every slot/target key.
+    doc["assets"] = {**_THEME_ASSET_DEFAULTS, **(fields.get("assets") or {})}
+    doc["enabled_targets"] = {**_THEME_TARGET_DEFAULTS, **(fields.get("enabled_targets") or {})}
+    doc["start_date"] = fields.get("start_date")
+    doc["end_date"] = fields.get("end_date")
+    doc["intensity"] = fields.get("intensity") or "standard"
+    doc["animation_enabled"] = fields.get("animation_enabled") if fields.get("animation_enabled") is not None else True
+    doc["extends_theme_id"] = fields.get("extends_theme_id")
+    doc["slug"] = fields.get("slug") or _shop_org_slugify(name)
+    doc["version"] = fields.get("version") or "1.0"
+    doc["description"] = fields.get("description") or ""
+    doc["author"] = fields.get("author") or ""
     now = now_iso()
     doc.update({"id": str(uuid.uuid4()), "name": name, "built_in": False, "created_at": now, "updated_at": now})
     await db.theme_presets.insert_one(dict(doc))
@@ -11112,7 +11217,16 @@ async def update_theme_preset(theme_id: str, body: ThemePresetIn, _: dict = Depe
         raise HTTPException(status_code=404, detail="Theme not found")
     if existing.get("built_in"):
         raise HTTPException(status_code=400, detail="Built-in themes can't be edited directly — duplicate it first.")
-    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    fields = body.model_dump(exclude_unset=True)
+    patch = {k: v for k, v in fields.items() if v is not None and k not in ("assets", "enabled_targets")}
+    # Partial per-slot / per-target merge onto what's already stored — PUTting
+    # one asset slot (the normal Theme Studio upload flow) must never wipe
+    # out the other eleven, and narrowing one target must never reset the
+    # other two back to their defaults.
+    if fields.get("assets") is not None:
+        patch["assets"] = {**(existing.get("assets") or _THEME_ASSET_DEFAULTS), **fields["assets"]}
+    if fields.get("enabled_targets") is not None:
+        patch["enabled_targets"] = {**(existing.get("enabled_targets") or _THEME_TARGET_DEFAULTS), **fields["enabled_targets"]}
     if patch:
         patch["updated_at"] = now_iso()
         await db.theme_presets.update_one({"id": theme_id}, {"$set": patch})
@@ -11140,10 +11254,149 @@ async def activate_theme_preset(theme_id: str, _: dict = Depends(require_admin_a
         raise HTTPException(status_code=404, detail="Theme not found")
     await db.settings.update_one(
         {"id": "global"},
-        {"$set": {**{k: preset.get(k) for k in THEME_FIELD_KEYS}, "active_theme_id": theme_id, "updated_at": now_iso()}},
+        {"$set": {
+            **{k: preset.get(k) for k in THEME_FIELD_KEYS},
+            **{k: preset.get(k, _THEME_EXTENDED_DEFAULTS.get(k)) for k in THEME_EXTENDED_FIELD_KEYS},
+            "active_theme_id": theme_id, "updated_at": now_iso(),
+        }},
         upsert=True,
     )
     return {"ok": True, "active_theme_id": theme_id}
+
+
+# ───────────────────────────── Theme Studio — asset uploads ─────────────────
+# A separate collection/route namespace from shop_media on purpose: shop
+# images are gated by "does a live, public catalog item reference this?",
+# which has no equivalent for a theme — these assets must render on the
+# LOGGED-OUT login page. So GET here is unauthenticated by design; only
+# uploads/deletes require "settings", same as the theme presets they belong
+# to. Upload/serve DOES reuse shop_media_services' generic decode/derivative
+# functions for ordinary images — no need to reinvent that pipeline.
+THEME_ASSET_ANIMATION_SLOT = "ambientAnimation"
+THEME_ANIMATION_ALLOWED_MIME = {"image/gif", "image/webp"}
+MAX_THEME_ANIMATION_BYTES = 5 * 1024 * 1024
+
+
+def _decode_theme_animation_data_url(raw: str) -> Tuple[str, bytes]:
+    """Like shop_media_services.decode_data_url, but for the one slot that
+    must keep its animation — a GIF or animated WEBP run through Pillow's
+    resize/re-encode pipeline collapses to a single still frame, so this
+    slot is stored and served as the original uploaded bytes, untouched."""
+    if not isinstance(raw, str) or not raw.startswith("data:"):
+        raise HTTPException(status_code=400, detail="Expected base64 data URL")
+    try:
+        header, b64 = raw.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").lower().strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed data URL")
+    if mime not in THEME_ANIMATION_ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported animation type ({mime}). Allowed: GIF, WEBP.")
+    try:
+        blob = base64.b64decode(b64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Malformed file data.")
+    if not blob:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    if len(blob) > MAX_THEME_ANIMATION_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large ({len(blob) // (1024 * 1024)} MB). Max is 5 MB.")
+    return mime, blob
+
+
+class ThemeAssetUploadIn(BaseModel):
+    """`data` is a base64 data-URL. `slot` picks which Theme Studio image
+    slot this upload is for — it decides whether the file goes through the
+    shop image pipeline (resized WEBP derivatives) or is kept as-is (the
+    animation slot, to preserve GIF/WEBP animation frames)."""
+    data: str = Field(min_length=10)
+    filename: str = Field(min_length=1, max_length=140)
+    slot: Literal[THEME_ASSET_SLOTS]
+
+
+@api.post("/theme-assets")
+async def upload_theme_asset(body: ThemeAssetUploadIn, user: dict = Depends(require_admin_and_permission("settings"))):
+    asset_id = str(uuid.uuid4())
+    if body.slot == THEME_ASSET_ANIMATION_SLOT:
+        mime, blob = _decode_theme_animation_data_url(body.data)
+        await db.theme_assets.insert_one({
+            "id": asset_id, "kind": "animation", "slot": body.slot,
+            "mime": mime, "data": Binary(blob),
+            "etag": hashlib.sha256(blob).hexdigest()[:32],
+            "size_bytes": len(blob), "filename": (body.filename or "image")[:140],
+            "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+        })
+        return {"asset_id": asset_id, "slot": body.slot, "mime": mime,
+                "size_bytes": len(blob), "sizes": {}}
+    # Every other slot is a still image — reuse the Shop image pipeline's
+    # pure decode/derivative functions (jpeg/png/webp only, 5 MB ceiling,
+    # Pillow-validated) without touching the shop_media collection itself.
+    mime, blob = shop_media_services.decode_data_url(body.data)
+    derivatives = shop_media_services.build_derivatives(blob)
+    await db.theme_assets.insert_one({
+        "id": asset_id, "kind": "image", "slot": body.slot,
+        "mime": mime, "filename": (body.filename or "image")[:140],
+        "size_bytes": len(blob), "derivatives": derivatives,
+        "derivatives_built_at": now_iso(),
+        "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+    })
+    return {"asset_id": asset_id, "slot": body.slot, "mime": mime, "size_bytes": len(blob),
+            "sizes": {k: {"w": v["w"], "h": v["h"], "bytes": v["bytes"]}
+                      for k, v in derivatives.items()}}
+
+
+@api.get("/theme-assets/{asset_id}/{size}")
+async def get_theme_asset(asset_id: str, size: str, request: Request):
+    """Genuinely public — no auth dependency. Theme assets must render on
+    the logged-out login page, which is exactly what makes this its own
+    route rather than a reuse of /shop/media/{id}/{size}."""
+    await _enforce_rate_limit(request, "public_theme_assets", _client_ip(request), limit=600, window_seconds=60)
+    asset = await db.theme_assets.find_one({"id": asset_id}, {"_id": 0})
+    if not asset:
+        raise HTTPException(status_code=404, detail="Not found.")
+    if asset.get("kind") == "animation":
+        if size != "original":
+            raise HTTPException(status_code=404, detail="Not found.")
+        deriv = {"data": asset["data"], "mime": asset["mime"], "etag": asset["etag"]}
+    else:
+        deriv = (asset.get("derivatives") or {}).get(size)
+        if not deriv:
+            raise HTTPException(status_code=404, detail="Not found.")
+    etag = f'"{deriv["etag"]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={
+            "ETag": etag, "Cache-Control": "public, max-age=31536000, immutable"})
+    return Response(
+        content=bytes(deriv["data"]), media_type=deriv["mime"],
+        headers={
+            "ETag": etag, "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline",
+        },
+    )
+
+
+async def _theme_asset_referenced_by(asset_id: str) -> Optional[str]:
+    """Any theme preset whose assets still point at this id. A simple point
+    lookup, mirroring _shop_media_referenced_by's "last line of defense"
+    role — Theme Studio is expected to replace a slot before deleting the
+    old asset, but this stops one still in active use from being deleted
+    out from under a theme."""
+    hit = await db.theme_presets.find_one(
+        {"$or": [{f"assets.{slot}": asset_id} for slot in THEME_ASSET_SLOTS]},
+        {"_id": 0, "id": 1, "name": 1})
+    if not hit:
+        return None
+    return hit.get("name") or hit.get("id")
+
+
+@api.delete("/theme-assets/{asset_id}")
+async def delete_theme_asset(asset_id: str, _: dict = Depends(require_admin_and_permission("settings"))):
+    existing = await db.theme_assets.find_one({"id": asset_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    referenced_by = await _theme_asset_referenced_by(asset_id)
+    if referenced_by:
+        raise HTTPException(status_code=400, detail=f"Still used by {referenced_by} — remove it from that theme first.")
+    await db.theme_assets.delete_one({"id": asset_id})
+    return {"ok": True}
 
 
 def _validate_banner_cta_url(url: str) -> None:

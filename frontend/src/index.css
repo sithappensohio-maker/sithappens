@@ -54,6 +54,23 @@ html, body, #root {
   --card-inner-highlight-color: #FFFFFF;
   --card-inner-highlight-rgba: rgba(255, 255, 255, 0.08);
   --sh-display: 'Bowlby One SC', 'Black Ops One', 'Anton', 'Impact', sans-serif;
+  /* Theme Studio asset slots — set at runtime by ThemeProvider from the
+     active theme's uploads (lib/theme.js, THEME_ASSET_SLOT_CONFIG). `none`
+     here is the fallback for the default theme and for any slot a custom
+     theme hasn't uploaded an image for, so every consumer can reference
+     these unconditionally without a per-theme existence check. */
+  --theme-asset-hero-background: none;
+  --theme-asset-sidebar-accent-top: none;
+  --theme-asset-sidebar-accent-bottom: none;
+  --theme-asset-section-header-background: none;
+  --theme-asset-dashboard-card-overlay: none;
+  --theme-asset-event-banner: none;
+  --theme-asset-login-background: none;
+  --theme-asset-login-accent: none;
+  --theme-asset-corner-sticker: none;
+  --theme-asset-announcement-accent: none;
+  --theme-asset-empty-state-illustration: none;
+  --theme-asset-ambient-animation: none;
 }
 
 /* ==========================================================================

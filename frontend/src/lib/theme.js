@@ -8,7 +8,7 @@
 // normal brand/status colors; this setting only changes chrome intensity.
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api } from "./api";
+import { api, API_BASE } from "./api";
 
 const ThemeCtx = createContext(null);
 export const useTheme = () => useContext(ThemeCtx);
@@ -98,6 +98,32 @@ function hexToHueDeg(hex) {
   return hue;
 }
 
+// Theme Studio asset slots — see backend THEME_ASSET_SLOTS. Each maps to a
+// CSS custom property consumed by whichever screen renders that slot (login
+// background, sidebar accent, etc. — wired up surface-by-surface in a later
+// stage). The size names here come from the shop image pipeline Theme
+// Studio uploads reuse (thumb/card/pdp/zoom); `original` is the one
+// exception, for the animation slot, which is never resized so a GIF/WEBP
+// keeps its animation frames intact.
+const THEME_ASSET_SLOT_CONFIG = {
+  heroBackground:          { cssVar: "--theme-asset-hero-background",           size: "pdp" },
+  sidebarAccentTop:        { cssVar: "--theme-asset-sidebar-accent-top",        size: "card" },
+  sidebarAccentBottom:     { cssVar: "--theme-asset-sidebar-accent-bottom",     size: "card" },
+  sectionHeaderBackground: { cssVar: "--theme-asset-section-header-background", size: "card" },
+  dashboardCardOverlay:    { cssVar: "--theme-asset-dashboard-card-overlay",    size: "card" },
+  eventBanner:             { cssVar: "--theme-asset-event-banner",              size: "pdp" },
+  loginBackground:         { cssVar: "--theme-asset-login-background",          size: "pdp" },
+  loginAccent:             { cssVar: "--theme-asset-login-accent",              size: "card" },
+  cornerSticker:           { cssVar: "--theme-asset-corner-sticker",            size: "card" },
+  announcementAccent:      { cssVar: "--theme-asset-announcement-accent",       size: "thumb" },
+  emptyStateIllustration:  { cssVar: "--theme-asset-empty-state-illustration",  size: "card" },
+  ambientAnimation:        { cssVar: "--theme-asset-ambient-animation",         size: "original" },
+};
+
+function themeAssetUrl(assetId, size) {
+  return `${API_BASE}/theme-assets/${encodeURIComponent(assetId)}/${size}`;
+}
+
 function applyBranding(b) {
   const root = document.documentElement;
   const get = (k) => b[k] || DEFAULT_BRANDING[k];
@@ -155,6 +181,28 @@ function applyBranding(b) {
   root.style.setProperty("--card-glow-blur", `${style.glowBlur}px`);
   root.style.setProperty("--card-inner-highlight-color", "#FFFFFF");
   root.style.setProperty("--card-inner-highlight-rgba", `rgba(255, 255, 255, ${style.innerOpacity})`);
+
+  // Theme Studio asset slots — one CSS var per slot, "none" when the active
+  // theme hasn't uploaded anything for it, so every consumer can write a
+  // single `background-image: var(--theme-asset-x, none)` with no per-theme
+  // branching. Which surfaces actually render them is decided elsewhere
+  // (data-theme-target-* below); this just makes the pictures addressable.
+  const assets = b.assets || {};
+  for (const [slot, { cssVar, size }] of Object.entries(THEME_ASSET_SLOT_CONFIG)) {
+    const assetId = assets[slot];
+    root.style.setProperty(cssVar, assetId ? `url("${themeAssetUrl(assetId, size)}")` : "none");
+  }
+
+  // Per-surface opt-in (Client Portal / Staff Portal / Login), theme
+  // intensity, and whether this theme's GIF/WEBP animation slot should
+  // play — exposed as data-* attributes so any surface's CSS or components
+  // can key off them once wired up, without re-reading /branding directly.
+  const targets = { client_portal: true, staff_portal: true, login: true, ...(b.enabled_targets || {}) };
+  root.setAttribute("data-theme-target-client-portal", String(!!targets.client_portal));
+  root.setAttribute("data-theme-target-staff-portal", String(!!targets.staff_portal));
+  root.setAttribute("data-theme-target-login", String(!!targets.login));
+  root.setAttribute("data-theme-intensity", b.theme_intensity || "standard");
+  root.setAttribute("data-theme-animation", b.theme_animation_enabled === false ? "off" : "on");
 
   // Admin-controlled UI knobs. data-* attributes drive formatters/CSS without
   // creating additional visual theme systems.
