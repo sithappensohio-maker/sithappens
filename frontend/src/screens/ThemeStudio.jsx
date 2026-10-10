@@ -88,6 +88,9 @@ export default function ThemeStudio() {
   const [newPanelOpen, setNewPanelOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
 
   const selectForEditing = (theme) => {
     setEditingId(theme.id);
@@ -258,6 +261,52 @@ export default function ThemeStudio() {
     }
   };
 
+  // Export/Import Theme Pack — a .zip with the theme's artwork, unlike
+  // ThemeGallery's plain-JSON export (colors only). Exports whichever theme
+  // is currently open for editing; import always creates a new theme (never
+  // overwrites one in place) and selects it for editing, same as "+ New
+  // Theme" and duplicate already do.
+  const exportThemePack = async () => {
+    if (!editingId) return;
+    setExporting(true);
+    try {
+      const resp = await api.get(`/settings/themes/${editingId}/export`, { responseType: "blob" });
+      const blob = new Blob([resp.data], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sit-happens-theme-${(draft?.name || "theme").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't export that theme.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const onImportPackFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file again later
+    if (!file) return;
+    setImporting(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const { data: created } = await api.post("/settings/themes/import", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      await load(created.id);
+      toast.success(`"${created.name}" imported — find it above to configure or activate it.`);
+    } catch (e2) {
+      toast.error(formatErr(e2.response?.data?.detail) || "Couldn't import that theme pack.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const isActiveTheme = editingId && editingId === branding?.active_theme_id;
 
   return (
@@ -268,6 +317,36 @@ export default function ThemeStudio() {
         highlight="More Fun"
         subtitle="Customize your portals with seasonal themes, holidays, and special events. Upload images, adjust colors, schedule dates, and preview the changes live."
         testid="theme-studio-hero"
+        right={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={importing}
+              data-testid="theme-studio-import-pack-btn"
+              className="min-h-10 px-3 rounded-lg border border-shBorder text-shText font-black text-[11px] uppercase tracking-widest hover:border-shSecondary/50 disabled:opacity-50"
+            >
+              <i className="fas fa-upload mr-1.5" />{importing ? "Importing…" : "Import Theme Pack"}
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              data-testid="theme-studio-import-pack-input"
+              className="hidden"
+              onChange={onImportPackFile}
+            />
+            <button
+              type="button"
+              onClick={exportThemePack}
+              disabled={exporting || !editingId}
+              data-testid="theme-studio-export-pack-btn"
+              className="min-h-10 px-3 rounded-lg border border-shBorder text-shText font-black text-[11px] uppercase tracking-widest hover:border-shPrimary/50 disabled:opacity-50"
+            >
+              <i className="fas fa-download mr-1.5" />{exporting ? "Exporting…" : "Export Theme Pack"}
+            </button>
+          </div>
+        }
       />
 
       {loading || !draft ? (

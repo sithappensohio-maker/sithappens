@@ -11288,6 +11288,131 @@ async def activate_theme_preset(theme_id: str, _: dict = Depends(require_admin_a
     return {"ok": True, "active_theme_id": theme_id}
 
 
+@api.get("/settings/themes/{theme_id}/export")
+async def export_theme_pack(theme_id: str, _: dict = Depends(require_admin_and_permission("settings"))):
+    """A theme as a self-contained .zip: manifest.json (every field a theme
+    preset carries) plus one image file per uploaded asset slot. Unlike the
+    old colors-only JSON export the Theme Gallery UI still offers for a
+    quick copy/paste, this is the one that survives a round-trip through
+    Import Theme Pack with its artwork intact.
+
+    Asset files are each slot's LARGEST stored derivative ("zoom", falling
+    back to "pdp"), not a pristine original — theme_assets never keeps the
+    original bytes for still images (see upload_theme_asset), only the
+    generated WEBP derivatives. Good enough to re-import and re-derive
+    from; not meant to be a lossless archival copy. The animation slot is
+    the exception — its original bytes ARE kept untouched (to preserve
+    GIF/WEBP frames), so that one exports byte-for-byte."""
+    import io as _io
+    import zipfile as _zipfile
+    import json as _json
+
+    theme = await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
+    if not theme:
+        raise HTTPException(status_code=404, detail="Theme not found")
+
+    manifest = {k: theme.get(k) for k in
+                ("name", "slug", "version", "description", "author", *THEME_FIELD_KEYS, *THEME_EXTENDED_FIELD_KEYS)}
+    manifest["pack_format"] = 1
+    manifest["exported_at"] = now_iso()
+
+    zbuf = _io.BytesIO()
+    with _zipfile.ZipFile(zbuf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        asset_files: Dict[str, str] = {}
+        for slot, asset_id in (theme.get("assets") or {}).items():
+            if not asset_id:
+                continue
+            asset = await db.theme_assets.find_one({"id": asset_id}, {"_id": 0})
+            if not asset:
+                continue
+            if asset.get("kind") == "animation":
+                blob = bytes(asset["data"])
+                ext = "gif" if asset.get("mime") == "image/gif" else "webp"
+            else:
+                derivatives = asset.get("derivatives") or {}
+                deriv = derivatives.get("zoom") or derivatives.get("pdp")
+                if not deriv:
+                    continue
+                blob = bytes(deriv["data"])
+                ext = "webp"
+            fname = f"assets/{slot}.{ext}"
+            zf.writestr(fname, blob)
+            asset_files[slot] = fname
+        manifest["assets"] = asset_files
+        zf.writestr("manifest.json", _json.dumps(manifest, indent=2))
+    zbuf.seek(0)
+
+    filename = f"sit-happens-theme-{_shop_org_slugify(theme.get('name') or 'theme')}.zip"
+    return Response(content=zbuf.getvalue(), media_type="application/zip",
+                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@api.post("/settings/themes/import")
+async def import_theme_pack(file: UploadFile = File(...), user: dict = Depends(require_admin_and_permission("settings"))):
+    """The other half of export_theme_pack: a .zip with manifest.json plus
+    asset files. Each asset file is re-uploaded through the SAME pipeline a
+    normal Theme Studio upload uses — fresh derivatives built from the
+    imported bytes, brand-new theme_assets rows/ids — rather than grafting
+    the exporting install's own asset ids onto this one, which would
+    silently 404 the instant they don't exist here. The preset itself is
+    created via create_theme_preset, the exact same "create a preset from
+    this field set" path POST /settings/themes already uses for a new,
+    duplicated, or plain-JSON-imported theme (see that function's own
+    docstring) — this is just a fourth way of arriving at the same call."""
+    import io as _io
+    import zipfile as _zipfile
+    import json as _json
+
+    raw = await file.read()
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="That theme pack is too large (max 25 MB).")
+    try:
+        zf = _zipfile.ZipFile(_io.BytesIO(raw))
+        manifest = _json.loads(zf.read("manifest.json"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="That doesn't look like a valid theme pack.")
+    if not isinstance(manifest, dict) or not str(manifest.get("name") or "").strip():
+        raise HTTPException(status_code=400, detail="That theme pack is missing a name.")
+
+    new_assets: Dict[str, str] = {}
+    for slot, fname in (manifest.get("assets") or {}).items():
+        if slot not in THEME_ASSET_SLOTS or not isinstance(fname, str):
+            continue
+        try:
+            blob = zf.read(fname)
+        except KeyError:
+            continue
+        asset_id = str(uuid.uuid4())
+        if slot == THEME_ASSET_ANIMATION_SLOT:
+            mime = "image/gif" if fname.lower().endswith(".gif") else "image/webp"
+            if mime not in THEME_ANIMATION_ALLOWED_MIME or len(blob) > MAX_THEME_ANIMATION_BYTES:
+                continue
+            await db.theme_assets.insert_one({
+                "id": asset_id, "kind": "animation", "slot": slot, "mime": mime,
+                "data": Binary(blob), "etag": hashlib.sha256(blob).hexdigest()[:32],
+                "size_bytes": len(blob), "filename": fname.rsplit("/", 1)[-1],
+                "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+            })
+        else:
+            try:
+                derivatives = shop_media_services.build_derivatives(blob)
+            except HTTPException:
+                continue
+            await db.theme_assets.insert_one({
+                "id": asset_id, "kind": "image", "slot": slot, "mime": "image/webp",
+                "filename": fname.rsplit("/", 1)[-1], "size_bytes": len(blob),
+                "derivatives": derivatives, "derivatives_built_at": now_iso(),
+                "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+            })
+        new_assets[slot] = asset_id
+
+    body_fields = {k: manifest.get(k) for k in
+                   ("name", "slug", "version", "description", "author", *THEME_FIELD_KEYS, *THEME_EXTENDED_FIELD_KEYS)
+                   if k in manifest}
+    body_fields["assets"] = new_assets
+    return await create_theme_preset(ThemePresetIn(**body_fields), user)
+
+
 # ───────────────────────────── Theme Studio — asset uploads ─────────────────
 # A separate collection/route namespace from shop_media on purpose: shop
 # images are gated by "does a live, public catalog item reference this?",

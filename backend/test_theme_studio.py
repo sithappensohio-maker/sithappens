@@ -9,7 +9,10 @@ helper pair, and the `_clean_active_theme` fixture so no test leaks
 `active_theme_id` into another.
 """
 import datetime
+import io
+import json as _json
 import uuid
+import zipfile
 
 import httpx
 import jwt
@@ -55,6 +58,24 @@ def _call(method, path, user=None, json_body=None):
             headers = {"Authorization": f"Bearer {user['_token']}"} if user else {}
             return await http.request(method, f"/api{path}", headers=headers, json=json_body)
     return run(_go())
+
+
+def _call_upload(method, path, user, files):
+    async def _go():
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            headers = {"Authorization": f"Bearer {user['_token']}"} if user else {}
+            return await http.request(method, f"/api{path}", headers=headers, files=files)
+    return run(_go())
+
+
+def _make_pack_zip(manifest, asset_files=None):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", _json.dumps(manifest))
+        for fname, content in (asset_files or {}).items():
+            zf.writestr(fname, content)
+    return buf.getvalue()
 
 
 def _cleanup(*, user_ids=(), theme_ids=(), asset_ids=()):
@@ -449,3 +470,195 @@ def test_delete_nonexistent_asset_is_404():
         assert r.status_code == 404, r.text
     finally:
         _cleanup(user_ids=[owner["id"]])
+
+
+# ───────────────────────────── theme pack export/import ────────────────────
+
+def test_export_contains_manifest_and_referenced_asset_files():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_id = None
+    try:
+        asset_id = _call("POST", "/theme-assets", owner,
+                          {"data": PNG_DATA_URL, "filename": "sticker.png", "slot": "cornerSticker"}).json()["asset_id"]
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Export Me", "brand_primary": "#123123", "assets": {"cornerSticker": asset_id},
+        }).json()
+        theme_id = created["id"]
+
+        r = _call("GET", f"/settings/themes/{theme_id}/export", owner)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "application/zip"
+
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        manifest = _json.loads(zf.read("manifest.json"))
+        assert manifest["name"] == "Export Me"
+        assert manifest["brand_primary"] == "#123123"
+        assert manifest["pack_format"] == 1
+        assert "cornerSticker" in manifest["assets"]
+        asset_fname = manifest["assets"]["cornerSticker"]
+        assert asset_fname in zf.namelist()
+        assert len(zf.read(asset_fname)) > 0
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (),
+                 asset_ids=[asset_id] if asset_id else ())
+
+
+def test_export_animation_slot_round_trips_original_bytes():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_id = None
+    try:
+        asset_id = _call("POST", "/theme-assets", owner,
+                          {"data": GIF_DATA_URL, "filename": "wag.gif", "slot": "ambientAnimation"}).json()["asset_id"]
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Animated Export", "assets": {"ambientAnimation": asset_id},
+        }).json()
+        theme_id = created["id"]
+
+        r = _call("GET", f"/settings/themes/{theme_id}/export", owner)
+        assert r.status_code == 200, r.text
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        manifest = _json.loads(zf.read("manifest.json"))
+        fname = manifest["assets"]["ambientAnimation"]
+        assert fname.endswith(".gif")
+
+        import base64
+        original_blob = base64.b64decode(GIF_DATA_URL.split(",", 1)[1])
+        assert zf.read(fname) == original_blob
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (),
+                 asset_ids=[asset_id] if asset_id else ())
+
+
+def test_export_on_a_nonexistent_theme_is_404():
+    owner = _mk_user("admin")
+    try:
+        r = _call("GET", f"/settings/themes/{TAG}-nonexistent/export", owner)
+        assert r.status_code == 404, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]])
+
+
+def test_import_creates_a_new_theme_with_fresh_asset_ids_not_the_originals():
+    owner = _mk_user("admin")
+    theme_id = None
+    new_theme_id = None
+    try:
+        png_bytes = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YA"
+            "AAAASUVORK5CYII="
+        )
+        import base64
+        raw_png = base64.b64decode(png_bytes)
+        manifest = {
+            "name": "Imported Theme", "brand_primary": "#ff00aa", "brand_accent": "#00aaff",
+            "theme_glow_color": "#ffaa00", "intensity": "bold", "animation_enabled": False,
+            "enabled_targets": {"client_portal": True, "staff_portal": False, "login": True},
+            "assets": {"cornerSticker": "assets/cornerSticker.png"},
+        }
+        pack = _make_pack_zip(manifest, {"assets/cornerSticker.png": raw_png})
+
+        r = _call_upload("POST", "/settings/themes/import", owner, {"file": ("pack.zip", pack, "application/zip")})
+        assert r.status_code == 200, r.text
+        created = r.json()
+        new_theme_id = created["id"]
+        assert created["name"] == "Imported Theme"
+        assert created["brand_primary"] == "#ff00aa"
+        assert created["theme_glow_color"] == "#ffaa00"
+        assert created["intensity"] == "bold"
+        assert created["animation_enabled"] is False
+        assert created["enabled_targets"] == {"client_portal": True, "staff_portal": False, "login": True}
+
+        new_asset_id = created["assets"]["cornerSticker"]
+        assert new_asset_id  # a real, freshly-minted id — never the literal zip path
+        assert new_asset_id != "assets/cornerSticker.png"
+
+        g = _call("GET", f"/theme-assets/{new_asset_id}/thumb")
+        assert g.status_code == 200, g.text
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[t for t in (theme_id, new_theme_id) if t])
+
+
+def test_export_then_import_round_trip_preserves_colors_and_repopulates_assets():
+    owner = _mk_user("admin")
+    original_id = None
+    original_asset_id = None
+    imported_id = None
+    try:
+        original_asset_id = _call("POST", "/theme-assets", owner,
+                                   {"data": PNG_DATA_URL, "filename": "x.png", "slot": "heroBackground"}).json()["asset_id"]
+        original = _call("POST", "/settings/themes", owner, {
+            "name": "Round Trip Source", "brand_primary": "#445566", "theme_glow_color": "#998877",
+            "assets": {"heroBackground": original_asset_id},
+        }).json()
+        original_id = original["id"]
+
+        exported = _call("GET", f"/settings/themes/{original_id}/export", owner)
+        assert exported.status_code == 200, exported.text
+
+        r = _call_upload("POST", "/settings/themes/import", owner,
+                          {"file": ("pack.zip", exported.content, "application/zip")})
+        assert r.status_code == 200, r.text
+        imported = r.json()
+        imported_id = imported["id"]
+
+        assert imported["name"] == "Round Trip Source"
+        assert imported["brand_primary"] == "#445566"
+        assert imported["theme_glow_color"] == "#998877"
+        # Same SLOT is populated, but with a brand-new id — not the source
+        # install's id, which this install's /theme-assets wouldn't have.
+        assert imported["assets"]["heroBackground"]
+        assert imported["assets"]["heroBackground"] != original_asset_id
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[t for t in (original_id, imported_id) if t],
+                 asset_ids=[original_asset_id] if original_asset_id else ())
+
+
+def test_import_rejects_a_zip_with_no_manifest():
+    owner = _mk_user("admin")
+    try:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("readme.txt", "not a theme pack")
+        r = _call_upload("POST", "/settings/themes/import", owner, {"file": ("pack.zip", buf.getvalue(), "application/zip")})
+        assert r.status_code == 400, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]])
+
+
+def test_import_rejects_a_manifest_with_no_name():
+    owner = _mk_user("admin")
+    try:
+        pack = _make_pack_zip({"brand_primary": "#111111"})
+        r = _call_upload("POST", "/settings/themes/import", owner, {"file": ("pack.zip", pack, "application/zip")})
+        assert r.status_code == 400, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]])
+
+
+def test_import_rejects_a_file_that_is_not_a_zip_at_all():
+    owner = _mk_user("admin")
+    try:
+        r = _call_upload("POST", "/settings/themes/import", owner,
+                          {"file": ("pack.zip", b"definitely not a zip file", "application/zip")})
+        assert r.status_code == 400, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"]])
+
+
+def test_export_and_import_non_admin_is_403():
+    employee = _mk_user("employee", "daycare_staff")
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Guarded"}).json()
+        theme_id = created["id"]
+
+        assert _call("GET", f"/settings/themes/{theme_id}/export", employee).status_code == 403
+
+        pack = _make_pack_zip({"name": "Whatever"})
+        r = _call_upload("POST", "/settings/themes/import", employee, {"file": ("pack.zip", pack, "application/zip")})
+        assert r.status_code == 403, r.text
+    finally:
+        _cleanup(user_ids=[owner["id"], employee["id"]], theme_ids=[theme_id] if theme_id else ())
