@@ -3143,7 +3143,12 @@ html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::befo
    ever shows up alongside a real event — no empty decorated box. Neither
    card has any pre-existing absolutely-positioned children to collide
    with, so z-index:-1 on an isolated stacking context is enough on its
-   own, no `> *` bump needed. */
+   own, no `> *` bump needed. Full var(--theme-decoration-opacity) — same
+   strength as the hero banner — now that the directional scrim (baked
+   into the CSS var's value, see themeAssetLayeredValue) protects the
+   title/button text instead of relying on turning the whole image down;
+   a leftover ×0.6 reduction from before the scrim existed just made
+   uploaded art look washed out on top of it. */
 .sh-theme-event-banner-client,
 .sh-theme-event-banner-staff {
   position: relative;
@@ -3158,7 +3163,7 @@ html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::befo
   background-repeat: no-repeat;
   background-size: cover;
   background-position: center;
-  opacity: calc(var(--theme-decoration-opacity) * 0.6);
+  opacity: var(--theme-decoration-opacity);
   pointer-events: none;
   z-index: -1;
 }
@@ -3201,7 +3206,11 @@ html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="toda
    Here" / "$0.00" tiles, School HQ's stat row) — admin-only, so just the
    staff-portal target. NeonEdge sets its own background via inline style
    (not a CSS rule this could collide with) and has no pre-existing
-   absolutely-positioned children, so a plain z-index:0 layer is enough. */
+   absolutely-positioned children, so a plain z-index:0 layer is enough.
+   Full var(--theme-decoration-opacity) — the flat scrim baked into the
+   CSS var's value now dims it evenly for number/label contrast, so a
+   leftover ×0.5 reduction from before the scrim existed just left
+   uploaded art nearly invisible on top of it. */
 .sh-theme-dashboard-overlay {
   position: relative;
   isolation: isolate;
@@ -3214,7 +3223,7 @@ html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="toda
   background-repeat: no-repeat;
   background-size: cover;
   background-position: center;
-  opacity: calc(var(--theme-decoration-opacity) * 0.5);
+  opacity: var(--theme-decoration-opacity);
   pointer-events: none;
   z-index: 0;
 }
