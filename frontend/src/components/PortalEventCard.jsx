@@ -9,7 +9,7 @@ export default function PortalEventCard() {
   const ev = events && events[0];
   if (!ev) return null;
   return (
-    <div className="mb-4 sm:mb-6 rounded-2xl border p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3"
+    <div className="mb-4 sm:mb-6 rounded-2xl border p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 sh-theme-event-banner-client"
          style={{ borderColor: "rgba(242,101,34,.45)", background: "linear-gradient(120deg, rgba(242,101,34,.12), rgba(140,198,63,.08))" }}
          data-testid="portal-upcoming-event">
       <div className="min-w-0 flex-1">

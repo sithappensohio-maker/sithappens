@@ -59,6 +59,7 @@ export default function ThemeLivePreviewPane({ draft }) {
             type="button"
             data-testid={`theme-preview-tab-${tab.key}`}
             onClick={() => setSurface(tab.key)}
+            aria-pressed={surface === tab.key}
             className={
               surface === tab.key
                 ? "px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader"

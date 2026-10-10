@@ -35,7 +35,7 @@ export default function TodayEventsCard({ can = () => false, onNavigate = () => 
   }, [allowed, refreshSignal]);
   if (!allowed || !events || events.length === 0) return null;
   return (
-    <div className="rounded-2xl border border-shOrange/40 bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="today-events">
+    <div className="rounded-2xl border border-shOrange/40 bg-[var(--sh-card-base)] p-4 sm:p-5 sh-theme-event-banner-staff" data-testid="today-events">
       <div className="flex items-center justify-between gap-3 mb-3">
         <h2 className="text-[15px] font-black uppercase italic tracking-tight text-white"><i className="fas fa-calendar-day text-shOrange mr-2" />Upcoming events</h2>
         <button type="button" onClick={() => onNavigate("events")} data-testid="today-open-events"

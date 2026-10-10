@@ -251,6 +251,53 @@ def test_put_partial_merges_enabled_targets():
         _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
 
 
+def test_put_can_explicitly_clear_a_scheduled_date():
+    """Regression: `exclude_unset=True` tells apart "never sent" from "sent
+    as null", but the patch comprehension used to throw every None value
+    away regardless — so once a date was set there was no way to send it
+    back to null again through this endpoint. Deployment Settings' date
+    inputs do exactly that when an admin clears the field."""
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Clearable Dates", "start_date": "2026-10-01", "end_date": "2026-11-01",
+        }).json()
+        theme_id = created["id"]
+        assert created["start_date"] == "2026-10-01"
+
+        r = _call("PUT", f"/settings/themes/{theme_id}", owner, {"start_date": None})
+        assert r.status_code == 200, r.text
+        assert r.json()["start_date"] is None
+        # The field this call didn't mention stays exactly as it was.
+        assert r.json()["end_date"] == "2026-11-01"
+
+        stored = run(server.db.theme_presets.find_one({"id": theme_id}, {"_id": 0}))
+        assert stored["start_date"] is None
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_put_does_not_let_a_stray_null_clear_the_name():
+    """The opposite side of the same fix: null-clearing is only honored for
+    the handful of fields where it's a real action (dates, extends_theme_id)
+    — name/colors/etc. never legitimately get set to null through this
+    endpoint, so a None there is still silently ignored rather than wiping
+    the field."""
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "Keep My Name", "brand_primary": "#112233"}).json()
+        theme_id = created["id"]
+
+        r = _call("PUT", f"/settings/themes/{theme_id}", owner, {"name": None, "brand_primary": None})
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "Keep My Name"
+        assert r.json()["brand_primary"] == "#112233"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
 def test_activate_mirrors_extended_fields_onto_branding():
     owner = _mk_user("admin")
     theme_id = None
@@ -662,3 +709,121 @@ def test_export_and_import_non_admin_is_403():
         assert r.status_code == 403, r.text
     finally:
         _cleanup(user_ids=[owner["id"], employee["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+# ───────────────────────────── Active Dates scheduling (Stage 5) ───────────
+# Relative offsets (±3 days) rather than mocking business_today(), so these
+# never flake near the Eastern-time midnight boundary the way a ±1 day
+# window could.
+_TODAY = server.business_today()
+_PAST = (_TODAY - datetime.timedelta(days=3)).isoformat()
+_FUTURE = (_TODAY + datetime.timedelta(days=3)).isoformat()
+
+
+def test_no_schedule_dates_means_always_active():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {"name": "No Schedule", "brand_primary": "#101010"}).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["theme_schedule_active"] is True
+        assert branding["brand_primary"] == "#101010"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_schedule_window_currently_open_shows_the_theme():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Currently Live", "brand_primary": "#202020",
+            "start_date": _PAST, "end_date": _FUTURE,
+        }).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["theme_schedule_active"] is True
+        assert branding["brand_primary"] == "#202020"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_schedule_window_not_yet_started_falls_back_to_defaults():
+    owner = _mk_user("admin")
+    theme_id = None
+    asset_id = None
+    try:
+        asset_id = _call("POST", "/theme-assets", owner,
+                          {"data": PNG_DATA_URL, "filename": "x.png", "slot": "heroBackground"}).json()["asset_id"]
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Not Yet", "brand_primary": "#303030", "intensity": "bold",
+            "start_date": _FUTURE, "assets": {"heroBackground": asset_id},
+        }).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["theme_schedule_active"] is False
+        # Falls back to the hardcoded baseline, not just "no color at all".
+        assert branding["brand_primary"] == "#8cc63f"
+        assert branding["theme_intensity"] == "standard"
+        assert branding["assets"]["heroBackground"] is None
+        # But the real schedule/active id are still reported honestly, so
+        # Theme Studio can show "scheduled, not live yet" instead of
+        # looking like activation silently failed.
+        assert branding["active_theme_id"] == theme_id
+        assert branding["start_date"] == _FUTURE
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else (),
+                 asset_ids=[asset_id] if asset_id else ())
+
+
+def test_schedule_window_already_ended_falls_back_to_defaults():
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Already Over", "brand_primary": "#404040", "end_date": _PAST,
+        }).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["theme_schedule_active"] is False
+        assert branding["brand_primary"] == "#8cc63f"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())
+
+
+def test_schedule_fallback_resets_derived_colors_too():
+    """theme_btn_primary_bg/theme_input_focus/theme_calendar_active all
+    fall back to brand_primary when unset on the preset itself — that
+    derived fallback must ALSO use the baseline brand_primary once the
+    schedule has closed, not the scheduled-out theme's brand_primary
+    (which would otherwise leak through as a half-reverted, mismatched
+    palette)."""
+    owner = _mk_user("admin")
+    theme_id = None
+    try:
+        created = _call("POST", "/settings/themes", owner, {
+            "name": "Derived Colors", "brand_primary": "#ff00ff", "end_date": _PAST,
+        }).json()
+        theme_id = created["id"]
+        act = _call("POST", f"/settings/themes/{theme_id}/activate", owner)
+        assert act.status_code == 200, act.text
+
+        branding = _call("GET", "/branding").json()
+        assert branding["theme_btn_primary_bg"] == "#8cc63f"
+        assert branding["theme_input_focus"] == "#8cc63f"
+        assert branding["theme_calendar_active"] == "#8cc63f"
+    finally:
+        _cleanup(user_ids=[owner["id"]], theme_ids=[theme_id] if theme_id else ())

@@ -54,6 +54,7 @@ function ColorField({ label, sub, value, onChange, testid }) {
           value={value || "#000000"}
           onChange={(e) => onChange(e.target.value)}
           data-testid={`${testid}-picker`}
+          aria-label={`${label} color picker`}
           className="w-12 h-10 rounded cursor-pointer bg-transparent border border-shBorder"
         />
         <input
@@ -62,6 +63,7 @@ function ColorField({ label, sub, value, onChange, testid }) {
           onChange={(e) => onChange(e.target.value)}
           data-testid={`${testid}-hex`}
           placeholder="#8cc63f"
+          aria-label={`${label} hex value`}
           className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText font-mono"
         />
       </div>
@@ -369,6 +371,7 @@ export default function ThemeStudio() {
                     key={t.id}
                     onClick={() => trySelect(t)}
                     data-testid={`theme-studio-card-${t.id}`}
+                    aria-current={isEditing ? "true" : undefined}
                     className={`text-left bg-[var(--sh-card-base)] border rounded-xl p-3 space-y-2 transition ${isEditing ? "border-shPrimary ring-1 ring-shPrimary/40" : "border-shBorder hover:border-shPrimary/40"}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -388,8 +391,15 @@ export default function ThemeStudio() {
                       <span
                         role="button"
                         tabIndex={0}
+                        aria-label={`Delete theme "${t.name}"`}
                         onClick={(e) => { e.stopPropagation(); deleteTheme(t); }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); deleteTheme(t); } }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            deleteTheme(t);
+                          }
+                        }}
                         data-testid={`theme-studio-delete-${t.id}`}
                         className="inline-block text-[10px] font-black uppercase tracking-widest text-shTextMuted hover:text-red-400"
                       >
@@ -479,6 +489,17 @@ export default function ThemeStudio() {
                   </button>
                 </div>
               </div>
+
+              {isActiveTheme && branding?.theme_schedule_active === false && (
+                <div
+                  className="bg-shOrange/10 border border-shOrange/40 rounded-lg px-3 py-2 text-[12px] text-shOrange"
+                  data-testid="theme-studio-schedule-inactive-notice"
+                >
+                  <i className="fas fa-clock mr-1.5" />
+                  This theme is active, but today falls outside its Active Dates window — the app is currently showing
+                  the default look instead. It'll apply automatically again once the date window opens.
+                </div>
+              )}
 
               <div>
                 <h4 className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1">Theme Images</h4>

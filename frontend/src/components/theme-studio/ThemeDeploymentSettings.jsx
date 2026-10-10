@@ -70,8 +70,9 @@ export default function ThemeDeploymentSettings({
         </div>
         <div className="flex gap-3">
           <div className="flex-1">
-            <label className="block text-[11px] text-shTextMuted mb-1">Start Date</label>
+            <label htmlFor="theme-deploy-start-date" className="block text-[11px] text-shTextMuted mb-1">Start Date</label>
             <input
+              id="theme-deploy-start-date"
               type="date"
               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText"
               value={startDate || ""}
@@ -80,8 +81,9 @@ export default function ThemeDeploymentSettings({
             />
           </div>
           <div className="flex-1">
-            <label className="block text-[11px] text-shTextMuted mb-1">End Date</label>
+            <label htmlFor="theme-deploy-end-date" className="block text-[11px] text-shTextMuted mb-1">End Date</label>
             <input
+              id="theme-deploy-end-date"
               type="date"
               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText"
               value={endDate || ""}
@@ -114,6 +116,8 @@ export default function ThemeDeploymentSettings({
           className="w-full accent-shPrimary"
           value={intensityIndex}
           onChange={(e) => onChangeIntensity(INTENSITY_LEVELS[Number(e.target.value)])}
+          aria-label="Theme intensity"
+          aria-valuetext={INTENSITY_LABELS[INTENSITY_LEVELS[intensityIndex]]}
           data-testid="theme-deploy-intensity"
         />
 

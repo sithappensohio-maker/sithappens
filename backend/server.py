@@ -10768,6 +10768,23 @@ _THEME_DEFAULTS = {
 }
 
 
+def _theme_schedule_active(start_date: Optional[str], end_date: Optional[str]) -> bool:
+    """True when today (Ohio business date — the same convention every other
+    date-window check in this app uses) falls inside [start_date, end_date].
+    Either bound is optional; a theme with neither set is always active once
+    it's the live one. Plain ISO-string (YYYY-MM-DD) comparison is safe here
+    since both the stored values and business_today() always use that
+    format."""
+    if not start_date and not end_date:
+        return True
+    today = business_today().isoformat()
+    if start_date and today < start_date:
+        return False
+    if end_date and today > end_date:
+        return False
+    return True
+
+
 class ThemePresetIn(BaseModel):
     """Deliberately NOT extra="allow" (unlike SettingsIn) — this model is
     also fed by the import-a-theme-file flow from a user-uploaded JSON file,
@@ -10892,53 +10909,69 @@ async def fetch_branding():
     login screen can theme itself before the user has a token."""
     s = await get_settings()
     ui = ((s.get("day_to_day") or {}).get("ui") or {})
+    # Theme Studio (Stage 5) — a theme's Active Dates window gates its ENTIRE
+    # look, not just its pictures: outside the window this falls all the way
+    # back to the hardcoded baseline (_THEME_DEFAULTS/_THEME_ASSET_DEFAULTS/
+    # etc — the same "nothing special" state an install that's never touched
+    # Theme Studio renders), not to whatever theme happened to be active
+    # before this one. There's no reliable "previous theme" to revert to —
+    # presets can be deleted, re-activated, edited — so the one answer that's
+    # always correct is the baseline every install already falls back to
+    # today. `active_theme_id` and the dates themselves still report the
+    # real, scheduled theme regardless, so Theme Studio can show "scheduled,
+    # not currently live" instead of silently looking broken.
+    schedule_active = _theme_schedule_active(s.get("start_date"), s.get("end_date"))
+    def _tv(key):
+        return s.get(key) if schedule_active else _THEME_DEFAULTS.get(key)
     return {
-        "brand_primary":     s.get("brand_primary")     or "#8cc63f",
-        "brand_accent":      s.get("brand_accent")      or "#00a9e0",
-        "brand_warning":     s.get("brand_warning")     or "#f26522",
-        "brand_font_family": s.get("brand_font_family") or "Inter",
-        "brand_footer_text": s.get("brand_footer_text") or "Sit Happens",
-        "brand_footer_url":  s.get("brand_footer_url")  or "",
-        "interface_style":   s.get("interface_style")   or "standard",
+        "brand_primary":     _tv("brand_primary")     or "#8cc63f",
+        "brand_accent":      _tv("brand_accent")      or "#00a9e0",
+        "brand_warning":     _tv("brand_warning")     or "#f26522",
+        "brand_font_family": _tv("brand_font_family") or "Inter",
+        "brand_footer_text": _tv("brand_footer_text") or "Sit Happens",
+        "brand_footer_url":  _tv("brand_footer_url")  or "",
+        "interface_style":   _tv("interface_style")   or "standard",
         # Theme Gallery — which saved preset (if any) is currently live, so
         # the frontend knows which gallery card to highlight as active
         # without a second round trip. None for every install that has
-        # never touched the Theme Gallery.
+        # never touched the Theme Gallery. Reported honestly even when the
+        # schedule window means it isn't visually applied right now.
         "active_theme_id": s.get("active_theme_id"),
+        "theme_schedule_active": schedule_active,
         # Theme Studio (Stage 1) — asset slots, deployment targets, schedule
         # window, intensity, and the animation toggle for whichever theme is
         # currently active. Defaults keep every install that's never opened
         # Theme Studio rendering exactly as before: every slot empty (no
         # image, ever), every surface enabled, no schedule window.
-        "assets": {**_THEME_ASSET_DEFAULTS, **(s.get("assets") or {})},
+        "assets": {**_THEME_ASSET_DEFAULTS, **(s.get("assets") or {})} if schedule_active else dict(_THEME_ASSET_DEFAULTS),
         "enabled_targets": {**_THEME_TARGET_DEFAULTS, **(s.get("enabled_targets") or {})},
         "start_date": s.get("start_date"),
         "end_date": s.get("end_date"),
-        "theme_intensity": s.get("intensity") or "standard",
-        "theme_animation_enabled": s.get("animation_enabled") if s.get("animation_enabled") is not None else True,
+        "theme_intensity": (_tv("intensity") or "standard") if schedule_active else "standard",
+        "theme_animation_enabled": (s.get("animation_enabled") if s.get("animation_enabled") is not None else True) if schedule_active else True,
         # Sprint 110di-8 — expanded theme controls. Backgrounds / text /
         # buttons / forms / calendar+table. Defaults match the historical
         # Sit Happens palette; admins override via Settings → Brand & Theme.
-        "theme_bg_base":            s.get("theme_bg_base")            or "#060c2e",
-        "theme_bg_panel":           s.get("theme_bg_panel")           or "#0c143e",
-        "theme_bg_header":          s.get("theme_bg_header")          or "#03061a",
-        "theme_bg_hover":           s.get("theme_bg_hover")           or "#1a225a",
-        "theme_text_primary":       s.get("theme_text_primary")       or "#e2e8f0",
-        "theme_text_muted":         s.get("theme_text_muted")         or "#94a3b8",
-        "theme_text_display":       s.get("theme_text_display")       or "#ffffff",
-        "theme_glow_color":         s.get("theme_glow_color")         or "#00a9e0",
-        "theme_btn_primary_bg":     s.get("theme_btn_primary_bg")     or s.get("brand_primary") or "#8cc63f",
-        "theme_btn_primary_fg":     s.get("theme_btn_primary_fg")     or "#03061a",
-        "theme_btn_secondary_border": s.get("theme_btn_secondary_border") or "#1a225a",
-        "theme_btn_secondary_fg":   s.get("theme_btn_secondary_fg")   or "#e2e8f0",
-        "theme_btn_danger_bg":      s.get("theme_btn_danger_bg")      or "#ef4444",
-        "theme_btn_danger_fg":      s.get("theme_btn_danger_fg")      or "#ffffff",
-        "theme_input_bg":           s.get("theme_input_bg")           or "#060c2e",
-        "theme_input_border":       s.get("theme_input_border")       or "#1a225a",
-        "theme_input_focus":        s.get("theme_input_focus")        or s.get("brand_primary") or "#8cc63f",
-        "theme_calendar_active":    s.get("theme_calendar_active")    or s.get("brand_primary") or "#8cc63f",
-        "theme_table_hover":        s.get("theme_table_hover")        or "#1a225a",
-        "theme_row_border":         s.get("theme_row_border")         or "#1a225a",
+        "theme_bg_base":            _tv("theme_bg_base")            or "#060c2e",
+        "theme_bg_panel":           _tv("theme_bg_panel")           or "#0c143e",
+        "theme_bg_header":          _tv("theme_bg_header")          or "#03061a",
+        "theme_bg_hover":           _tv("theme_bg_hover")           or "#1a225a",
+        "theme_text_primary":       _tv("theme_text_primary")       or "#e2e8f0",
+        "theme_text_muted":         _tv("theme_text_muted")         or "#94a3b8",
+        "theme_text_display":       _tv("theme_text_display")       or "#ffffff",
+        "theme_glow_color":         _tv("theme_glow_color")         or "#00a9e0",
+        "theme_btn_primary_bg":     _tv("theme_btn_primary_bg")     or _tv("brand_primary") or "#8cc63f",
+        "theme_btn_primary_fg":     _tv("theme_btn_primary_fg")     or "#03061a",
+        "theme_btn_secondary_border": _tv("theme_btn_secondary_border") or "#1a225a",
+        "theme_btn_secondary_fg":   _tv("theme_btn_secondary_fg")   or "#e2e8f0",
+        "theme_btn_danger_bg":      _tv("theme_btn_danger_bg")      or "#ef4444",
+        "theme_btn_danger_fg":      _tv("theme_btn_danger_fg")      or "#ffffff",
+        "theme_input_bg":           _tv("theme_input_bg")           or "#060c2e",
+        "theme_input_border":       _tv("theme_input_border")       or "#1a225a",
+        "theme_input_focus":        _tv("theme_input_focus")        or _tv("brand_primary") or "#8cc63f",
+        "theme_calendar_active":    _tv("theme_calendar_active")    or _tv("brand_primary") or "#8cc63f",
+        "theme_table_hover":        _tv("theme_table_hover")        or "#1a225a",
+        "theme_row_border":         _tv("theme_row_border")         or "#1a225a",
         # Unified app-wide chrome. Old per-card theme blobs may still exist in
         # historical Mongo settings, but are intentionally ignored.
         # Sprint 110dm — UI knobs surfaced for the front-end formatters.
@@ -11226,7 +11259,16 @@ async def update_theme_preset(theme_id: str, body: ThemePresetIn, _: dict = Depe
     if existing.get("built_in"):
         raise HTTPException(status_code=400, detail="Built-in themes can't be edited directly — duplicate it first.")
     fields = body.model_dump(exclude_unset=True)
-    patch = {k: v for k, v in fields.items() if v is not None and k not in ("assets", "enabled_targets")}
+    # `exclude_unset=True` already tells apart "never sent" (absent from
+    # `fields`, must not touch the stored value) from "sent as null" (present
+    # with value None, means CLEAR it) — but for most fields null is never a
+    # value worth setting (a half-sent name or color is almost certainly a
+    # mistake, not intent), so only these few fields where "clear it" is a
+    # real action an admin takes — unscheduling a date window, detaching
+    # extends_theme_id — actually keep an explicit null in the patch.
+    THEME_NULLABLE_PATCH_FIELDS = {"start_date", "end_date", "extends_theme_id"}
+    patch = {k: v for k, v in fields.items()
+             if k not in ("assets", "enabled_targets") and (v is not None or k in THEME_NULLABLE_PATCH_FIELDS)}
     # Partial per-slot / per-target merge onto what's already stored — PUTting
     # one asset slot (the normal Theme Studio upload flow) must never wipe
     # out the other eleven, and narrowing one target must never reset the

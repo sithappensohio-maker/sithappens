@@ -3081,6 +3081,37 @@ html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::befo
   background-image: var(--theme-asset-sidebar-accent-top, none);
 }
 
+/* Event banner: both cards render nothing at all when there's no upcoming
+   event (see PortalEventCard.jsx / TodayEventsCard.jsx), so this hook only
+   ever shows up alongside a real event — no empty decorated box. Neither
+   card has any pre-existing absolutely-positioned children to collide
+   with, so z-index:-1 on an isolated stacking context is enough on its
+   own, no `> *` bump needed. */
+.sh-theme-event-banner-client,
+.sh-theme-event-banner-staff {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-event-banner-client::after,
+.sh-theme-event-banner-staff::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: calc(var(--theme-decoration-opacity) * 0.6);
+  pointer-events: none;
+  z-index: -1;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-event-banner-client::after {
+  background-image: var(--theme-asset-event-banner, none);
+}
+html[data-theme-target-staff-portal="true"] .sh-theme-event-banner-staff::after {
+  background-image: var(--theme-asset-event-banner, none);
+}
+
 /* Login: a full-bleed low-opacity background behind the whole page, plus a
    small round accent badge on the auth card itself. */
 .sh-theme-login-bg {
