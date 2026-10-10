@@ -75,10 +75,12 @@ export function ContactStrip({ site, testid = "site-contact-strip" }) {
   );
 }
 
-const TYPE_COLOR = { private_lessons: "#8cc63f", group_class: "#00a9e0", day_train: "#00a9e0", board_train: "#f26522", service_dog: "#a855f7" };
+// service_dog stays a literal purple — it doesn't stand in for any of the
+// three brand slots (primary/accent/warning), so there's no theme var for it.
+const TYPE_COLOR = { private_lessons: "var(--sh-green)", group_class: "var(--sh-blue)", day_train: "var(--sh-blue)", board_train: "var(--sh-orange)", service_dog: "#a855f7" };
 
 export function ProgramCard({ p, onAsk, testid }) {
-  const color = TYPE_COLOR[p.type] || "#8cc63f";
+  const color = TYPE_COLOR[p.type] || "var(--sh-green)";
   const fmt = formatLabel(p.format);
   return (
     <article className="sh-site-card flex flex-col" style={{ "--card-accent": color }} data-testid={testid || `site-program-${p.id}`}>
@@ -127,7 +129,7 @@ export function FreeCourseCard({ testid = "site-free-course" }) {
   }, []);
   const href = item ? `/shop/item/training_program/${item.id}` : ONLINE_SCHOOL_HREF;
   return (
-    <div className="sh-site-card sh-site-card--glow flex flex-col sm:flex-row sm:items-center gap-4" style={{ "--card-accent": "#00a9e0" }} data-testid={testid}>
+    <div className="sh-site-card sh-site-card--glow flex flex-col sm:flex-row sm:items-center gap-4" style={{ "--card-accent": "var(--sh-blue)" }} data-testid={testid}>
       <div className="w-14 h-14 rounded-xl grid place-items-center shrink-0 bg-shBlue/15 text-shBlue text-2xl"><i className="fas fa-graduation-cap" /></div>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] font-black uppercase tracking-[0.25em] text-shGreen"><i className="fas fa-gift mr-1.5" />Free starter course</p>

@@ -17,7 +17,7 @@ export function PublicAbout() {
   return (
     <PublicSiteShell testid="public-about">
       <section className="relative overflow-hidden" data-testid="site-about-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, #8cc63f 0%, transparent 38%), radial-gradient(circle at 88% 75%, #00a9e0 0%, transparent 40%)" }} />
+        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-green) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-blue) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_.8fr] gap-8 items-center">
             <div>
@@ -43,7 +43,7 @@ export function PublicAbout() {
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {PILLARS.map((w, i) => (
             <div key={i} className="sh-site-card">
-              <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `${w.color}22`, color: w.color }}><i className={`fas ${w.icon} text-xl`} /></div>
+              <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `color-mix(in srgb, ${w.color} 13%, transparent)`, color: w.color }}><i className={`fas ${w.icon} text-xl`} /></div>
               <h3 className="text-[15px] font-black uppercase italic tracking-tight text-white">{w.title}</h3>
               <p className="text-[14px] text-gray-300 leading-relaxed mt-1.5">{w.body}</p>
             </div>
@@ -86,7 +86,7 @@ export function PublicPhotography() {
   return (
     <PublicSiteShell testid="public-photography">
       <section className="relative overflow-hidden" data-testid="site-photo-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, #f26522 0%, transparent 38%), radial-gradient(circle at 88% 75%, #00a9e0 0%, transparent 40%)" }} />
+        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-orange) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-blue) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <Eyebrow icon="fa-camera-retro" color="text-shOrange">{PHOTOGRAPHY.eyebrow}</Eyebrow>
           <Title as="h1" className="text-4xl sm:text-5xl lg:text-6xl">{page.headline || "Capture the moments worth keeping."}</Title>
@@ -110,7 +110,7 @@ export function PublicPhotography() {
         ) : (
           <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {services.map((s) => (
-              <div key={s.id} className="sh-site-card" style={{ "--card-accent": "#f26522" }} data-testid={`site-photo-service-${s.id}`}>
+              <div key={s.id} className="sh-site-card" style={{ "--card-accent": "var(--sh-orange)" }} data-testid={`site-photo-service-${s.id}`}>
                 <h3 className="text-[18px] font-black uppercase italic tracking-tight text-white">{s.name}</h3>
                 {s.description && <p className="text-[14px] text-gray-300 leading-relaxed mt-2">{s.description}</p>}
                 <p className="mt-3 text-[18px] font-black text-white">{money(s.base_price)}{s.duration_minutes ? <span className="text-[12px] text-gray-500 font-bold"> · {s.duration_minutes} min</span> : null}</p>
@@ -134,7 +134,7 @@ export function PublicContact() {
   return (
     <PublicSiteShell testid="public-contact">
       <section className="relative overflow-hidden" data-testid="site-contact-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 75%, #8cc63f 0%, transparent 40%)" }} />
+        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 12% 20%, var(--sh-blue) 0%, transparent 38%), radial-gradient(circle at 88% 75%, var(--sh-green) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-10 sm:pt-14 sm:pb-12 sh-splatter">
           <Eyebrow icon="fa-comments">Contact</Eyebrow>
           <Title as="h1" className="text-4xl sm:text-5xl lg:text-6xl">Have questions or ready to get started?</Title>
@@ -148,15 +148,15 @@ export function PublicContact() {
       </section>
       <Section tone="panel" testid="site-contact-cards">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="sh-site-card" style={{ "--card-accent": "#8cc63f" }}>
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-green)" }}>
             <p className="sh-site-footer__title">Call or text</p>
             {site?.phone ? <a href={`tel:${tel}`} className="text-[20px] font-black text-white hover:text-shGreen" data-testid="site-contact-phone">{site.phone}</a> : <p className="text-gray-400">—</p>}
           </div>
-          <div className="sh-site-card" style={{ "--card-accent": "#00a9e0" }}>
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-blue)" }}>
             <p className="sh-site-footer__title">Email</p>
             {site?.email ? <a href={`mailto:${site.email}`} className="text-[17px] font-black text-white hover:text-shBlue break-all" data-testid="site-contact-email">{site.email}</a> : <p className="text-gray-400">—</p>}
           </div>
-          <div className="sh-site-card" style={{ "--card-accent": "#f26522" }}>
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-orange)" }}>
             <p className="sh-site-footer__title">Visit</p>
             {site?.address_line && <p className="text-[15px] text-white" data-testid="site-contact-address">{site.address_line}<br />{site.city}, {site.state} {site.zip}</p>}
             {site?.map_url && <a href={site.map_url} target="_blank" rel="noopener noreferrer" className="inline-block mt-2 text-[12px] font-black uppercase tracking-widest text-shOrange hover:text-white" data-testid="site-contact-directions">Get directions <i className="fas fa-arrow-up-right-from-square ml-1" /></a>}

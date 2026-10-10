@@ -13,10 +13,13 @@ export const PROMISE = {
   consult_points: ["No pressure. Just solutions.", "Personalized training plan.", "Local trainers who care."],
 };
 
+// "Support that lasts" stays a literal purple — it doesn't stand in for any
+// of the three brand slots (primary/accent/warning), so there's no theme var
+// for it (same reasoning as PublicBits.jsx's TYPE_COLOR.service_dog).
 export const PILLARS = [
-  { icon: "fa-scale-balanced", color: "#8cc63f", title: "Balanced training", body: "Clear communication: we reward the behaviors we want and use fair, appropriate corrections for unwanted ones, so dogs understand expectations." },
-  { icon: "fa-house-chimney", color: "#00a9e0", title: "Real-world results", body: "Skills are practiced where life happens: at home, on walks, in parks and stores. Not just in a training room." },
-  { icon: "fa-mobile-screen", color: "#f26522", title: "Everything in your pocket", body: "Book, see report cards and photos, track homework, and message us from one portal on your phone." },
+  { icon: "fa-scale-balanced", color: "var(--sh-green)", title: "Balanced training", body: "Clear communication: we reward the behaviors we want and use fair, appropriate corrections for unwanted ones, so dogs understand expectations." },
+  { icon: "fa-house-chimney", color: "var(--sh-blue)", title: "Real-world results", body: "Skills are practiced where life happens: at home, on walks, in parks and stores. Not just in a training room." },
+  { icon: "fa-mobile-screen", color: "var(--sh-orange)", title: "Everything in your pocket", body: "Book, see report cards and photos, track homework, and message us from one portal on your phone." },
   { icon: "fa-handshake", color: "#a855f7", title: "Support that lasts", body: "Follow-up guidance from our trainers after every program, so progress sticks for the long haul." },
 ];
 
@@ -62,10 +65,13 @@ export const PHOTOGRAPHY = {
   body: "We believe every dog has a unique story to tell. Our pet photography sessions capture the moments that matter most, turning them into lasting memories you'll cherish for years to come. Let us help you preserve your beloved dog's personality, spirit, and story.",
 };
 
+// training's purple and photography's #f97316 stay literal — neither matches
+// one of the three brand hexes (#8cc63f/#00a9e0/#f26522), so there's no
+// brand slot to swap them for (same reasoning as the TYPE_COLOR map above).
 export const CATEGORY_META = {
   training: { label: "Training", icon: "fa-graduation-cap", color: "#a855f7", blurb: "Private lessons, Board & Train, and a personalized plan for your dog." },
-  daycare: { label: "Daycare", icon: "fa-sun", color: "#00a9e0", blurb: "Structured play, calm naps, and a tired, happy pup at pickup." },
-  boarding: { label: "Boarding", icon: "fa-moon", color: "#8cc63f", blurb: "Overnight stays with supervised daycare play built in." },
-  online_school: { label: "Online School", icon: "fa-laptop-file", color: "#00a9e0", blurb: "Step-by-step Sit Happens lessons from home, with a free starter course." },
+  daycare: { label: "Daycare", icon: "fa-sun", color: "var(--sh-blue)", blurb: "Structured play, calm naps, and a tired, happy pup at pickup." },
+  boarding: { label: "Boarding", icon: "fa-moon", color: "var(--sh-green)", blurb: "Overnight stays with supervised daycare play built in." },
+  online_school: { label: "Online School", icon: "fa-laptop-file", color: "var(--sh-blue)", blurb: "Step-by-step Sit Happens lessons from home, with a free starter course." },
   photography: { label: "Photography", icon: "fa-camera-retro", color: "#f97316", blurb: "Custom canine portraits and action shots that capture your dog's personality." },
 };

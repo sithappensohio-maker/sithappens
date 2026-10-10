@@ -46,7 +46,9 @@ export default function PublicTraining() {
   return (
     <PublicSiteShell testid="public-training">
       <section className="relative overflow-hidden" data-testid="site-training-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 15% 20%, #a855f7 0%, transparent 36%), radial-gradient(circle at 85% 70%, #8cc63f 0%, transparent 40%)" }} />
+        {/* Purple stays literal — training's identity color isn't one of the
+            three brand slots (same reasoning as TYPE_COLOR.service_dog). */}
+        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ background: "radial-gradient(circle at 15% 20%, #a855f7 0%, transparent 36%), radial-gradient(circle at 85% 70%, var(--sh-green) 0%, transparent 40%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-8 sm:pt-14 sm:pb-10 sh-splatter">
           <Eyebrow icon="fa-graduation-cap" color="text-shOrange">Training in Warren, Ohio</Eyebrow>
           <Title as="h1" className="text-4xl sm:text-5xl lg:text-6xl">Training levels, Board & Train, and a plan built for your dog.</Title>
@@ -107,14 +109,14 @@ export default function PublicTraining() {
         <Eyebrow icon="fa-scale-balanced" color="text-shGreen">Our approach</Eyebrow>
         <Title>What &ldquo;balanced training&rdquo; actually means.</Title>
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="sh-site-card" style={{ "--card-accent": "#8cc63f" }} data-testid="site-method-reward">
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-green)" }} data-testid="site-method-reward">
             <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shGreen">We reward what we want</h3>
             <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
               Food, toys, praise and play do most of the work. Your dog learns what earns
               good things, and gets a lot of practice being right.
             </p>
           </div>
-          <div className="sh-site-card" style={{ "--card-accent": "#00a9e0" }} data-testid="site-method-tools">
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-blue)" }} data-testid="site-method-tools">
             <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shSecondary">We're clear about &ldquo;no&rdquo;</h3>
             <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
               Rewards alone don&rsquo;t always answer &ldquo;what should I do instead?&rdquo; in a
@@ -122,7 +124,7 @@ export default function PublicTraining() {
               your dog isn&rsquo;t left guessing.
             </p>
           </div>
-          <div className="sh-site-card" style={{ "--card-accent": "#f26522" }} data-testid="site-method-choice">
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-orange)" }} data-testid="site-method-choice">
             <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shOrange">Tools are a decision, not a default</h3>
             <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
               A slip lead, prong collar or e-collar is introduced only where it suits the dog

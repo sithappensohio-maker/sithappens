@@ -20,6 +20,7 @@ import ReceiptSettingsPanel from "../components/ReceiptSettingsPanel";
 import DayToDayControls from "../components/DayToDayControls";
 import DataExportPanel from "../components/DataExportPanel";
 import PublicWebsitePanel from "../components/PublicWebsitePanel";
+import ThemeGallery from "../components/ThemeGallery";
 
 // Section 6 — Common Settings shortcuts. Each entry just points at an
 // existing subsection id (or, for Shop Categories, the external
@@ -587,7 +588,14 @@ export default function Settings({ initialSection = null, onSectionChange = () =
               {tab === "day_to_day" && <DayToDayPanel s={s} save={save} saving={saving} />}
               {tab.startsWith("_d2d_") && <DayToDayPanel s={s} save={save} saving={saving} section={tab.replace("_d2d_", "")} />}
               {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
-              {tab === "brand" && <BrandPanel />}
+              {tab === "brand" && (
+                <div className="space-y-6">
+                  <ThemeGallery />
+                  <div className="border-t border-shBorder pt-6">
+                    <BrandPanel />
+                  </div>
+                </div>
+              )}
               {tab === "feature_visibility" && <FeatureVisibilityPanel />}
               {tab === "client_portal_controls" && <ClientPortalControlsPanel />}
               {tab === "booking_flow_controls" && <BookingFlowControlsPanel />}

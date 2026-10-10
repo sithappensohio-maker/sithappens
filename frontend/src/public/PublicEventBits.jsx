@@ -61,7 +61,7 @@ export default function PublicEvents() {
         {events && events.length === 0 && <p className="text-gray-300 mt-8" data-testid="public-events-empty">Nothing on the calendar right now. Check back soon, or <Link to="/contact" className="text-shGreen font-black">get in touch</Link>.</p>}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="public-events-list">
           {(events || []).map((ev) => (
-            <Link key={ev.slug} to={eventHref(ev)} className="sh-site-card block" style={{ "--card-accent": "#f26522" }} data-testid={`public-event-card-${ev.slug}`}>
+            <Link key={ev.slug} to={eventHref(ev)} className="sh-site-card block" style={{ "--card-accent": "var(--sh-orange)" }} data-testid={`public-event-card-${ev.slug}`}>
               <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">{fmtEventShort(ev)}</p>
               <p className="sh-display text-2xl text-white leading-none mt-2">{ev.name_line_1 || ev.name}{ev.name_line_2 ? <span className="text-shGreen"> {ev.name_line_2}</span> : null}</p>
               <p className="text-[14px] text-gray-300 mt-2">{ev.location_name}{ev.admission === "free" ? " · Free admission" : ""}</p>

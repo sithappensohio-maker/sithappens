@@ -198,7 +198,7 @@ export default function PublicEvent() {
     <PublicSiteShell testid="public-event">
       {/* ===== Hero ===== */}
       <section className="relative overflow-hidden" data-testid="event-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-50" style={{ background: "radial-gradient(circle at 10% 10%, #f26522 0%, transparent 36%), radial-gradient(circle at 90% 80%, #8cc63f 0%, transparent 40%), radial-gradient(circle at 70% 5%, #00a9e0 0%, transparent 28%)" }} />
+        <div className="absolute inset-0 pointer-events-none opacity-50" style={{ background: "radial-gradient(circle at 10% 10%, var(--sh-orange) 0%, transparent 36%), radial-gradient(circle at 90% 80%, var(--sh-green) 0%, transparent 40%), radial-gradient(circle at 70% 5%, var(--sh-blue) 0%, transparent 28%)" }} />
         <div className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-8 pb-8 sm:pt-14 sm:pb-12 sh-splatter">
           <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_.9fr] gap-6 lg:gap-10 items-center">
             <div>
@@ -222,7 +222,7 @@ export default function PublicEvent() {
                 <p className="mt-6 text-[14px] font-black uppercase tracking-widest text-shOrange" data-testid="event-registration-closed">Preregistration is closed{ev.walk_ins_allowed !== false ? ", but walk-ins are welcome on the day." : "."}</p>
               )}
             </div>
-            <div className="sh-site-card overflow-hidden p-0" data-testid="event-flyer" style={{ "--card-accent": "#f26522" }}>
+            <div className="sh-site-card overflow-hidden p-0" data-testid="event-flyer" style={{ "--card-accent": "var(--sh-orange)" }}>
               {(flyerImageUrl(ev) || ev.hero_image_url)
                 ? <img src={flyerImageUrl(ev) || ev.hero_image_url} alt={`${ev.name} flyer`} className="w-full h-auto object-cover" data-testid="event-flyer-image" />
                 : (
@@ -243,8 +243,8 @@ export default function PublicEvent() {
         {ev.description && <p className="text-[16px] sm:text-[17px] text-gray-200 leading-relaxed max-w-3xl">{ev.description}</p>}
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="event-features">
           {(ev.highlights || []).map((h) => (
-            <div key={h.title} className="sh-site-card flex items-start gap-3" style={{ "--card-accent": h.color || "#8cc63f" }}>
-              <span className="w-10 h-10 rounded-lg grid place-items-center shrink-0 text-lg" style={{ backgroundColor: `${h.color || "#8cc63f"}22`, color: h.color || "#8cc63f" }}><i className={`fas ${h.icon || "fa-paw"}`} /></span>
+            <div key={h.title} className="sh-site-card flex items-start gap-3" style={{ "--card-accent": h.color || "var(--sh-green)" }}>
+              <span className="w-10 h-10 rounded-lg grid place-items-center shrink-0 text-lg" style={{ backgroundColor: `color-mix(in srgb, ${h.color || "var(--sh-green)"} 13%, transparent)`, color: h.color || "var(--sh-green)" }}><i className={`fas ${h.icon || "fa-paw"}`} /></span>
               <span><span className="block text-[15px] font-black uppercase italic tracking-tight text-white">{h.title}</span>{h.body && <span className="block text-[13px] text-gray-300 leading-relaxed mt-0.5">{h.body}</span>}</span>
             </div>
           ))}
@@ -263,7 +263,7 @@ export default function PublicEvent() {
       <section id="preregister" className="border-t border-bgHover/60 bg-bgPanel/30 scroll-mt-20" data-testid="event-register">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 sm:py-14">
           {already ? (
-            <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "#8cc63f" }} data-testid="event-already-registered">
+            <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "var(--sh-green)" }} data-testid="event-already-registered">
               <Eyebrow icon="fa-circle-check">Already registered</Eyebrow>
               <Title as="h2">That email is already on the list.</Title>
               <p className="text-[16px] text-gray-200 mt-3">{ev.name}<br /><span className="text-gray-400">{when.day} · {when.time}</span></p>
@@ -282,7 +282,7 @@ export default function PublicEvent() {
               </div>
             </div>
           ) : done ? (
-            <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "#8cc63f" }} data-testid="event-confirmation">
+            <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "var(--sh-green)" }} data-testid="event-confirmation">
               <Eyebrow icon="fa-circle-check">{done.duplicate ? "Already registered" : "You're registered!"}</Eyebrow>
               <Title as="h2">{done.duplicate ? "You were already on the list." : "You're registered!"}</Title>
               <p className="text-[16px] text-gray-200 mt-3">{ev.name}<br /><span className="text-gray-400">{when.day} · {when.time}</span></p>
@@ -361,7 +361,7 @@ export default function PublicEvent() {
               </div>
 
               {contestOn && dogCount > 0 && (
-                <div className="sh-site-card space-y-4" style={{ "--card-accent": "#f26522" }} data-testid="event-form-costume">
+                <div className="sh-site-card space-y-4" style={{ "--card-accent": "var(--sh-orange)" }} data-testid="event-form-costume">
                   <YesNo label="Entering the dog costume contest?" value={f.costume_contest} onChange={(v) => { set("costume_contest")(v); if (v) setF((prev) => ({ ...prev, dogs: prev.dogs.map((d) => ({ ...d, costume_entered: prev.dogs.length === 1 ? true : d.costume_entered })) })); }} testid="ev-costume" />
                   {f.costume_contest && (
                     <div className="space-y-4" data-testid="ev-costume-details">

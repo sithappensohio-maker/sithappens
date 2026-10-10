@@ -273,7 +273,7 @@ export default function Login({ focus = false }) {
         <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
             <a href="/" className="flex items-center gap-3 min-w-0" data-testid="login-back-home">
-              <img src="/logo.png" alt="Sit Happens" className="h-12 sm:h-14 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.35)]"/>
+              <img src="/logo.png" alt="Sit Happens" className="h-12 sm:h-14 shrink-0 drop-shadow-[0_0_18px_color-mix(in_srgb,var(--sh-green)_35%,transparent)]"/>
               <span className="min-w-0">
                 <span className="sh-public-wordmark sh-public-wordmark--header block">Sit Happens</span>
                 <span className="block text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">Dog Training · Online School · Daycare · Boarding · Photography</span>
@@ -311,7 +311,7 @@ export default function Login({ focus = false }) {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <img src="/logo.png" alt="Sit Happens"
-                 className="h-14 sm:h-16 lg:h-20 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.35)]"
+                 className="h-14 sm:h-16 lg:h-20 shrink-0 drop-shadow-[0_0_18px_color-mix(in_srgb,var(--sh-green)_35%,transparent)]"
                  data-testid="landing-logo"/>
             <div className="hidden sm:block min-w-0">
               <p className="sh-public-wordmark sh-public-wordmark--header">Sit Happens</p>
@@ -332,7 +332,7 @@ export default function Login({ focus = false }) {
         {/* Soft radial accents matching the brand palette */}
         <div className="absolute inset-0 pointer-events-none opacity-40"
              style={{ background:
-               "radial-gradient(circle at 12% 18%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 78%, #8cc63f 0%, transparent 42%), radial-gradient(circle at 70% 10%, #f26522 0%, transparent 30%)"
+               "radial-gradient(circle at 12% 18%, var(--sh-blue) 0%, transparent 38%), radial-gradient(circle at 88% 78%, var(--sh-green) 0%, transparent 42%), radial-gradient(circle at 70% 10%, var(--sh-orange) 0%, transparent 30%)"
              }}/>
 
         <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-20 sh-splatter">
@@ -344,7 +344,7 @@ export default function Login({ focus = false }) {
                 halo behind it so it pops without overpowering the headline. */}
             <div className="relative inline-block mb-6">
               <div className="absolute inset-0 -m-6 rounded-full pointer-events-none opacity-60 blur-3xl"
-                   style={{ background: "radial-gradient(circle, rgba(140,198,63,0.6) 0%, rgba(0,169,224,0.35) 45%, transparent 70%)" }}/>
+                   style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--sh-green) 60%, transparent) 0%, color-mix(in srgb, var(--sh-blue) 35%, transparent) 45%, transparent 70%)" }}/>
               <img src="/logo.png" alt="Sit Happens"
                    className="relative h-32 sm:h-40 lg:h-48 drop-shadow-[0_8px_30px_rgba(0,0,0,0.65)]"
                    data-testid="landing-hero-logo"/>
@@ -365,7 +365,7 @@ export default function Login({ focus = false }) {
                 Meet & Greet; Online School can be explored immediately from
                 anywhere without pretending an in-person evaluation is needed. */}
             <div className="mt-7 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="landing-get-started-paths">
-              <div className="relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(242,101,34,0.5)] flex flex-col">
+              <div className="relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_color-mix(in_srgb,var(--sh-orange)_50%,transparent)] flex flex-col">
                 <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shOrange mb-2">
                   <i className="fas fa-location-dot mr-2"/>In-person services
                 </p>
@@ -382,7 +382,7 @@ export default function Login({ focus = false }) {
                 </button>
               </div>
 
-              <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/25 via-shBlue/10 to-shGreen/10 border-2 border-shBlue rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(0,169,224,0.5)] flex flex-col" data-testid="landing-online-school-card">
+              <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/25 via-shBlue/10 to-shGreen/10 border-2 border-shBlue rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_color-mix(in_srgb,var(--sh-blue)_50%,transparent)] flex flex-col" data-testid="landing-online-school-card">
                 <div className="absolute -right-8 -top-8 w-28 h-28 rounded-full bg-shGreen/10 blur-xl pointer-events-none"/>
                 <div className="relative flex items-center justify-between gap-2 mb-2">
                   <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">

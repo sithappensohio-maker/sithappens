@@ -3,7 +3,7 @@
  * focus. Replaces generic light/white input styling screen-by-screen. */
 const FIELD_CLASS =
   "w-full rounded-lg px-3 py-2.5 text-[14px] text-shText placeholder:text-shTextMuted border border-shBorder transition " +
-  "focus:outline-none focus:border-shPrimary/60 focus:shadow-[0_0_0_3px_rgba(140,198,63,0.15)] " +
+  "focus:outline-none focus:border-shPrimary/60 focus:shadow-[0_0_0_3px_color-mix(in_srgb,_var(--sh-green)_15%,_transparent)] " +
   "disabled:opacity-50 disabled:cursor-not-allowed";
 
 export function FormInput({ className = "", invalid = false, ...rest }) {

@@ -506,14 +506,14 @@ body.printing-pdf .print-card .bg-bgHeader { border: 1px solid #ddd !important; 
   top: -20px; left: -20px; width: 360px; height: 360px;
   background-image: url("./assets/brand/splatter-trio.png");
   opacity: 0.55;
-  filter: drop-shadow(0 0 18px rgba(140,198,63,0.35));
+  filter: var(--splatter-filter, none) drop-shadow(0 0 18px rgba(140,198,63,0.35));
 }
 .sh-splatter::after {
   bottom: -20px; right: -20px; width: 360px; height: 360px;
   background-image: url("./assets/brand/splatter-explosion.png");
   opacity: 0.5;
   transform: scale(-1, -1);
-  filter: drop-shadow(0 0 18px rgba(0,169,224,0.35));
+  filter: var(--splatter-filter, none) drop-shadow(0 0 18px rgba(0,169,224,0.35));
 }
 .sh-splatter > * { position: relative; z-index: 1; }
 
@@ -525,6 +525,7 @@ body.printing-pdf .print-card .bg-bgHeader { border: 1px solid #ddd !important; 
   content: ""; position: absolute; pointer-events: none; z-index: 0;
   inset: -40px; background: url("./assets/brand/splatter-explosion.png") center/cover no-repeat;
   opacity: 0.22; mix-blend-mode: screen;
+  filter: var(--splatter-filter, none);
 }
 .sh-splatter-explosion > * { position: relative; z-index: 1; }
 
@@ -615,6 +616,7 @@ button.sh-hue-card:not(:disabled):hover {
   top: -30%; right: -60px; width: 340px; height: 160%;
   background: url("./assets/brand/splatter-explosion.png") center/contain no-repeat;
   opacity: 0.16; mix-blend-mode: screen;
+  filter: var(--splatter-filter, none);
 }
 .sh-school-splash > * { position: relative; z-index: 1; }
 
@@ -626,6 +628,7 @@ button.sh-hue-card:not(:disabled):hover {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
   inset: 0; background: url("./assets/brand/splatter-brush.png") right center/auto 110% no-repeat;
   opacity: 0.28;
+  filter: var(--splatter-filter, none);
 }
 
 /* ── 3D Card depth + tri-color outline (Sprint 110de) ─────────────────
@@ -717,7 +720,7 @@ body {
    ::after pseudo-element and the real border drew two concentric rings. */
 .bg-bgPanel {
   background:
-    linear-gradient(135deg, rgba(3, 18, 33, 0.94) 0%, rgba(1, 8, 20, 0.98) 100%) !important;
+    linear-gradient(135deg, var(--bg-header) 0%, color-mix(in srgb, var(--bg-header) 75%, black) 100%) !important;
 }
 
 /* Primary CTA — auto-promote bg-shGreen buttons to lime pill style. */
@@ -725,10 +728,10 @@ button.bg-shGreen,
 a.bg-shGreen,
 .bg-shGreen.text-bgHeader,
 .bg-shGreen.text-black {
-  background: linear-gradient(135deg, #b8ff28 0%, #74c900 100%) !important;
+  background: linear-gradient(135deg, var(--sh-green) 0%, color-mix(in srgb, var(--sh-green) 70%, black) 100%) !important;
   color: #06111d !important;
-  border: 1.5px solid rgba(183, 255, 52, 0.85) !important;
-  box-shadow: 0 0 18px rgba(155, 229, 31, 0.42),
+  border: 1.5px solid color-mix(in srgb, var(--sh-green) 85%, white) !important;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--sh-green) 42%, transparent),
               inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
   font-weight: 900;
   letter-spacing: 0.04em;
@@ -738,30 +741,30 @@ a.bg-shGreen,
 button.bg-shGreen:hover,
 a.bg-shGreen:hover {
   transform: translateY(-1px);
-  box-shadow: 0 0 26px rgba(155, 229, 31, 0.6),
+  box-shadow: 0 0 26px color-mix(in srgb, var(--sh-green) 60%, transparent),
               inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
 }
 
 /* Secondary buttons — outline navy with electric-blue border + glow. */
 button.border-bgHover,
 .border.border-bgHover.text-gray-200 {
-  border-color: rgba(0, 174, 240, 0.55) !important;
-  box-shadow: 0 0 12px rgba(0, 174, 240, 0.18) !important;
+  border-color: color-mix(in srgb, var(--sh-secondary) 55%, transparent) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--sh-secondary) 18%, transparent) !important;
   transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 button.border-bgHover:hover,
 .border.border-bgHover.text-gray-200:hover {
-  border-color: rgba(0, 174, 240, 1) !important;
-  background: rgba(0, 174, 240, 0.10) !important;
-  box-shadow: 0 0 18px rgba(0, 174, 240, 0.35) !important;
+  border-color: var(--sh-secondary) !important;
+  background: color-mix(in srgb, var(--sh-secondary) 10%, transparent) !important;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--sh-secondary) 35%, transparent) !important;
 }
 
 /* Form fields — dark navy with electric-blue accent + focus glow. */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
 textarea,
 select {
-  background: rgba(2, 8, 23, 0.82) !important;
-  border: 1px solid rgba(0, 174, 240, 0.35) !important;
+  background: color-mix(in srgb, var(--input-bg) 82%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--input-border) 35%, transparent) !important;
   color: #ffffff;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -782,7 +785,7 @@ select:focus {
    uses its native picker so mobile behaviour is unchanged. */
 select option,
 select optgroup {
-  background-color: #0b1220 !important;
+  background-color: var(--input-bg) !important;
   color: #ffffff !important;
 }
 select option:checked,
@@ -805,13 +808,13 @@ nav a[data-testid^="nav-"].bg-shGreen,
 aside button[data-testid^="nav-"].bg-shGreen,
 aside a[data-testid^="nav-"].bg-shGreen {
   background: linear-gradient(90deg,
-              rgba(155, 229, 31, 0.18) 0%,
-              rgba(155, 229, 31, 0.06) 50%,
+              color-mix(in srgb, var(--sh-green) 18%, transparent) 0%,
+              color-mix(in srgb, var(--sh-green) 6%, transparent) 50%,
               transparent 100%) !important;
-  color: #b8ff28 !important;
+  color: var(--sh-green) !important;
   border: none !important;
-  box-shadow: inset 4px 0 0 0 #b8ff28,
-              0 0 18px -4px rgba(155, 229, 31, 0.5) !important;
+  box-shadow: inset 4px 0 0 0 var(--sh-green),
+              0 0 18px -4px color-mix(in srgb, var(--sh-green) 50%, transparent) !important;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -821,11 +824,11 @@ table tbody tr {
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 table tbody tr:nth-child(odd) {
-  background: rgba(3, 18, 33, 0.45);
+  background: color-mix(in srgb, var(--bg-header) 45%, transparent);
 }
 table tbody tr:hover {
-  background: rgba(155, 229, 31, 0.06) !important;
-  box-shadow: inset 0 0 0 1px rgba(155, 229, 31, 0.35) !important;
+  background: color-mix(in srgb, var(--sh-green) 6%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sh-green) 35%, transparent) !important;
 }
 
 /* Status pills — semantic glow per state. */
@@ -836,18 +839,18 @@ table tbody tr:hover {
 }
 .bg-shOrange\/15,
 .bg-amber-500\/15 {
-  box-shadow: 0 0 12px rgba(255, 121, 0, 0.28),
-              inset 0 0 12px rgba(255, 121, 0, 0.08) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--sh-orange) 28%, transparent),
+              inset 0 0 12px color-mix(in srgb, var(--sh-orange) 8%, transparent) !important;
 }
 .bg-shGreen\/10,
 .bg-shGreen\/15 {
-  box-shadow: 0 0 12px rgba(155, 229, 31, 0.28),
-              inset 0 0 12px rgba(155, 229, 31, 0.08) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--sh-green) 28%, transparent),
+              inset 0 0 12px color-mix(in srgb, var(--sh-green) 8%, transparent) !important;
 }
 .bg-shBlue\/10,
 .bg-shBlue\/15 {
-  box-shadow: 0 0 12px rgba(0, 174, 240, 0.28),
-              inset 0 0 12px rgba(0, 174, 240, 0.08) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--sh-blue) 28%, transparent),
+              inset 0 0 12px color-mix(in srgb, var(--sh-blue) 8%, transparent) !important;
 }
 
 /* Major page-section headers — promote to athletic poster style without
@@ -885,10 +888,10 @@ h3.uppercase.italic,
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 5% 10%, rgba(155, 229, 31, 0.10), transparent 35%),
-    radial-gradient(circle at 95% 90%, rgba(0, 174, 240, 0.10), transparent 35%),
-    radial-gradient(circle at 80% 15%, rgba(255, 121, 0, 0.07), transparent 30%),
-    linear-gradient(135deg, rgba(3, 18, 33, 0.94) 0%, rgba(1, 8, 20, 0.98) 100%) !important;
+    radial-gradient(circle at 5% 10%, color-mix(in srgb, var(--sh-primary) 10%, transparent), transparent 35%),
+    radial-gradient(circle at 95% 90%, color-mix(in srgb, var(--sh-secondary) 10%, transparent), transparent 35%),
+    radial-gradient(circle at 80% 15%, color-mix(in srgb, var(--sh-accent) 7%, transparent), transparent 30%),
+    linear-gradient(135deg, var(--bg-header) 0%, color-mix(in srgb, var(--bg-header) 70%, black) 100%) !important;
 }
 .bg-bgPanel:has(h1.sh-display)::after,
 .bg-bgPanel:has(.text-5xl.italic.uppercase)::after {
@@ -897,6 +900,7 @@ h3.uppercase.italic,
   background: url("./assets/brand/splatter-trio.png") no-repeat center/contain;
   opacity: 0.18; z-index: 0;
   transform: rotate(-12deg);
+  filter: var(--splatter-filter, none);
 }
 
 /* Section-header accent — small lime paw before any h2/h3 that uses
@@ -1030,7 +1034,7 @@ textarea {
     padding: 0.75rem;
     border-radius: 12px;
     margin-bottom: 0.5rem;
-    background: rgba(3, 18, 33, 0.7) !important;
+    background: color-mix(in srgb, var(--bg-header) 70%, transparent) !important;
   }
   table:not(.fc table):not(.fc-scrollgrid) tbody td { display: block; padding: 0.15rem 0; }
   /* Explicitly RESTORE FullCalendar's table semantics in case anything
@@ -1097,9 +1101,9 @@ body:has([data-testid="portal-hero"]) {
   background-repeat: no-repeat; background-size: contain;
   opacity: 0.32; transform: rotate(8deg);
 }
-.splatter-lime::before   { background-image: var(--splat-lime); filter: drop-shadow(0 0 8px rgba(155,229,31,.45)); }
-.splatter-blue::before   { background-image: var(--splat-blue); filter: drop-shadow(0 0 8px rgba(0,174,240,.45)); }
-.splatter-orange::before { background-image: var(--splat-orange); filter: drop-shadow(0 0 8px rgba(255,121,0,.45)); }
+.splatter-lime::before   { background-image: var(--splat-lime); filter: var(--splatter-filter, none) drop-shadow(0 0 8px rgba(155,229,31,.45)); }
+.splatter-blue::before   { background-image: var(--splat-blue); filter: var(--splatter-filter, none) drop-shadow(0 0 8px rgba(0,174,240,.45)); }
+.splatter-orange::before { background-image: var(--splat-orange); filter: var(--splatter-filter, none) drop-shadow(0 0 8px rgba(255,121,0,.45)); }
 
 /* Opposite-corner pairing — `.splatter-corner` adds a second blob in the
    bottom-left so the card frames itself with brand paint. */
@@ -1110,6 +1114,7 @@ body:has([data-testid="portal-hero"]) {
   bottom: -16px; left: -16px; width: 110px; height: 110px;
   background: var(--splat-blue) no-repeat center/contain;
   opacity: 0.22; transform: rotate(-12deg);
+  filter: var(--splatter-filter, none);
 }
 
 /* Header splash — a wide horizontal paint stroke (brush PNG) behind page titles. */
@@ -1120,6 +1125,7 @@ body:has([data-testid="portal-hero"]) {
   transform: translateY(-50%) rotate(-3deg);
   background: var(--splat-brush) no-repeat left center/contain;
   opacity: 0.20;
+  filter: var(--splatter-filter, none);
 }
 .splatter-header > * { position: relative; z-index: 1; }
 
@@ -1145,12 +1151,14 @@ body::before {
   top: -110px; left: -110px; width: 460px; height: 460px;
   background: var(--splat-trio) no-repeat center/contain;
   opacity: 0.045; transform: rotate(-12deg);
+  filter: var(--splatter-filter, none);
 }
 body::after {
   content: ""; position: fixed; pointer-events: none; z-index: 0;
   bottom: -140px; right: -140px; width: 500px; height: 500px;
   background: var(--splat-explosion) no-repeat center/contain;
   opacity: 0.04; transform: rotate(18deg);
+  filter: var(--splatter-filter, none);
 }
 
 /* Sidebar — corner splashes using the real PNG splatters.
@@ -1165,12 +1173,14 @@ aside::before {
   top: -36px; left: -36px; width: 240px; height: 240px;
   background: var(--splat-trio) no-repeat center/contain;
   opacity: 0.09; transform: rotate(-8deg);
+  filter: var(--splatter-filter, none);
 }
 aside::after {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
   bottom: -36px; right: -36px; width: 220px; height: 220px;
   background: var(--splat-explosion) no-repeat center/contain;
   opacity: 0.08; transform: rotate(22deg);
+  filter: var(--splatter-filter, none);
 }
 aside > * { position: relative; z-index: 1; }
 
@@ -1182,6 +1192,7 @@ aside a[data-testid^="nav-"].bg-shGreen::before {
   transform: translateY(-50%) rotate(-2deg);
   background: var(--splat-brush) no-repeat left center/contain;
   opacity: 0.28;
+  filter: var(--splatter-filter, none);
 }
 aside button[data-testid^="nav-"].bg-shGreen,
 aside a[data-testid^="nav-"].bg-shGreen { position: relative; overflow: hidden; }
@@ -1199,6 +1210,7 @@ h1.italic.uppercase::before {
   inset: -25% -10% -25% -14%;
   background: var(--splat-brush) no-repeat left center/contain;
   opacity: 0.20; transform: rotate(-2deg);
+  filter: var(--splatter-filter, none);
 }
 
 /* Primary lime buttons — brush-edge glow using the real brush PNG. */
@@ -1208,6 +1220,7 @@ a.bg-shGreen::after {
   inset: -10px -14px -10px -14px;
   background: var(--splat-brush) no-repeat center/contain;
   opacity: 0; transition: opacity 0.2s ease;
+  filter: var(--splatter-filter, none);
 }
 button.bg-shGreen:hover::after,
 a.bg-shGreen:hover::after { opacity: 0.35; }
@@ -1224,6 +1237,7 @@ button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
   background: var(--splat-trio) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(10deg);
   border-top-right-radius: inherit;
+  filter: var(--splatter-filter, none);
 }
 .bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400))::before,
 .bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400))::before {
@@ -1232,6 +1246,7 @@ button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
   background: var(--splat-explosion) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(-8deg);
   border-top-right-radius: inherit;
+  filter: var(--splatter-filter, none);
 }
 .bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
 .bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before {
@@ -1240,6 +1255,7 @@ button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
   background: var(--splat-corner) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(12deg);
   border-top-right-radius: inherit;
+  filter: var(--splatter-filter, none);
 }
 .bg-bgPanel.rounded-xl, .bg-bgPanel.rounded-2xl {
   position: relative;
@@ -1266,10 +1282,10 @@ button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
   display: inline-flex; align-items: center; gap: 0.5rem;
   font-family: var(--sh-display); font-style: italic; font-size: 1.05rem;
   letter-spacing: 0.04em;
-  background: linear-gradient(180deg, #b8eb45 0%, #8cc63f 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sh-green) 85%, white) 0%, var(--sh-green) 100%);
   color: #03061a; padding: 0.75rem 1.75rem; border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.18);
-  box-shadow: 0 10px 30px -10px rgba(140, 198, 63, 0.6),
+  box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--sh-green) 60%, transparent),
               inset 0 1px 0 rgba(255,255,255,0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -1318,18 +1334,18 @@ body {
       transparent 1px,
       transparent 14px),
     repeating-linear-gradient(65deg,
-      rgba(0, 174, 240, 0.018) 0px,
-      rgba(0, 174, 240, 0.018) 1px,
+      color-mix(in srgb, var(--sh-secondary) 1.8%, transparent) 0px,
+      color-mix(in srgb, var(--sh-secondary) 1.8%, transparent) 1px,
       transparent 1px,
       transparent 22px),
     /* Subtle fractal noise as paint grain */
     var(--grunge-fine),
     /* Off-axis corner color washes — paint flecks, not halos */
-    radial-gradient(60% 40% at -5% -10%, rgba(155, 229, 31, 0.08), transparent 55%),
-    radial-gradient(55% 35% at 110% 110%, rgba(242, 101, 34, 0.08), transparent 55%),
-    radial-gradient(40% 30% at 110% 0%, rgba(0, 174, 240, 0.06), transparent 60%),
+    radial-gradient(60% 40% at -5% -10%, color-mix(in srgb, var(--sh-primary) 8%, transparent), transparent 55%),
+    radial-gradient(55% 35% at 110% 110%, color-mix(in srgb, var(--sh-accent) 8%, transparent), transparent 55%),
+    radial-gradient(40% 30% at 110% 0%, color-mix(in srgb, var(--sh-secondary) 6%, transparent), transparent 60%),
     /* Deep navy base — true near-black for the grunge to read */
-    linear-gradient(160deg, #050b1d 0%, #02060f 50%, #050b1d 100%) !important;
+    linear-gradient(160deg, var(--bg-base) 0%, color-mix(in srgb, var(--bg-header) 85%, black) 50%, var(--bg-base) 100%) !important;
   /* No background-attachment: fixed — iOS Safari has a known bug where
      multiple fixed-attachment layers force the viewport to ignore
      `width=device-width`, rendering the desktop layout shrunk on phones.
@@ -1343,14 +1359,14 @@ body {
    blue glow with content-aware colors. Defaults to lime when no cue. */
 .bg-bgPanel.rounded-xl,
 .bg-bgPanel.rounded-2xl {
-  --card-accent: 155, 229, 31; /* lime default */
+  --card-accent: var(--sh-green-rgb, 155, 229, 31); /* theme primary, lime fallback */
   background:
     /* Inner speckle + grunge — subtle paint grain inside the card */
     var(--grunge-fine),
     /* Soft inner vignette — adds the "shadowed interior" poster feel */
     radial-gradient(120% 80% at 50% 0%, rgba(0, 0, 0, 0.0), rgba(0, 0, 0, 0.28) 100%),
     /* Base navy gradient — slightly deeper than before */
-    linear-gradient(155deg, rgba(5, 14, 32, 0.97) 0%, rgba(1, 4, 12, 0.99) 100%) !important;
+    linear-gradient(155deg, color-mix(in srgb, var(--bg-panel) 97%, transparent) 0%, color-mix(in srgb, var(--bg-header) 99%, transparent) 100%) !important;
   background-blend-mode: overlay, normal, normal !important;
   border: 2px solid rgb(var(--card-accent) / 0.6) !important;
   border-radius: 22px !important;
@@ -1562,6 +1578,7 @@ div.bg-red-600.text-white {
   z-index: 0;
   transform: rotate(-14deg);
   mix-blend-mode: screen;
+  filter: var(--splatter-filter, none);
 }
 .bg-bgPanel:has(h1.sh-display)::before,
 .bg-bgPanel:has(.text-5xl.italic.uppercase)::before {
@@ -1574,17 +1591,18 @@ div.bg-red-600.text-white {
   opacity: 0.16;
   z-index: 0;
   transform: rotate(-8deg);
+  filter: var(--splatter-filter, none);
 }
 
 /* ── 7. Sidebar — grunge texture + paint-stroke active item. */
 aside {
   background:
     var(--grunge-coarse),
-    linear-gradient(180deg, rgba(2, 6, 16, 0.96) 0%, rgba(0, 2, 8, 0.99) 100%) !important;
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-header) 96%, transparent) 0%, color-mix(in srgb, var(--bg-header) 99%, black) 100%) !important;
   background-blend-mode: overlay, normal !important;
-  border-right: 1px solid rgba(0, 174, 240, 0.18);
+  border-right: 1px solid color-mix(in srgb, var(--sh-secondary) 18%, transparent);
   box-shadow:
-    inset -1px 0 0 rgba(0, 174, 240, 0.10),
+    inset -1px 0 0 color-mix(in srgb, var(--sh-secondary) 10%, transparent),
     8px 0 24px -12px rgba(0, 0, 0, 0.85);
 }
 
@@ -1598,11 +1616,11 @@ aside > div.flex.items-center.gap-2:first-child::after {
   height: 1px;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgba(0, 174, 240, 0.45) 20%,
-    rgba(155, 229, 31, 0.45) 50%,
-    rgba(0, 174, 240, 0.45) 80%,
+    color-mix(in srgb, var(--sh-secondary) 45%, transparent) 20%,
+    color-mix(in srgb, var(--sh-green) 45%, transparent) 50%,
+    color-mix(in srgb, var(--sh-secondary) 45%, transparent) 80%,
     transparent 100%);
-  box-shadow: 0 0 6px rgba(0, 174, 240, 0.35);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--sh-secondary) 35%, transparent);
 }
 
 /* Inactive nav items — clean, readable. Active gets the paint-brush
@@ -1620,9 +1638,9 @@ aside button[data-testid^="nav-"]:not(.bg-shGreen):hover,
 aside a[data-testid^="nav-"]:not(.bg-shGreen):hover {
   color: #ffffff !important;
   background: linear-gradient(90deg,
-    rgba(0, 174, 240, 0.10) 0%,
+    color-mix(in srgb, var(--sh-secondary) 10%, transparent) 0%,
     transparent 80%) !important;
-  box-shadow: inset 3px 0 0 0 rgba(0, 174, 240, 0.5) !important;
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--sh-secondary) 50%, transparent) !important;
 }
 
 /* ── 8. Forms + tables — branded but cleaner than cards/hero. */
@@ -1640,17 +1658,17 @@ table thead th {
   letter-spacing: 0.05em;
   font-weight: 900;
   font-size: 0.72rem;
-  border-bottom: 1px solid rgba(0, 174, 240, 0.3);
+  border-bottom: 1px solid color-mix(in srgb, var(--sh-secondary) 30%, transparent);
   padding: 0.6rem 0.75rem;
 }
 table tbody tr {
-  border-bottom: 1px solid rgba(0, 174, 240, 0.08);
+  border-bottom: 1px solid color-mix(in srgb, var(--sh-secondary) 8%, transparent);
 }
 table tbody tr:hover {
   background: linear-gradient(90deg,
-    rgba(155, 229, 31, 0.07) 0%,
-    rgba(155, 229, 31, 0.02) 100%) !important;
-  box-shadow: inset 3px 0 0 0 rgba(155, 229, 31, 0.6) !important;
+    color-mix(in srgb, var(--sh-green) 7%, transparent) 0%,
+    color-mix(in srgb, var(--sh-green) 2%, transparent) 100%) !important;
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--sh-green) 60%, transparent) !important;
 }
 
 /* Form labels — lime/green tint app-wide for clear data hierarchy. */
@@ -1710,11 +1728,11 @@ main > div,
 .fixed.inset-0.bg-black\/80 .bg-bgPanel {
   background:
     var(--grunge-fine),
-    linear-gradient(155deg, rgba(5, 14, 32, 0.98) 0%, rgba(1, 4, 12, 1) 100%) !important;
+    linear-gradient(155deg, color-mix(in srgb, var(--bg-panel) 98%, transparent) 0%, color-mix(in srgb, var(--bg-header) 100%, transparent) 100%) !important;
   background-blend-mode: overlay, normal !important;
-  border: 2px solid rgba(0, 174, 240, 0.55) !important;
+  border: 2px solid color-mix(in srgb, var(--sh-secondary) 55%, transparent) !important;
   box-shadow:
-    0 0 28px rgba(0, 174, 240, 0.32),
+    0 0 28px color-mix(in srgb, var(--sh-secondary) 32%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     inset 0 0 32px rgba(0, 0, 0, 0.45),
     0 28px 50px -18px rgba(0, 0, 0, 0.95) !important;
@@ -2140,7 +2158,7 @@ html, body, #root {
 .sh-front-desk-checkout { min-height:54px; border-radius:12px !important; font-size:16px !important; letter-spacing:.03em !important; text-transform:none !important; }
 
 /* Persistent app shell ----------------------------------------------- */
-.app-shell > aside { background:linear-gradient(180deg, #04060d 0%, #050815 55%, #04060d 100%) !important; }
+.app-shell > aside { background:linear-gradient(180deg, var(--bg-header) 0%, var(--bg-panel) 55%, var(--bg-header) 100%) !important; }
 .app-shell > aside nav { scrollbar-width:thin; }
 .sh-shell-wordmark { font-family:var(--sh-display); font-style:italic; text-transform:uppercase; color:var(--sh-primary); letter-spacing:.01em; text-shadow:0 2px #000; }
 .sh-shell-kicker { color:var(--sh-secondary); font-size:8px; font-weight:900; letter-spacing:.16em; text-transform:uppercase; }
@@ -2310,12 +2328,12 @@ html, body, #root {
 .sh-admin-tabs__item:hover:not(:disabled) { color:var(--sh-text); background:rgba(255,255,255,.025); }
 .sh-admin-tabs__item.is-active {
   color: var(--sh-text);
-  border-color: rgba(140,198,63,.26);
-  background: linear-gradient(145deg, rgba(140,198,63,.13), rgba(140,198,63,.055));
+  border-color: color-mix(in srgb, var(--sh-primary) 26%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--sh-primary) 13%, transparent), color-mix(in srgb, var(--sh-primary) 5.5%, transparent));
   box-shadow: inset 0 1px rgba(255,255,255,.035);
 }
-.sh-admin-tabs__item--cyan.is-active { border-color:rgba(0,169,224,.34); background:linear-gradient(145deg,rgba(0,169,224,.13),rgba(0,169,224,.05)); }
-.sh-admin-tabs__item--orange.is-active { border-color:rgba(242,101,34,.34); background:linear-gradient(145deg,rgba(242,101,34,.13),rgba(242,101,34,.05)); }
+.sh-admin-tabs__item--cyan.is-active { border-color:color-mix(in srgb, var(--sh-secondary) 34%, transparent); background:linear-gradient(145deg,color-mix(in srgb, var(--sh-secondary) 13%, transparent),color-mix(in srgb, var(--sh-secondary) 5%, transparent)); }
+.sh-admin-tabs__item--orange.is-active { border-color:color-mix(in srgb, var(--sh-accent) 34%, transparent); background:linear-gradient(145deg,color-mix(in srgb, var(--sh-accent) 13%, transparent),color-mix(in srgb, var(--sh-accent) 5%, transparent)); }
 .sh-admin-tabs__item--purple.is-active { border-color:rgba(168,85,247,.36); background:linear-gradient(145deg,rgba(168,85,247,.13),rgba(168,85,247,.05)); }
 .sh-admin-tabs__item.is-active::after {
   content:""; position:absolute; left:13px; right:13px; bottom:3px; height:2px; border-radius:99px; background:var(--sh-primary); opacity:.85;
@@ -2381,7 +2399,7 @@ html, body, #root {
 .sh-shop-manager-workspace table thead { background:rgba(255,255,255,.025); }
 .sh-shop-manager-workspace table th { color:var(--sh-text-muted); font-size:10px; letter-spacing:.13em; text-transform:uppercase; }
 .sh-shop-manager-workspace table tbody tr { transition:background .14s ease; }
-.sh-shop-manager-workspace table tbody tr:hover { background:rgba(0,169,224,.035); }
+.sh-shop-manager-workspace table tbody tr:hover { background:color-mix(in srgb, var(--sh-secondary) 3.5%, transparent); }
 .sh-shop-manager-workspace [data-testid^="sm-category-"] { border-radius:16px !important; background:linear-gradient(145deg,rgba(7,8,13,.98),rgba(7,11,18,.96)) !important; }
 .sh-shop-manager-workspace [data-testid="sm-category-form"] { border-radius:16px !important; border-color:rgba(0,169,224,.22) !important; background:linear-gradient(145deg,rgba(7,8,13,.99),rgba(5,12,18,.98)) !important; }
 
@@ -2390,7 +2408,7 @@ html, body, #root {
 .sh-finance-workspace table { border-collapse:separate; border-spacing:0; }
 .sh-finance-workspace table thead { background:rgba(255,255,255,.025); }
 .sh-finance-workspace table tbody tr { transition:background .14s ease; }
-.sh-finance-workspace table tbody tr:hover { background:rgba(140,198,63,.025); }
+.sh-finance-workspace table tbody tr:hover { background:color-mix(in srgb, var(--sh-green) 2.5%, transparent); }
 .sh-finance-workspace [data-testid*="summary"],
 .sh-finance-workspace [data-testid*="total"] { border-radius:15px; }
 
@@ -2443,7 +2461,7 @@ html, body, #root {
 .sh-messages-detail textarea { min-height:96px; }
 
 /* Staff portal: same brand, less admin density -------------------------- */
-.sh-employee-portal { background:linear-gradient(180deg,#050815 0%,var(--sh-bg) 32%,var(--sh-bg) 100%) !important; }
+.sh-employee-portal { background:linear-gradient(180deg,var(--bg-header) 0%,var(--sh-bg) 32%,var(--sh-bg) 100%) !important; }
 .sh-employee-header {
   display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px;
   border-bottom:1px solid var(--sh-border); background:rgba(4,6,13,.95); backdrop-filter:blur(14px); box-shadow:0 8px 24px rgba(0,0,0,.22);
@@ -2533,7 +2551,7 @@ html, body, #root {
 }
 .sh-bookings-workspace table thead { background:rgba(255,255,255,.025); }
 .sh-bookings-workspace table tbody tr { transition:background .14s ease; }
-.sh-bookings-workspace table tbody tr:hover { background:rgba(0,169,224,.035); }
+.sh-bookings-workspace table tbody tr:hover { background:color-mix(in srgb, var(--sh-secondary) 3.5%, transparent); }
 .sh-runsheet-workspace [data-testid^="rs-card-"] { border-left:3px solid rgba(140,198,63,.42); }
 .sh-runsheet-workspace [data-testid^="rs-card-"]:hover { transform:translateY(-1px); }
 
@@ -2622,7 +2640,7 @@ html, body, #root {
 .sh-certificate-summary { position:sticky; top:92px; }
 
 /* Login / landing page now uses the same public visual grammar. */
-.sh-public-landing { background:linear-gradient(180deg,#040711 0%,var(--sh-bg) 30%,var(--sh-bg) 100%); }
+.sh-public-landing { background:linear-gradient(180deg,var(--bg-header) 0%,var(--sh-bg) 30%,var(--sh-bg) 100%); }
 .sh-public-landing__header { border-color:var(--sh-border) !important; background:rgba(3,6,17,.92) !important; }
 .sh-public-landing .bg-bgPanel.border,
 .sh-public-landing .bg-bgBase.border { border-color:var(--sh-border) !important; }
@@ -2760,7 +2778,7 @@ html, body, #root {
 .sh-site-strip__item i { color:var(--sh-primary); }
 .sh-site-strip__item:nth-child(2) i { color:var(--sh-secondary); }
 .sh-site-strip__item:nth-child(3) i { color:var(--sh-orange); }
-.sh-site-paw-badge { position:absolute; right:-6px; bottom:-10px; width:150px; height:150px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-family:var(--sh-display); font-size:19px; line-height:1.05; color:#fff; background:radial-gradient(circle,#0c143e 0%,#03061a 70%); border:3px solid var(--sh-primary); box-shadow:0 0 30px rgba(140,198,63,.45); transform:rotate(-8deg); }
+.sh-site-paw-badge { position:absolute; right:-6px; bottom:-10px; width:150px; height:150px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-family:var(--sh-display); font-size:19px; line-height:1.05; color:#fff; background:radial-gradient(circle,var(--bg-panel) 0%,var(--bg-header) 70%); border:3px solid var(--sh-primary); box-shadow:0 0 30px color-mix(in srgb, var(--sh-primary) 45%, transparent); transform:rotate(-8deg); }
 .sh-site-faq { padding:14px 16px; border:1px solid var(--sh-border); border-radius:14px; background:rgba(3,6,17,.6); }
 .sh-site-faq summary::-webkit-details-marker { display:none; }
 .sh-site-faq[open] { border-color:rgba(140,198,63,.35); }
@@ -2794,4 +2812,48 @@ html, body, #root {
    looks it. Any dock marks itself with data-bottom-dock. */
 body:has([data-bottom-dock]) [data-testid="brand-footer"] {
   display: none !important;
+}
+
+/* ── Paint-splatter decorations — removed app-wide, by request. ──────────
+   Rather than delete ~20 scattered rules across the "Brand splatter
+   utility system" above, its auto-apply rules, and the two older
+   standalone .sh-splatter and .sh-school-splash blocks, this one override
+   list kills every one of them at the single property that actually draws
+   anything. `content: none` makes a ::before/::after generate nothing at
+   all — no box, no background-image, no layout footprint — regardless of
+   what background, opacity or filter that same rule also sets. Same
+   selectors, placed last with !important, so this always wins the
+   cascade. The original rules are left untouched above, including the
+   --splatter-filter hue-rotate wiring in theme.js, in case splatters come
+   back later — only this block needs to be removed to restore them. */
+.sh-splatter::before,
+.sh-splatter::after,
+.sh-splatter-explosion::before,
+.sh-school-splash::before,
+.sh-splatter-brush::before,
+.splatter-lime::before,
+.splatter-blue::before,
+.splatter-orange::before,
+.splatter-corner::after,
+.splatter-header::before,
+body::before,
+body::after,
+aside::before,
+aside::after,
+aside button[data-testid^="nav-"].bg-shGreen::before,
+aside a[data-testid^="nav-"].bg-shGreen::before,
+h1.italic.uppercase::before,
+button.bg-shGreen::after,
+a.bg-shGreen::after,
+.bg-bgPanel.rounded-xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
+.bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400))::before,
+.bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
+.bg-bgPanel:has(h1.sh-display)::after,
+.bg-bgPanel:has(.text-5xl.italic.uppercase)::after,
+.bg-bgPanel:has(h1.sh-display)::before,
+.bg-bgPanel:has(.text-5xl.italic.uppercase)::before {
+  content: none !important;
 }

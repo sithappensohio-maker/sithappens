@@ -10713,6 +10713,88 @@ class SettingsIn(BaseModel):
     # boarding nights, training waived). Keyed by service_type → {enabled, mode, value, label}.
     multi_dog_discount_by_service: Optional[Dict[str, Dict[str, Any]]] = None
 
+
+# -------- Theme Gallery — saved/named theme presets (additive on top of the
+# single live Brand & Theme palette above) --------
+THEME_FIELD_KEYS = (
+    "brand_primary", "brand_accent", "brand_warning", "brand_font_family",
+    "brand_footer_text", "brand_footer_url", "interface_style",
+    "theme_bg_base", "theme_bg_panel", "theme_bg_header", "theme_bg_hover",
+    "theme_text_primary", "theme_text_muted", "theme_text_display",
+    "theme_btn_primary_bg", "theme_btn_primary_fg",
+    "theme_btn_secondary_border", "theme_btn_secondary_fg",
+    "theme_btn_danger_bg", "theme_btn_danger_fg",
+    "theme_input_bg", "theme_input_border", "theme_input_focus",
+    "theme_calendar_active", "theme_table_hover", "theme_row_border",
+)
+
+# Copied verbatim from GET /branding's fallback chain (fetch_branding, below)
+# so a theme preset created with missing fields fills in the SAME defaults
+# the rest of the app already uses.
+_THEME_DEFAULTS = {
+    "brand_primary": "#8cc63f",
+    "brand_accent": "#00a9e0",
+    "brand_warning": "#f26522",
+    "brand_font_family": "Inter",
+    "brand_footer_text": "Sit Happens",
+    "brand_footer_url": "",
+    "interface_style": "standard",
+    "theme_bg_base": "#060c2e",
+    "theme_bg_panel": "#0c143e",
+    "theme_bg_header": "#03061a",
+    "theme_bg_hover": "#1a225a",
+    "theme_text_primary": "#e2e8f0",
+    "theme_text_muted": "#94a3b8",
+    "theme_text_display": "#ffffff",
+    "theme_btn_primary_bg": "#8cc63f",
+    "theme_btn_primary_fg": "#03061a",
+    "theme_btn_secondary_border": "#1a225a",
+    "theme_btn_secondary_fg": "#e2e8f0",
+    "theme_btn_danger_bg": "#ef4444",
+    "theme_btn_danger_fg": "#ffffff",
+    "theme_input_bg": "#060c2e",
+    "theme_input_border": "#1a225a",
+    "theme_input_focus": "#8cc63f",
+    "theme_calendar_active": "#8cc63f",
+    "theme_table_hover": "#1a225a",
+    "theme_row_border": "#1a225a",
+}
+
+
+class ThemePresetIn(BaseModel):
+    """Deliberately NOT extra="allow" (unlike SettingsIn) — this model is
+    also fed by the import-a-theme-file flow from a user-uploaded JSON file,
+    so it must strictly allowlist fields rather than pass arbitrary keys
+    through to the stored document."""
+    name: Optional[str] = None
+    brand_primary: Optional[str] = None
+    brand_accent: Optional[str] = None
+    brand_warning: Optional[str] = None
+    brand_font_family: Optional[str] = None
+    brand_footer_text: Optional[str] = None
+    brand_footer_url: Optional[str] = None
+    interface_style: Optional[Literal["subtle", "standard", "bold"]] = None
+    theme_bg_base: Optional[str] = None
+    theme_bg_panel: Optional[str] = None
+    theme_bg_header: Optional[str] = None
+    theme_bg_hover: Optional[str] = None
+    theme_text_primary: Optional[str] = None
+    theme_text_muted: Optional[str] = None
+    theme_text_display: Optional[str] = None
+    theme_btn_primary_bg: Optional[str] = None
+    theme_btn_primary_fg: Optional[str] = None
+    theme_btn_secondary_border: Optional[str] = None
+    theme_btn_secondary_fg: Optional[str] = None
+    theme_btn_danger_bg: Optional[str] = None
+    theme_btn_danger_fg: Optional[str] = None
+    theme_input_bg: Optional[str] = None
+    theme_input_border: Optional[str] = None
+    theme_input_focus: Optional[str] = None
+    theme_calendar_active: Optional[str] = None
+    theme_table_hover: Optional[str] = None
+    theme_row_border: Optional[str] = None
+
+
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin_and_permission("settings"))):
     return await get_settings()
@@ -10731,6 +10813,11 @@ async def fetch_branding():
         "brand_footer_text": s.get("brand_footer_text") or "Sit Happens",
         "brand_footer_url":  s.get("brand_footer_url")  or "",
         "interface_style":   s.get("interface_style")   or "standard",
+        # Theme Gallery — which saved preset (if any) is currently live, so
+        # the frontend knows which gallery card to highlight as active
+        # without a second round trip. None for every install that has
+        # never touched the Theme Gallery.
+        "active_theme_id": s.get("active_theme_id"),
         # Sprint 110di-8 — expanded theme controls. Backgrounds / text /
         # buttons / forms / calendar+table. Defaults match the historical
         # Sit Happens palette; admins override via Settings → Brand & Theme.
@@ -10943,8 +11030,120 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_pe
             merged_shop_page["sections"] = merged_sections
         update["shop_page"] = merged_shop_page
 
+    # Theme Gallery — auto-fork-on-edit-of-a-built-in. A plain PUT /settings
+    # that touches a theme_* field keeps behaving exactly as it always has
+    # UNLESS the admin has explicitly activated a saved preset via POST
+    # /settings/themes/{id}/activate (active_theme_id set on the global
+    # settings doc). When no preset is active — true for every install that
+    # has never touched the Theme Gallery, including every existing test —
+    # this whole block is a complete no-op.
+    if any(k in update for k in THEME_FIELD_KEYS):
+        current_settings = await get_settings()
+        active_id = current_settings.get("active_theme_id")
+        if active_id:
+            preset = await db.theme_presets.find_one({"id": active_id}, {"_id": 0})
+            if preset:
+                if preset.get("built_in"):
+                    # Editing a built-in theme must never mutate the template
+                    # itself — it forks into a new, editable copy instead,
+                    # and the live config switches to point at the copy.
+                    forked = {k: preset.get(k, _THEME_DEFAULTS.get(k)) for k in THEME_FIELD_KEYS}
+                    forked.update({k: v for k, v in update.items() if k in THEME_FIELD_KEYS})
+                    new_id = str(uuid.uuid4())
+                    forked.update({"id": new_id, "name": f"{preset.get('name', 'Theme')} (Custom)",
+                                   "built_in": False, "created_at": now_iso(), "updated_at": now_iso()})
+                    await db.theme_presets.insert_one(forked)
+                    update["active_theme_id"] = new_id
+                else:
+                    patch = {k: v for k, v in update.items() if k in THEME_FIELD_KEYS}
+                    if patch:
+                        patch["updated_at"] = now_iso()
+                        await db.theme_presets.update_one({"id": active_id}, {"$set": patch})
+
     await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
     return await get_settings()
+
+
+_BUILT_IN_THEME_ORDER = ("Classic", "Halloween", "Christmas")
+
+
+def _theme_preset_sort_key(doc: Dict[str, Any]):
+    """Built-ins first, in the fixed Classic/Halloween/Christmas order (any
+    other built-in name sorts after those three), then custom themes
+    alphabetically by name."""
+    name = doc.get("name") or ""
+    if doc.get("built_in"):
+        for i, marker in enumerate(_BUILT_IN_THEME_ORDER):
+            if marker.lower() in name.lower():
+                return (0, i, name.lower())
+        return (0, len(_BUILT_IN_THEME_ORDER), name.lower())
+    return (1, 0, name.lower())
+
+
+@api.get("/settings/themes")
+async def list_theme_presets(_: dict = Depends(require_admin_and_permission("settings"))):
+    rows = await db.theme_presets.find({}, {"_id": 0}).to_list(1000)
+    rows.sort(key=_theme_preset_sort_key)
+    return rows
+
+
+@api.post("/settings/themes")
+async def create_theme_preset(body: ThemePresetIn, _: dict = Depends(require_admin_and_permission("settings"))):
+    """Serves THREE frontend flows — "new theme," "duplicate an existing
+    theme" (frontend sends the source theme's current field values), and
+    "import a theme file" (frontend sends the parsed uploaded JSON) — all of
+    them are just "create a preset from this field set," so there's no
+    special-casing here."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A theme name is required.")
+    fields = body.model_dump(exclude_unset=True)
+    doc = {k: (fields.get(k) if fields.get(k) is not None else _THEME_DEFAULTS.get(k)) for k in THEME_FIELD_KEYS}
+    now = now_iso()
+    doc.update({"id": str(uuid.uuid4()), "name": name, "built_in": False, "created_at": now, "updated_at": now})
+    await db.theme_presets.insert_one(dict(doc))
+    return doc
+
+
+@api.put("/settings/themes/{theme_id}")
+async def update_theme_preset(theme_id: str, body: ThemePresetIn, _: dict = Depends(require_admin_and_permission("settings"))):
+    existing = await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Theme not found")
+    if existing.get("built_in"):
+        raise HTTPException(status_code=400, detail="Built-in themes can't be edited directly — duplicate it first.")
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if patch:
+        patch["updated_at"] = now_iso()
+        await db.theme_presets.update_one({"id": theme_id}, {"$set": patch})
+    return await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
+
+
+@api.delete("/settings/themes/{theme_id}")
+async def delete_theme_preset(theme_id: str, _: dict = Depends(require_admin_and_permission("settings"))):
+    existing = await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Theme not found")
+    if existing.get("built_in"):
+        raise HTTPException(status_code=400, detail="Built-in themes can't be deleted.")
+    current_settings = await get_settings()
+    if current_settings.get("active_theme_id") == theme_id:
+        raise HTTPException(status_code=400, detail="Can't delete the active theme — switch to a different one first.")
+    await db.theme_presets.delete_one({"id": theme_id})
+    return {"ok": True}
+
+
+@api.post("/settings/themes/{theme_id}/activate")
+async def activate_theme_preset(theme_id: str, _: dict = Depends(require_admin_and_permission("settings"))):
+    preset = await db.theme_presets.find_one({"id": theme_id}, {"_id": 0})
+    if not preset:
+        raise HTTPException(status_code=404, detail="Theme not found")
+    await db.settings.update_one(
+        {"id": "global"},
+        {"$set": {**{k: preset.get(k) for k in THEME_FIELD_KEYS}, "active_theme_id": theme_id, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True, "active_theme_id": theme_id}
 
 
 def _validate_banner_cta_url(url: str) -> None:
@@ -29328,6 +29527,9 @@ BACKUP_COLLECTIONS = [
     # The hard-delete log (domains/backup/deletion_log.py). A merge restore reads it so it does not bring back a
     # row removed after the backup was taken; a replace restores it with the rest.
     "deleted_records",
+    # Theme Gallery — saved/named theme presets (admin-created palettes).
+    # Real, hand-crafted admin work; must survive a backup/restore cycle.
+    "theme_presets",
 ]
 # Every collection the app writes that is deliberately NOT backed up, and why.
 # A test (test_backup_coverage_guard.py) fails when code writes a collection
@@ -29663,6 +29865,70 @@ async def _seed_dog_facts_if_empty():
     if rows:
         await db.dog_facts.insert_many(rows)
         logger.info("Seeded %d dog facts", len(rows))
+
+
+# The 3 built-in Theme Gallery presets, seeded idempotently on first boot.
+# Deliberately does NOT set active_theme_id anywhere — leaving it unset is
+# what keeps every install that's never touched the Theme Gallery on the
+# exact same live-palette behavior it has today (see save_settings's
+# auto-fork block above). An admin only switches onto one of these by
+# explicitly calling POST /settings/themes/{id}/activate.
+_THEME_PRESETS_SEED = (
+    {
+        "name": "Classic Sit Happens", "built_in": True,
+        "brand_primary": "#8cc63f", "brand_accent": "#00a9e0", "brand_warning": "#f26522",
+        "brand_font_family": "Inter", "brand_footer_text": "Sit Happens", "brand_footer_url": "",
+        "interface_style": "standard",
+        "theme_bg_base": "#060c2e", "theme_bg_panel": "#0c143e", "theme_bg_header": "#03061a", "theme_bg_hover": "#1a225a",
+        "theme_text_primary": "#e2e8f0", "theme_text_muted": "#94a3b8", "theme_text_display": "#ffffff",
+        "theme_btn_primary_bg": "#8cc63f", "theme_btn_primary_fg": "#03061a",
+        "theme_btn_secondary_border": "#1a225a", "theme_btn_secondary_fg": "#e2e8f0",
+        "theme_btn_danger_bg": "#ef4444", "theme_btn_danger_fg": "#ffffff",
+        "theme_input_bg": "#060c2e", "theme_input_border": "#1a225a", "theme_input_focus": "#8cc63f",
+        "theme_calendar_active": "#8cc63f", "theme_table_hover": "#1a225a", "theme_row_border": "#1a225a",
+    },
+    {
+        "name": "Halloween", "built_in": True,
+        "brand_primary": "#ff7518", "brand_accent": "#9333ea", "brand_warning": "#f59e0b",
+        "brand_font_family": "Inter", "brand_footer_text": "Sit Happens", "brand_footer_url": "",
+        "interface_style": "bold",
+        "theme_bg_base": "#0a0612", "theme_bg_panel": "#140d1f", "theme_bg_header": "#05030a", "theme_bg_hover": "#2a1b3d",
+        "theme_text_primary": "#f1e9ff", "theme_text_muted": "#b8a8cc", "theme_text_display": "#ffffff",
+        "theme_btn_primary_bg": "#ff7518", "theme_btn_primary_fg": "#0a0612",
+        "theme_btn_secondary_border": "#2a1b3d", "theme_btn_secondary_fg": "#f1e9ff",
+        "theme_btn_danger_bg": "#dc2626", "theme_btn_danger_fg": "#ffffff",
+        "theme_input_bg": "#0a0612", "theme_input_border": "#2a1b3d", "theme_input_focus": "#ff7518",
+        "theme_calendar_active": "#ff7518", "theme_table_hover": "#2a1b3d", "theme_row_border": "#2a1b3d",
+    },
+    {
+        "name": "Christmas", "built_in": True,
+        "brand_primary": "#d62828", "brand_accent": "#2d9d4f", "brand_warning": "#f1c40f",
+        "brand_font_family": "Inter", "brand_footer_text": "Sit Happens", "brand_footer_url": "",
+        "interface_style": "standard",
+        "theme_bg_base": "#0a1410", "theme_bg_panel": "#0f1f18", "theme_bg_header": "#050a08", "theme_bg_hover": "#1c3328",
+        "theme_text_primary": "#f5f0e6", "theme_text_muted": "#a8b8ae", "theme_text_display": "#ffffff",
+        "theme_btn_primary_bg": "#d62828", "theme_btn_primary_fg": "#ffffff",
+        "theme_btn_secondary_border": "#1c3328", "theme_btn_secondary_fg": "#f5f0e6",
+        "theme_btn_danger_bg": "#ef4444", "theme_btn_danger_fg": "#ffffff",
+        "theme_input_bg": "#0a1410", "theme_input_border": "#1c3328", "theme_input_focus": "#d62828",
+        "theme_calendar_active": "#d62828", "theme_table_hover": "#1c3328", "theme_row_border": "#1c3328",
+    },
+)
+
+
+async def _seed_theme_presets_if_empty():
+    """Idempotent. Seeds the 3 built-in Theme Gallery presets on first boot —
+    same pattern as _seed_dog_facts_if_empty above."""
+    n = await db.theme_presets.count_documents({})
+    if n > 0:
+        return
+    now = now_iso()
+    rows = []
+    for item in _THEME_PRESETS_SEED:
+        rows.append({**item, "id": str(uuid.uuid4()), "created_at": now, "updated_at": now})
+    if rows:
+        await db.theme_presets.insert_many(rows)
+        logger.info("Seeded %d theme presets", len(rows))
 
 
 async def _todays_fact() -> Optional[Dict[str, Any]]:
@@ -33480,6 +33746,11 @@ async def startup():
         await _seed_dog_facts_if_empty()
     except Exception as exc:
         logger.warning("Dog facts seeding failed: %s", exc)
+    # Theme Gallery — seed the 3 built-in presets on first boot
+    try:
+        await _seed_theme_presets_if_empty()
+    except Exception as exc:
+        logger.warning("Theme preset seeding failed: %s", exc)
     # Public events — indexes + the first event (idempotent by slug).
     try:
         await events_domain.ensure_events_indexes(db)

@@ -500,7 +500,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
       <div className="border border-shAccent/50 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto" style={{ background: "var(--sh-card-base)" }}
            onClick={(e)=>e.stopPropagation()}>
         <div className="p-5 sm:p-6 border-b border-shAccent/30 relative overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(60% 100% at 15% 20%, rgba(242,101,34,0.18), transparent 65%)" }} />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(60% 100% at 15% 20%, color-mix(in srgb, var(--sh-orange) 18%, transparent), transparent 65%)" }} />
           <div className="relative">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[12px] font-bold uppercase tracking-widest bg-shAccent/15 text-shAccent border border-shAccent/40 px-2 py-0.5 rounded-full">Action Required</span>
@@ -1403,7 +1403,7 @@ export default function Portal() {
             {sectionOn("messages") && (
               <button onClick={goMessages} data-testid="portal-messages-button"
                       className="relative flex items-center gap-2 h-9 px-3 rounded-full border border-shBorder text-shText text-[13px] font-semibold hover:border-shSecondary/50 transition"
-                      style={{ background: "var(--sh-card-base)", boxShadow: messagesUnread > 0 ? "0 0 14px -5px rgba(0,169,224,0.55)" : undefined }}>
+                      style={{ background: "var(--sh-card-base)", boxShadow: messagesUnread > 0 ? "0 0 14px -5px color-mix(in srgb, var(--sh-blue) 55%, transparent)" : undefined }}>
                 <i className="fas fa-comment-dots text-shSecondary"/>
                 <span className="hidden sm:inline">Messages</span>
                 {messagesUnread > 0 && (
@@ -1776,7 +1776,7 @@ export default function Portal() {
           {sectionOn("credits") && (
           <div className="relative overflow-hidden p-6 rounded-2xl border border-shBorder shadow-sh" style={{ background: "var(--sh-card-base)" }} data-testid="credits-card">
             <div className="absolute inset-0 pointer-events-none opacity-25"
-                 style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.35) 0%, transparent 55%)" }}/>
+                 style={{ background: "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--sh-green) 35%, transparent) 0%, transparent 55%)" }}/>
             <div className="relative">
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
                 <i className="fas fa-wallet mr-1"/>{label("credits", CLIENT_LABELS.creditPack)}
@@ -1799,7 +1799,7 @@ export default function Portal() {
                 const tiles = [];
                 if (feat.daycare) tiles.push(
                   <CreditMetricCard key="daycare" icon="fa-sun" label="Daycare" value={credits || 0} unit="days"
-                    color="shGreen" haloRgba="rgba(140,198,63,0.7)" dropShadow="0 0 8px rgba(140,198,63,0.4)"
+                    color="shGreen" haloRgba="color-mix(in srgb, var(--sh-green) 70%, transparent)" dropShadow="0 0 8px color-mix(in srgb, var(--sh-green) 40%, transparent)"
                     testid="credit-metric-daycare"/>
                 );
                 if (feat.training) tiles.push(
@@ -1809,7 +1809,7 @@ export default function Portal() {
                 );
                 if (feat.boarding) tiles.push(
                   <CreditMetricCard key="boarding" icon="fa-moon" label="Boarding" value={client?.boarding_credits || 0} unit="nights"
-                    color="shOrange" haloRgba="rgba(242,101,34,0.7)" dropShadow="0 0 8px rgba(242,101,34,0.4)"
+                    color="shOrange" haloRgba="color-mix(in srgb, var(--sh-orange) 70%, transparent)" dropShadow="0 0 8px color-mix(in srgb, var(--sh-orange) 40%, transparent)"
                     testid="credit-metric-boarding"/>
                 );
                 if (tiles.length === 0) return null;
@@ -1922,7 +1922,7 @@ export default function Portal() {
                className="relative overflow-hidden rounded-2xl border border-shBlue/40 bg-gradient-to-br from-shBlue/30 via-shGreen/15 to-shOrange/15 p-5 shadow-2xl"
                data-testid="portal-book-hero">
             <div className="absolute inset-0 pointer-events-none opacity-50"
-                 style={{ background: "radial-gradient(circle at 20% 30%, rgba(0,169,224,0.45) 0%, transparent 45%), radial-gradient(circle at 80% 80%, rgba(140,198,63,0.4) 0%, transparent 50%)" }}/>
+                 style={{ background: "radial-gradient(circle at 20% 30%, color-mix(in srgb, var(--sh-blue) 45%, transparent) 0%, transparent 45%), radial-gradient(circle at 80% 80%, color-mix(in srgb, var(--sh-green) 40%, transparent) 0%, transparent 50%)" }}/>
             <div className="relative">
               <div className="flex items-start gap-3 mb-3">
                 <div className="w-12 h-12 rounded-xl bg-white/10 backdrop-blur grid place-items-center text-shGreen shrink-0 shadow-lg">
@@ -1985,7 +1985,7 @@ export default function Portal() {
                   branded color palette + icon halo so the visual rhythm
                   reads quickly even at a glance. */}
               <div className="absolute inset-0 pointer-events-none opacity-20"
-                   style={{ background: "radial-gradient(circle at 50% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
+                   style={{ background: "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--sh-blue) 45%, transparent) 0%, transparent 55%)" }}/>
               <div className="relative">
                 <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
                   <i className="fas fa-ellipsis mr-1.5"/>Extra tools
@@ -2000,7 +2000,7 @@ export default function Portal() {
                       onClick={()=>setShowServicesModal(true)}
                       testid="portal-open-services-btn"
                       icon="fa-list-check"
-                      color="#8cc63f"
+                      color="var(--sh-green)"
                       title="Services & Pricing"
                       subtitle={`${publicServices.length + publicPrograms.length} offered · quote`}
                     />
@@ -2034,7 +2034,7 @@ export default function Portal() {
                       onClick={()=>setShowRecurringModal(true)}
                       testid="portal-open-recurring-btn"
                       icon="fa-rotate"
-                      color="#00a9e0"
+                      color="var(--sh-blue)"
                       title="My Schedules"
                       subtitle="Recurring · M/W/F"
                     />
@@ -2055,7 +2055,7 @@ export default function Portal() {
                       href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url}
                       testid="portal-link-gallery"
                       icon="fa-camera-retro"
-                      color={client?.photo_gallery_has_new ? "#f97316" : "#8cc63f"}
+                      color={client?.photo_gallery_has_new ? "#f97316" : "var(--sh-green)"}
                       title="Photo Gallery"
                       subtitle={client?.photo_gallery_has_new ? "✨ New photos!" : "Order prints ↗"}
                       external
@@ -2161,7 +2161,7 @@ export default function Portal() {
               {/* Sprint 110z — Trophy Wall gets matching brand-glow halo + eyebrow
                   + italic headline treatment so it feels celebratory. */}
               <div className="absolute inset-0 pointer-events-none opacity-30"
-                   style={{ background: "radial-gradient(circle at 0% 0%, rgba(242,101,34,0.5) 0%, transparent 45%), radial-gradient(circle at 100% 100%, rgba(0,169,224,0.4) 0%, transparent 50%)" }}/>
+                   style={{ background: "radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--sh-orange) 50%, transparent) 0%, transparent 45%), radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--sh-blue) 40%, transparent) 0%, transparent 50%)" }}/>
               <div className="relative">
                 <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
                   <i className="fas fa-trophy mr-1.5"/>{trophies.client_trophies.length + trophies.dog_trophies.length} earned
@@ -2262,7 +2262,7 @@ export default function Portal() {
                       Each card has a soft shGreen halo from the top-right and
                       lifts on hover, matching the rest of the portal polish. */}
                   <div className="absolute inset-0 pointer-events-none opacity-25"
-                       style={{ background: "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.45) 0%, transparent 55%)" }}/>
+                       style={{ background: "radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sh-green) 45%, transparent) 0%, transparent 55%)" }}/>
                   <span className={`absolute top-3 left-3 z-10 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${cardBadge.cls}`}
                         data-testid={`dog-card-badge-${d.id}`}>
                     <i className={`fas ${cardBadge.icon} mr-1`}/>{cardBadge.label}
@@ -2549,11 +2549,11 @@ export default function Portal() {
                       status pill. */}
                   <div className="absolute inset-0 pointer-events-none opacity-25"
                        style={{ background: b.status === "approved"
-                         ? "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.45) 0%, transparent 50%)"
+                         ? "radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sh-green) 45%, transparent) 0%, transparent 50%)"
                          : b.status === "pending"
-                         ? "radial-gradient(circle at 100% 0%, rgba(242,101,34,0.45) 0%, transparent 50%)"
+                         ? "radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sh-orange) 45%, transparent) 0%, transparent 50%)"
                          : b.status === "completed"
-                         ? "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.4) 0%, transparent 50%)"
+                         ? "radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--sh-blue) 40%, transparent) 0%, transparent 50%)"
                          : "transparent" }}/>
                   <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 gap-3">
                     <div className="min-w-0 flex-1">
@@ -2608,10 +2608,16 @@ export default function Portal() {
                             // Look up icon + color from public settings catalog. Tags can be legacy strings or {label, icon, color}.
                             const def = (pubSettings?.mood_tags || []).find(t => (typeof t === "string" ? t === m : t?.label === m));
                             const icon = (def && typeof def === "object") ? def.icon : "";
-                            const hex = (def && typeof def === "object" && def.color) ? def.color : "#8cc63f";
+                            const hex = (def && typeof def === "object" && def.color) ? def.color : null;
+                            // No admin-set color → fall back to the theme's brand green via
+                            // color-mix (hex is a literal hex string here, so the `${hex}26`/
+                            // `${hex}55` alpha-suffix trick only works when hex is set).
+                            const chipStyle = hex
+                              ? { backgroundColor: `${hex}26`, borderColor: `${hex}55`, color: hex }
+                              : { backgroundColor: "color-mix(in srgb, var(--sh-green) 15%, transparent)", borderColor: "color-mix(in srgb, var(--sh-green) 33%, transparent)", color: "var(--sh-green)" };
                             return (
                               <span key={m} className="text-[15px] font-black uppercase tracking-widest px-2 py-1 rounded-full inline-flex items-center gap-1.5 border"
-                                    style={{ backgroundColor: `${hex}26`, borderColor: `${hex}55`, color: hex }}>
+                                    style={chipStyle}>
                                 {icon && <i className={`fas ${icon}`}/>}
                                 <span>{m}</span>
                               </span>

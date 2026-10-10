@@ -93,7 +93,7 @@ export default function PublicHome() {
       {/* ===== Hero ===== */}
       <section className="relative overflow-hidden" data-testid="site-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40"
-             style={{ background: "radial-gradient(circle at 10% 15%, #00a9e0 0%, transparent 36%), radial-gradient(circle at 90% 80%, #8cc63f 0%, transparent 40%), radial-gradient(circle at 72% 8%, #f26522 0%, transparent 28%)" }} />
+             style={{ background: "radial-gradient(circle at 10% 15%, var(--sh-blue) 0%, transparent 36%), radial-gradient(circle at 90% 80%, var(--sh-green) 0%, transparent 40%), radial-gradient(circle at 72% 8%, var(--sh-orange) 0%, transparent 28%)" }} />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-12 sm:pt-16 sm:pb-16 sh-splatter">
           <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_.85fr] gap-8 lg:gap-12 items-center">
             <div>
@@ -122,7 +122,7 @@ export default function PublicHome() {
             </div>
             <div className="relative hidden lg:flex items-center justify-center" aria-hidden="true">
               <div className="absolute inset-0 -m-10 rounded-full pointer-events-none opacity-70 blur-3xl"
-                   style={{ background: "radial-gradient(circle, rgba(140,198,63,0.55) 0%, rgba(0,169,224,0.35) 45%, transparent 70%)" }} />
+                   style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--sh-green) 55%, transparent) 0%, color-mix(in srgb, var(--sh-blue) 35%, transparent) 45%, transparent 70%)" }} />
               <img src="/logo.png" alt="" className="relative w-[300px] xl:w-[340px] drop-shadow-[0_18px_40px_rgba(0,0,0,0.7)]" />
               <div className="sh-site-paw-badge" data-testid="site-hero-badge">
                 <span>Better</span><span className="text-shGreen">Behavior.</span><span>Happier</span><span className="text-shBlue">Life.</span>
@@ -150,7 +150,7 @@ export default function PublicHome() {
             const m = CATEGORY_META[c.key];
             const inner = (
               <>
-                <div className="w-12 h-12 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `${m.color}22`, color: m.color }}>
+                <div className="w-12 h-12 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `color-mix(in srgb, ${m.color} 13%, transparent)`, color: m.color }}>
                   <i className={`fas ${m.icon} text-2xl`} />
                 </div>
                 <h3 className="text-lg font-black uppercase italic tracking-tight text-white">{m.label}</h3>
@@ -207,7 +207,7 @@ export default function PublicHome() {
         <Eyebrow icon="fa-sun" color="text-shBlue">Daycare & boarding</Eyebrow>
         <Title>Play, comfort, and dependable care for your dog.</Title>
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="sh-site-card" style={{ "--card-accent": "#8cc63f" }} data-testid="site-daycare-card">
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-green)" }} data-testid="site-daycare-card">
             <h3 className="text-2xl font-black uppercase italic tracking-tight text-shGreen">Dog daycare</h3>
             <p className="text-[14px] text-gray-300 mt-1">{data?.service_descriptions?.daycare || "Perfect for socialization, exercise, and burning off extra energy."}</p>
             <ul className="mt-4 space-y-2 text-[14px]">
@@ -223,7 +223,7 @@ export default function PublicHome() {
               {rows.length > 0 && <li className="text-[12px] text-gray-400 pt-1"><i className="fas fa-clock text-shGreen mr-1.5" />Hours: {rows.map((r) => `${r.days} ${r.hours}`).join(" · ")}</li>}
             </ul>
           </div>
-          <div className="sh-site-card" style={{ "--card-accent": "#f26522" }} data-testid="site-boarding-card">
+          <div className="sh-site-card" style={{ "--card-accent": "var(--sh-orange)" }} data-testid="site-boarding-card">
             <h3 className="text-2xl font-black uppercase italic tracking-tight text-shOrange">Overnight boarding</h3>
             <p className="text-[14px] text-gray-300 mt-1">{data?.service_descriptions?.boarding || "A safe, comfortable home away from home. All boarding includes supervised daycare play."}</p>
             <ul className="mt-4 space-y-2 text-[14px]">
@@ -250,7 +250,7 @@ export default function PublicHome() {
         <Section id="grooming" testid="site-grooming">
           <Eyebrow icon="fa-scissors" color="text-shSecondary">Grooming</Eyebrow>
           <Title>Clean ears, tidy nails, happier walks.</Title>
-          <div className="mt-8 sh-site-card" style={{ "--card-accent": "#00a9e0" }} data-testid="site-grooming-card">
+          <div className="mt-8 sh-site-card" style={{ "--card-accent": "var(--sh-blue)" }} data-testid="site-grooming-card">
             <p className="text-[14px] text-gray-300">
               {data?.service_descriptions?.grooming
                 || "Straightforward grooming add-ons you can book alongside a daycare or boarding stay, or on their own."}
@@ -347,7 +347,7 @@ export default function PublicHome() {
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {PILLARS.map((w, i) => (
             <div key={i} className="sh-site-card" data-testid={`site-why-${i}`}>
-              <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `${w.color}22`, color: w.color }}><i className={`fas ${w.icon} text-xl`} /></div>
+              <div className="w-11 h-11 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `color-mix(in srgb, ${w.color} 13%, transparent)`, color: w.color }}><i className={`fas ${w.icon} text-xl`} /></div>
               <h3 className="text-[15px] font-black uppercase italic tracking-tight text-white">{w.title}</h3>
               <p className="text-[14px] text-gray-300 leading-relaxed mt-1.5">{w.body}</p>
             </div>

@@ -70,6 +70,34 @@ function hexToRgb(hex) {
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
+// The paint-splatter decorations (body/sidebar/hero corner bursts, etc. —
+// see index.css's "Brand splatter utility system") are real designer PNG
+// raster art with the Classic palette's lime/blue/orange baked into the
+// pixels, not CSS colors — a theme switch can't just repoint a variable.
+// A hue-rotate CSS filter shifts the whole baked-in palette together
+// (keeping the "mixed paint splash" character) toward whatever hue the
+// active theme's primary color actually is, computed from the hex itself
+// so this works for every theme — built-in or a custom/imported one —
+// without hardcoding a rotation per theme.
+const SPLATTER_BASELINE_HUE = 90; // the lime green baked into the real PNGs
+function hexToHueDeg(hex) {
+  const h = (hex || "").replace("#", "").trim();
+  if (h.length !== 6) return SPLATTER_BASELINE_HUE;
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return SPLATTER_BASELINE_HUE; // grayscale — no usable hue, fall back
+  let hue;
+  if (max === r) hue = ((g - b) / d) % 6;
+  else if (max === g) hue = (b - r) / d + 2;
+  else hue = (r - g) / d + 4;
+  hue *= 60;
+  if (hue < 0) hue += 360;
+  return hue;
+}
+
 function applyBranding(b) {
   const root = document.documentElement;
   const get = (k) => b[k] || DEFAULT_BRANDING[k];
@@ -77,6 +105,13 @@ function applyBranding(b) {
   root.style.setProperty("--sh-green",  get("brand_primary"));
   root.style.setProperty("--sh-blue",   get("brand_accent"));
   root.style.setProperty("--sh-orange", get("brand_warning"));
+  // Comma-separated "R, G, B" triples — for the handful of index.css rules
+  // (e.g. the card-poster system's --card-accent) that use the
+  // rgb(var(--x) / alpha) relative-color syntax instead of a plain hex var,
+  // so they can't just swap to color-mix() like most other fixes here.
+  root.style.setProperty("--sh-green-rgb",  hexToRgb(get("brand_primary")));
+  root.style.setProperty("--sh-blue-rgb",   hexToRgb(get("brand_accent")));
+  root.style.setProperty("--sh-orange-rgb", hexToRgb(get("brand_warning")));
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
   root.style.setProperty("--sh-font", fam === "System" ? "system-ui" : `'${fam}'`);
 
@@ -99,6 +134,11 @@ function applyBranding(b) {
   root.style.setProperty("--calendar-active",      get("theme_calendar_active"));
   root.style.setProperty("--table-hover",          get("theme_table_hover"));
   root.style.setProperty("--row-border",           get("theme_row_border"));
+
+  // Splatter PNG recolor — see hexToHueDeg's comment above.
+  const splatterHue = hexToHueDeg(get("brand_primary"));
+  const splatterRotate = Math.round(splatterHue - SPLATTER_BASELINE_HUE);
+  root.style.setProperty("--splatter-filter", splatterRotate === 0 ? "none" : `hue-rotate(${splatterRotate}deg) saturate(1.15)`);
 
   // One app-wide card chrome setting. Border/glow color follows the current
   // brand accent, so the UI remains coherent when the brand palette changes.
