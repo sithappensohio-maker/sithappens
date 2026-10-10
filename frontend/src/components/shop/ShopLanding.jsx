@@ -64,7 +64,7 @@ function Hero({ shopPage, departments, onSelectDepartment, items, isPublic }) {
   const subtitle = shopPage?.subtitle
     || "Gear we actually use, training that actually works, and visits you can buy up front.";
   return (
-    <section data-testid="shop-hero" className="mb-9" aria-labelledby="shop-hero-h">
+    <section data-testid="shop-hero" className="mb-9 rounded-2xl p-4 sm:p-6 sh-theme-section-header-client" aria-labelledby="shop-hero-h">
       {/* Deliberately short. A separate hero band and a separate departments
           row were 878px between them — a full desktop screen, and nearly two
           phone screens, before anything for sale. They said the same thing

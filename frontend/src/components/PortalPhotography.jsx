@@ -161,12 +161,12 @@ export default function PortalPhotography({ pubSettings, client, services = [], 
   return (
     <div className="space-y-6 sm:space-y-8 pb-8" data-testid="portal-photography-page">
       {/* Hero */}
-      <NeonEdge accentRgb={accentRgb("orange")} intensity="hero" className="p-5 sm:p-10">
+      <NeonEdge accentRgb={accentRgb("orange")} intensity="hero" className="p-5 sm:p-10 sh-theme-section-header-client">
         <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 sm:gap-8 text-center sm:text-left">
           <NeonIconStage icon="fa-camera-retro" accentRgb={accentRgb("orange")} strong sizeClass="w-20 h-20 sm:w-28 sm:h-28" iconSizeClass="text-3xl sm:text-4xl" />
           <div className="flex-1 min-w-0">
             <p className="text-[12px] font-bold uppercase tracking-[0.35em] text-shAccent mb-2">Photography</p>
-            <h1 className="text-2xl sm:text-4xl font-bold text-shText tracking-tight leading-tight mb-3">{headline}</h1>
+            <h1 className="sh-display text-2xl sm:text-4xl text-shText leading-tight mb-3">{headline}</h1>
             <p className="text-[14px] sm:text-[15px] text-shTextMuted max-w-xl leading-relaxed mb-5">{summary}</p>
             <div className="flex flex-wrap justify-center sm:justify-start gap-3">
               {/* Stage 1 — this button used to open the generic Book a Service

@@ -3212,6 +3212,41 @@ html[data-theme-target-staff-portal="true"] .sh-page-hero:not([data-testid="toda
   background-image: var(--theme-asset-section-header-background, none);
 }
 
+/* Client Portal's equivalent of the hook above — but the Client Portal has
+   no set of separate per-page screens to reuse PageHero's "many plain
+   pages" treatment on. Nearly everything (My Dogs, Payments, Credits,
+   Rewards, Trophy Wall...) is one continuous Home scroll already carrying
+   a heroBackground at the top; stacking a second background behind every
+   section on that SAME scroll would be clutter, not polish. Shop
+   (ShopLanding.jsx's "shop-hero" section) and Photography
+   (PortalPhotography.jsx's NeonEdge hero) are the two surfaces that
+   actually ARE separate full-screen pages, same shape as an admin screen,
+   so those are the two that get this hook — reusing the SAME
+   sectionHeaderBackground slot/upload the staff side uses, not a new one.
+   Full var(--theme-decoration-opacity), no ×0.35 knockdown: unlike the
+   staff hook, this isn't shown on dozens of pages at once, just these two,
+   so the same "occasional, prominent surface" strength as heroBackground
+   applies here too. */
+.sh-theme-section-header-client {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-section-header-client::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: var(--theme-decoration-opacity);
+  pointer-events: none;
+  z-index: -2;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-section-header-client::before {
+  background-image: var(--theme-asset-section-header-background, none);
+}
+
 /* Dashboard card overlay: AdminStatCard's NeonEdge shell (Today's "71 Dogs
    Here" / "$0.00" tiles, School HQ's stat row) — admin-only, so just the
    staff-portal target. NeonEdge sets its own background via inline style
