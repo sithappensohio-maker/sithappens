@@ -43,7 +43,7 @@ export default function PremiumActionCard({
       />
 
       <div className="relative z-10 flex-1 min-w-0 sm:flex-none sm:mt-0.5">
-        <h3 className={`text-[16px] ${strong ? "sm:text-3xl" : "sm:text-2xl"} font-black text-white tracking-tight break-words sm:text-center`}>
+        <h3 className={`sh-display text-[16px] ${strong ? "sm:text-3xl" : "sm:text-2xl"} text-white tracking-tight break-words sm:text-center`}>
           {title}
         </h3>
         {/* Stage 1 — this was `truncate` below sm, so the three most important

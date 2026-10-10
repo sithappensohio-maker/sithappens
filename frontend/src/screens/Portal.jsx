@@ -1396,7 +1396,7 @@ export default function Portal() {
             <div className="hidden sm:block min-w-0">
               {/* Derived from setup status + booking history, never a timer —
                   an account created seconds ago was being told "Welcome back". */}
-              <p className="text-xl text-shText font-bold truncate" data-testid="portal-greeting">
+              <p className="sh-display text-xl text-shText truncate" data-testid="portal-greeting">
                 {portalGreeting(user.name, setupStatus, bookings)}
               </p>
               <p className="text-[13px] text-shTextMuted truncate" data-testid="portal-greeting-sub">
