@@ -107,6 +107,9 @@ test("the portal hides Pay Online and says why when the bill can't take a paymen
   expect(q("portal-pay-online-i-ok")).not.toBeNull();
   expect(q("portal-pay-online-i-no")).toBeNull();
   expect(q("portal-pay-note-i-no").textContent).toContain("contact us");
+  // i-rx is the 3rd of 3 bills — collapsed out of view until "Show more"
+  // is clicked (the portal shows only the 2 most recent bills by default).
+  await click(q("portal-invoices-toggle"));
   expect(q("portal-pay-note-i-rx").textContent).toContain("won't be charged again");
 });
 

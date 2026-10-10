@@ -132,6 +132,13 @@ export default function PortalInvoices() {
   const [receiptViewOpen, setReceiptViewOpen] = useState(null);
   const [emailingId, setEmailingId] = useState(null);
 
+  // Collapsed by default — a client with a long payment history otherwise
+  // scrolls through every past bill just to find the "Pay Online" button on
+  // a recent one. Most-recent-first order (server-sorted) means the 2
+  // visible by default are the ones actually worth seeing at a glance.
+  const COLLAPSED_COUNT = 2;
+  const [showAllInvoices, setShowAllInvoices] = useState(false);
+
   const viewReceipt = async (invoiceId) => {
     try {
       const { data } = await api.get(`/receipts/invoice/${invoiceId}`);
@@ -217,7 +224,7 @@ export default function PortalInvoices() {
       )}
 
       <div className="space-y-2">
-        {invoices.map((inv) => {
+        {(showAllInvoices ? invoices : invoices.slice(0, COLLAPSED_COUNT)).map((inv) => {
           const balance = Number(inv.balance || 0);
           // The server says whether this bill can take an online payment right
           // now (and why not); older responses without the flag fall back.
@@ -261,6 +268,19 @@ export default function PortalInvoices() {
           );
         })}
       </div>
+
+      {invoices.length > COLLAPSED_COUNT && (
+        <button
+          type="button"
+          onClick={() => setShowAllInvoices((v) => !v)}
+          data-testid="portal-invoices-toggle"
+          className="mt-3 w-full text-center text-[11px] font-black uppercase tracking-widest text-purple-300 hover:text-purple-200 transition"
+        >
+          {showAllInvoices
+            ? <><i className="fas fa-chevron-up mr-1.5" />Show fewer bills</>
+            : <><i className="fas fa-chevron-down mr-1.5" />Show {invoices.length - COLLAPSED_COUNT} more bill{invoices.length - COLLAPSED_COUNT === 1 ? "" : "s"}</>}
+        </button>
+      )}
 
       {receiptViewOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
