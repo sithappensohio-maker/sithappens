@@ -3195,6 +3195,32 @@ html[data-theme-target-staff-portal="true"] .sh-theme-dashboard-overlay::after {
 html[data-theme-target-client-portal="true"] [data-testid="client-portal"] .sh-theme-empty-state::after {
   background-image: var(--theme-asset-empty-state-illustration, none);
 }
+
+/* Announcement accent: PortalAnnouncementsCard.jsx — the client portal only
+   (announcements are an admin-to-client broadcast; the admin's own
+   Announcements screen is an authoring tool, not a "here's a cute message"
+   display worth decorating). NeonEdge sets its own background via inline
+   style with no pre-existing absolute children, same safe z-index:0 case
+   as the dashboard-overlay hook above. */
+.sh-theme-announcement-accent {
+  position: relative;
+  isolation: isolate;
+}
+.sh-theme-announcement-accent::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: calc(var(--theme-decoration-opacity) * 0.5);
+  pointer-events: none;
+  z-index: 0;
+}
+html[data-theme-target-client-portal="true"] .sh-theme-announcement-accent::after {
+  background-image: var(--theme-asset-announcement-accent, none);
+}
 html[data-theme-target-staff-portal="true"] [data-testid="employee-portal"] .sh-theme-empty-state::after,
 html[data-theme-target-staff-portal="true"] .app-shell .sh-theme-empty-state::after {
   background-image: var(--theme-asset-empty-state-illustration, none);

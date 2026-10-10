@@ -20,19 +20,120 @@ import ThemeDeploymentSettings from "../components/theme-studio/ThemeDeploymentS
 import ThemeLivePreviewPane from "../components/theme-studio/ThemeLivePreviewPane";
 
 const ASSET_SLOTS = [
-  { key: "heroBackground", label: "Hero Background Image", hint: "1920 × 600px · JPG, PNG", accept: "image/jpeg,image/png,image/webp", previewSize: "pdp" },
-  { key: "sidebarAccentTop", label: "Sidebar Accent (Top)", hint: "400 × 400px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "sidebarAccentBottom", label: "Sidebar Accent (Bottom)", hint: "400 × 400px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "sectionHeaderBackground", label: "Section Header Background", hint: "1600 × 300px · JPG, PNG", accept: "image/jpeg,image/png,image/webp", previewSize: "card" },
-  { key: "dashboardCardOverlay", label: "Dashboard Card Overlay", hint: "600 × 400px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "eventBanner", label: "Event Banner Image", hint: "1200 × 400px · JPG, PNG", accept: "image/jpeg,image/png,image/webp", previewSize: "pdp" },
-  { key: "loginBackground", label: "Login Background", hint: "1920 × 1080px · JPG, PNG", accept: "image/jpeg,image/png,image/webp", previewSize: "pdp" },
-  { key: "loginAccent", label: "Login Screen Accent", hint: "800 × 800px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "cornerSticker", label: "Small Corner Sticker", hint: "200 × 200px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "announcementAccent", label: "Announcement Accent", hint: "400 × 400px · PNG, transparent", accept: "image/png,image/webp", previewSize: "thumb" },
-  { key: "emptyStateIllustration", label: "Empty State Illustration", hint: "600 × 600px · PNG, transparent", accept: "image/png,image/webp", previewSize: "card" },
-  { key: "ambientAnimation", label: "Optional GIF / Animation", hint: "400 × 400px · GIF, WEBP (max 5MB)", accept: "image/gif,image/webp", previewSize: "original", isAnimation: true },
+  {
+    key: "heroBackground", label: "Hero Background Image", hint: "1920 × 600px · JPG, PNG",
+    accept: "image/jpeg,image/png,image/webp", previewSize: "pdp",
+    purpose: "The wide banner behind the welcome header on the Client Portal home, Staff Portal home, and the admin Today dashboard.",
+    promptTemplate: "A wide 1920×600px banner illustration for \"Sit Happens,\" a dog daycare and training business whose mascot is a husky. Show a husky in a {THEME} scene with a dark, moody atmosphere. Leave the left two-thirds relatively uncluttered and darker, since a white page title will be overlaid there. Warm, professional pet-business illustration style — not cartoonish or clipart. Landscape orientation, 1920×600px, JPG or PNG.",
+  },
+  {
+    key: "sidebarAccentTop", label: "Sidebar Accent (Top)", hint: "400 × 400px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "A soft watermark behind the logo at the top of the sidebar, in both the client and staff navigation.",
+    promptTemplate: "A 400×400px PNG with a FULLY TRANSPARENT background, showing a simple husky illustration with light {THEME} decoration. Centered, generously padded, soft/muted colors — it sits at low opacity behind a logo and text. No background color — transparent PNG only.",
+  },
+  {
+    key: "sidebarAccentBottom", label: "Sidebar Accent (Bottom)", hint: "400 × 400px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "The same soft watermark treatment, at the bottom of the sidebar instead of the top.",
+    promptTemplate: "A 400×400px PNG with a FULLY TRANSPARENT background, a second simple husky illustration (different pose than the top accent) with light {THEME} decoration. Centered, generously padded, soft/muted colors. Transparent PNG only.",
+  },
+  {
+    key: "sectionHeaderBackground", label: "Section Header Background", hint: "1600 × 300px · JPG, PNG",
+    accept: "image/jpeg,image/png,image/webp", previewSize: "card",
+    purpose: "A faint background wash behind the page title on nearly every admin screen (Shop Manager, Income, Clients, and ~30 more) — shown at roughly a third opacity, so it needs to read fine without fine detail.",
+    promptTemplate: "A wide 1600×300px background texture/illustration for {THEME}, featuring subtle husky silhouettes or paw prints and seasonal motifs. Muted, low-contrast — this is shown at roughly 35% opacity as a wash behind a white page title across many pages. JPG or PNG.",
+  },
+  {
+    key: "dashboardCardOverlay", label: "Dashboard Card Overlay", hint: "600 × 400px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "A light decoration on small stat-number tiles (e.g. \"71 Dogs Here\") on the admin Today page.",
+    promptTemplate: "A 600×400px PNG with a transparent background, a light, corner-weighted {THEME} decoration suitable for layering softly behind a bold number and short label on a small stat card. Mostly empty/transparent in the center so the number stays readable. Transparent PNG only.",
+  },
+  {
+    key: "eventBanner", label: "Event Banner Image", hint: "1200 × 400px · JPG, PNG",
+    accept: "image/jpeg,image/png,image/webp", previewSize: "pdp",
+    purpose: "The background of the \"Upcoming Event\" promo card, shown on both the admin Today page and the Client Portal home — only appears when a real event is published.",
+    promptTemplate: "A 1200×400px banner background for a dog daycare event promo card (e.g. a costume contest or holiday party), featuring a husky in a festive {THEME} setting. Leave the left side calmer for a white event title. JPG or PNG.",
+  },
+  {
+    key: "loginBackground", label: "Login Background", hint: "1920 × 1080px · JPG, PNG",
+    accept: "image/jpeg,image/png,image/webp", previewSize: "pdp",
+    purpose: "The full-bleed background behind the entire login/sign-in page.",
+    promptTemplate: "A full-bleed 1920×1080px background image for a dog daycare login page, featuring a husky in an atmospheric {THEME} scene, dark and moody enough that white text and a dark sign-in card can sit on top. Landscape, JPG or PNG.",
+  },
+  {
+    key: "loginAccent", label: "Login Screen Accent", hint: "800 × 800px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "A small circular badge shown on the login card itself, next to the sign-in form.",
+    promptTemplate: "An 800×800px PNG with a transparent background, a circular badge-style illustration of a husky face wearing {THEME} decoration. Centered, bold enough to read clearly at a small size (about 56px on screen). Transparent PNG only.",
+  },
+  {
+    key: "cornerSticker", label: "Small Corner Sticker", hint: "200 × 200px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "A tiny sticker in the corner of hero banners (Client Portal, Staff Portal, admin Today) — shown instead of the animation when animation is off or none is uploaded.",
+    promptTemplate: "A 200×200px PNG with a transparent background, ONE simple isolated {THEME} icon or sticker in a flat illustration style. No scene and no husky needed here — just one small graphic element, like a sticker. Transparent PNG only.",
+  },
+  {
+    key: "announcementAccent", label: "Announcement Accent", hint: "400 × 400px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "thumb",
+    purpose: "A decorative accent behind the Announcements card on the Client Portal home.",
+    promptTemplate: "A 400×400px PNG with a transparent background, a soft {THEME}-themed decorative pattern, subtle enough to sit behind a bullhorn icon and announcement text at low opacity. Transparent PNG only.",
+  },
+  {
+    key: "emptyStateIllustration", label: "Empty State Illustration", hint: "600 × 600px · PNG, transparent",
+    accept: "image/png,image/webp", previewSize: "card",
+    purpose: "Shown behind \"nothing here yet\" messages across the app (e.g. \"No dogs added yet\").",
+    promptTemplate: "A 600×600px PNG with a transparent background, a friendly, gentle illustration of a husky puppy with light {THEME} decoration, designed to sit softly behind a short empty-state message and a button. Warm and inviting, not sad or empty-feeling. Transparent PNG only.",
+  },
+  {
+    key: "ambientAnimation", label: "Optional GIF / Animation", hint: "400 × 400px · GIF, WEBP (max 5MB)",
+    accept: "image/gif,image/webp", previewSize: "original", isAnimation: true,
+    purpose: "A small looping animated sticker in the same hero corner spot as the corner sticker — shown instead of it when animation is turned on.",
+    promptTemplate: "A short, SIMPLE looping animation (GIF or animated WEBP), 400×400px, transparent background, of one small {THEME} element with gentle motion (e.g. a twinkling star, falling snow). Keep the file small — well under 5MB — and the loop short and seamless. Avoid fast flashing or strobing.",
+  },
 ];
+
+function buildImageGuide(themeName) {
+  const theme = (themeName || "").trim() || "seasonal/holiday";
+  const lines = [
+    `# Sit Happens Theme Studio — Image Guide`,
+    ``,
+    `Specs and ready-to-use AI image prompts for every Theme Studio slot${themeName ? ` — written for "${themeName}"` : ""}. Paste a prompt into an image generator (ChatGPT/DALL·E, Midjourney, etc.), then upload the result into the matching slot in Theme Studio.`,
+    ``,
+    `**Brand context** (already baked into each prompt below, repeated here for reference or if you want to write your own): Sit Happens is a dog daycare, boarding, and training business. Its mascot is a **husky** — not a generic dog or golden retriever. The app's visual style is a dark navy background (#060c2e) with neon green, blue, and orange accents.`,
+    ``,
+    `Every slot is optional — upload only the ones you want for this theme. "PNG, transparent" slots must have a real transparent background (not white) or they'll show a solid box instead of blending into the page.`,
+    ``,
+    `---`,
+    ``,
+  ];
+  ASSET_SLOTS.forEach((slot, i) => {
+    lines.push(`## ${i + 1}. ${slot.label}`);
+    lines.push(``);
+    lines.push(`- **Size:** ${slot.hint}`);
+    lines.push(`- **Used for:** ${slot.purpose}`);
+    lines.push(``);
+    lines.push("**Prompt:**");
+    lines.push("```");
+    lines.push(slot.promptTemplate.replaceAll("{THEME}", theme));
+    lines.push("```");
+    lines.push(``);
+  });
+  return lines.join("\n");
+}
+
+function downloadImageGuide(themeName) {
+  const blob = new Blob([buildImageGuide(themeName)], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "sit-happens-theme-studio-image-guide.md";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 const QUICK_PALETTE_FIELDS = [
   { key: "brand_primary", label: "Primary Color", sub: "main actions and success" },
@@ -75,6 +176,27 @@ function cloneTheme(t) {
   return { ...t, assets: { ...(t.assets || {}) }, enabled_targets: { ...(t.enabled_targets || {}) } };
 }
 
+// Remembers which theme the admin was last editing — purely a per-browser
+// convenience (same convention as sh_text_size), never a source of truth.
+// Without this, a reload always re-defaulted to whichever theme is ACTIVE,
+// silently discarding whatever non-active theme the admin was actually
+// working on. That theme's edits were never lost (every Save round-trips
+// through the real API), but Theme Studio looked like it had forgotten
+// them, because it was quietly showing a different theme's empty slots.
+const LAST_EDITED_THEME_KEY = "sh_theme_studio_last_edited_id";
+
+// Pure so it's directly unit-testable (see ThemeStudio.test.js) without
+// mocking the API/context this screen otherwise needs. Order matters: the
+// remembered theme wins over the active one specifically because editing a
+// theme you haven't activated yet (the normal "prep it before the holiday"
+// workflow) is the exact case a pure active-theme default silently broke.
+export function pickThemeToEdit({ list, rememberedId, activeThemeId }) {
+  return (rememberedId && list.find((t) => t.id === rememberedId))
+    || list.find((t) => t.id === activeThemeId)
+    || list[0]
+    || null;
+}
+
 export default function ThemeStudio() {
   const ctx = useTheme();
   const confirm = useConfirm();
@@ -98,6 +220,7 @@ export default function ThemeStudio() {
     setEditingId(theme.id);
     setSavedTheme(cloneTheme(theme));
     setDraft(cloneTheme(theme));
+    try { localStorage.setItem(LAST_EDITED_THEME_KEY, theme.id); } catch { /* private mode */ }
   };
 
   // Picking which theme to default into only happens ONCE (guarded by this
@@ -129,7 +252,9 @@ export default function ThemeStudio() {
       if (selectId) {
         pick = list.find((t) => t.id === selectId) || list[0];
       } else if (!initialPickDone.current && brandingReady) {
-        pick = list.find((t) => t.id === branding.active_theme_id) || list[0];
+        let rememberedId = null;
+        try { rememberedId = localStorage.getItem(LAST_EDITED_THEME_KEY); } catch { /* private mode */ }
+        pick = pickThemeToEdit({ list, rememberedId, activeThemeId: branding.active_theme_id });
       }
       if (pick) {
         selectForEditing(pick);
@@ -502,8 +627,21 @@ export default function ThemeStudio() {
               )}
 
               <div>
-                <h4 className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1">Theme Images</h4>
-                <p className="text-[12px] text-shTextMuted mb-3">Upload custom images for the theme. Recommended sizes are shown below each slot.</p>
+                <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+                  <h4 className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Theme Images</h4>
+                  <button
+                    type="button"
+                    onClick={() => downloadImageGuide(draft.name)}
+                    data-testid="theme-studio-download-image-guide"
+                    className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:underline"
+                  >
+                    <i className="fas fa-file-lines mr-1" />Download image guide
+                  </button>
+                </div>
+                <p className="text-[12px] text-shTextMuted mb-3">
+                  Upload custom images for the theme. Recommended sizes are shown below each slot — or download the
+                  guide above for exact specs and ready-to-use AI image prompts for every slot.
+                </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {ASSET_SLOTS.map((slot) => (
                     <ThemeAssetSlot

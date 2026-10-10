@@ -55,7 +55,7 @@ export default function PortalAnnouncementsCard({ refreshKey = 0, defaultCollaps
   const latest = items[0];
 
   return (
-    <NeonEdge accentRgb={accentRgb("cyan")} intensity="standard" className="mb-4 sm:mb-6" data-testid="portal-announcements-card">
+    <NeonEdge accentRgb={accentRgb("cyan")} intensity="standard" className="mb-4 sm:mb-6 sh-theme-announcement-accent" data-testid="portal-announcements-card">
       <button onClick={()=>setCollapsed(v=>!v)} type="button"
               data-testid="portal-announcements-toggle"
               className="relative z-10 w-full flex items-center justify-between gap-3 px-4 sm:px-5 py-3 hover:bg-shSurfaceRaised transition">
