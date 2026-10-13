@@ -163,6 +163,20 @@ STRIPE_CHECKOUT_EXPIRES_SECONDS = 30 * 60  # ~30 minutes, per the approved reser
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
+# -------- Stripe Terminal (Phase 4) --------
+# In-person, card-present payments on a registered smart reader (e.g.
+# Stripe Reader S700) via the server-driven integration — the backend talks
+# to Stripe's REST API directly; no client-side Terminal SDK anywhere. A
+# separate enable flag from STRIPE_ONLINE_ENABLED: the two are independent
+# capabilities on the same Stripe account, and one can run without the
+# other. One reader for one register, so the reader ID is a plain env var
+# (not a DB setting) — the same one-location-one-till assumption the rest
+# of the register already makes. Registering the reader itself (a one-time
+# step tying its serial to a Stripe Terminal Location) happens in the
+# Stripe Dashboard, never from this app.
+STRIPE_TERMINAL_ENABLED = (os.environ.get("STRIPE_TERMINAL_ENABLED", "") or "").strip().lower() in ("1", "true", "yes")
+STRIPE_TERMINAL_READER_ID = os.environ.get("STRIPE_TERMINAL_READER_ID", "")
+
 mongo_url = os.environ["MONGO_URL"]
 mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
@@ -190,7 +204,7 @@ _capacity_lock_ctx = contextvars.ContextVar("capacity_lock_context", default=Non
 # Canonical methods for the new POS-style register. Legacy values are still
 # accepted so old clients, old frontend builds, and historical records do not
 # break; reports group them into the clean labels Garrett actually uses.
-REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "card", "venmo_paypal", "stripe_online", "other"]
+REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "card", "venmo_paypal", "stripe_online", "stripe_terminal", "other"]
 REGISTER_METHOD_LABELS = {
     "cash": "Cash",
     "check": "Check",
@@ -199,6 +213,7 @@ REGISTER_METHOD_LABELS = {
     "card": "Card",
     "venmo_paypal": "Venmo / PayPal (legacy transfer)",
     "stripe_online": "Online Card (Stripe)",
+    "stripe_terminal": "Card (Reader)",
     "credits": "Credits",
     "gift_card": "Gift card",
     "other": "Other",
@@ -214,6 +229,8 @@ def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> 
     m = (method or "").strip().lower().replace(" ", "_").replace("-", "_")
     if m in ("stripe_online", "stripe"):
         return "stripe_online"
+    if m == "stripe_terminal":
+        return "stripe_terminal"
     if m in ("credit", "credit_card", "cc", "card", "cards"):
         return "card"
     if m in ("venmo",):
@@ -30177,7 +30194,7 @@ BACKUP_COLLECTIONS = [
     "pos_sale_claims", "pos_sale_void_claims", "pos_sale_return_claims",
     "payment_topup_claims", "payment_void_claims", "refund_idempotency_claims",
     "shop_checkout_claims", "auto_receipt_email_claims",
-    "financial_adjustment_claims", "tab_adjustment_claims",
+    "financial_adjustment_claims", "tab_adjustment_claims", "stripe_terminal_payment_claims",
     # The hard-delete log (domains/backup/deletion_log.py). A merge restore reads it so it does not bring back a
     # row removed after the backup was taken; a replace restores it with the rest.
     "deleted_records",
@@ -34216,6 +34233,11 @@ async def startup():
         # Returns are partial and repeatable, so unlike a void there is NO
         # one-per-sale index here — only the key stops a double refund.
         (db.pos_sale_return_claims, "idempotency_key", {"unique": True}),
+        # Stripe Terminal (Phase 4) — a successful card-present PaymentIntent
+        # can be applied as a tender exactly once. The unique index, not the
+        # pre-check in _create_pos_sale_impl, is the actual guarantee against
+        # the same reader charge paying for two different sales.
+        (db.stripe_terminal_payment_claims, "payment_intent_id", {"unique": True}),
         # Simple retail stock tracking.
         (db.pos_products, "track_inventory", {}),
         (db.inventory_movements, "product_id", {}),
@@ -38529,6 +38551,11 @@ def _require_stripe_online_enabled():
         raise HTTPException(status_code=400, detail="Online card payments are not enabled.")
 
 
+def _require_stripe_terminal_enabled():
+    if not STRIPE_TERMINAL_ENABLED or not STRIPE_SECRET_KEY or not STRIPE_TERMINAL_READER_ID:
+        raise HTTPException(status_code=400, detail="Card reader payments are not enabled.")
+
+
 def _stripe_amount_cents(amount: float) -> int:
     return int(round(float(amount) * 100))
 
@@ -38552,6 +38579,90 @@ class StripeRefundIn(BaseModel):
     amount: float = Field(gt=0, le=100000)
     reason: Optional[str] = Field(default=None, max_length=500)
     idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class StripeTerminalChargeIn(BaseModel):
+    """Body for POST /pos/terminal/charges. Server-driven Stripe Terminal —
+    this creates a card-present PaymentIntent and immediately pushes it to
+    the one registered reader (STRIPE_TERMINAL_READER_ID); there is no
+    client-side Terminal SDK anywhere in this app."""
+    amount: float = Field(gt=0, le=100000)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+@api.post("/pos/terminal/charges")
+async def create_stripe_terminal_charge(body: StripeTerminalChargeIn, user: dict = Depends(require_employee_or_admin)):
+    _require_take_payments(user)
+    _require_stripe_terminal_enabled()
+    # Same precondition the eventual sale commit enforces (_require_register_day_open
+    # in _create_pos_sale_impl, and every other money-moving endpoint) —
+    # checked here too so a card is never charged against a day that's
+    # already been closed out, instead of only discovering that at commit
+    # time after the customer has already been charged.
+    await _require_register_day_open(business_today().isoformat())
+    try:
+        intent = stripe.PaymentIntent.create(
+            amount=_stripe_amount_cents(body.amount), currency="usd",
+            payment_method_types=["card_present"], capture_method="automatic",
+            idempotency_key=body.idempotency_key,
+        )
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=400, detail=exc.user_message or "Could not start the card reader charge.")
+    try:
+        stripe.terminal.Reader.process_payment_intent(STRIPE_TERMINAL_READER_ID, payment_intent=intent.id)
+    except stripe.error.StripeError as exc:
+        # The PaymentIntent exists but was never sent to the reader — cancel
+        # it rather than leaving an unused PaymentIntent dangling on the
+        # account for every reader-offline/reader-busy failure.
+        try:
+            stripe.PaymentIntent.cancel(intent.id)
+        except stripe.error.StripeError:
+            pass
+        raise HTTPException(status_code=400, detail=exc.user_message or "Could not start the card reader charge.")
+    return {"payment_intent_id": intent.id, "status": intent.status}
+
+
+@api.get("/pos/terminal/charges/{payment_intent_id}")
+async def get_stripe_terminal_charge_status(payment_intent_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Polled by the register while a customer is tapping/inserting their
+    card — the reader itself has no webhook back to the browser, so the
+    tender screen watches this instead. Always a live round-trip to Stripe,
+    never a locally cached status: this is the same object the eventual
+    sale-commit re-verification reads, so what the cashier sees here and
+    what the backend trusts at checkout can never disagree."""
+    _require_take_payments(user)
+    _require_stripe_terminal_enabled()
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=400, detail=exc.user_message or "Could not check the card payment.")
+    last_error = (intent.get("last_payment_error") or {}).get("message") if intent.get("last_payment_error") else None
+    return {"payment_intent_id": intent.id, "status": intent.status, "last_payment_error": last_error}
+
+
+@api.post("/pos/terminal/charges/{payment_intent_id}/cancel")
+async def cancel_stripe_terminal_charge(payment_intent_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Staff backed out of the tender screen, or the charge is stuck —
+    clears the reader's screen so it's ready for the next transaction and
+    cancels the PaymentIntent if Stripe will still allow it (a charge the
+    customer already completed on the reader cannot be canceled this way;
+    the register simply won't have a succeeded status to poll for)."""
+    _require_take_payments(user)
+    _require_stripe_terminal_enabled()
+    try:
+        stripe.terminal.Reader.cancel_action(STRIPE_TERMINAL_READER_ID)
+    except stripe.error.StripeError as exc:
+        # Usually just "nothing to cancel" (reader already idle) — but a
+        # genuinely unreachable/offline reader fails the same way, so this
+        # still needs a trace even though it isn't surfaced to the cashier.
+        logger.warning("stripe.terminal.Reader.cancel_action failed for reader %s: %s", STRIPE_TERMINAL_READER_ID, exc)
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        if intent.status not in ("succeeded", "canceled"):
+            stripe.PaymentIntent.cancel(payment_intent_id)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=400, detail=exc.user_message or "Could not cancel the card reader charge.")
+    return {"ok": True}
 
 
 class ShopRefundLineIn(BaseModel):
@@ -39017,7 +39128,45 @@ async def stripe_webhook(request: Request):
         await _handle_stripe_dispute_event(obj)
     elif event_type in ("charge.succeeded", "payout.paid", "payout.failed", "payout.canceled"):
         await _handle_stripe_reconciliation_event(event_type, obj)
+    elif event_type == "terminal.reader.action_succeeded":
+        await _handle_terminal_reader_action_succeeded(obj)
     return {"ok": True}
+
+
+async def _handle_terminal_reader_action_succeeded(obj: dict) -> None:
+    """Observability only — never a money-mover. The register already
+    re-verifies the PaymentIntent live against Stripe at checkout commit
+    (see _create_pos_sale_impl), so this never applies anything itself. Its
+    only job is to catch the case a cash register genuinely needs to catch:
+    a card that was successfully charged on the reader but never made it
+    into a completed sale (the browser crashed, the tab was closed, the
+    network dropped right after the tap) — money moved with nothing in
+    sithappens pointing at it. That's surfaced as a log line for now rather
+    than an admin UI; worth a dedicated recovery panel if it turns out to
+    happen often in practice."""
+    action = obj.get("action") or {}
+    if (action.get("type") or "") != "process_payment_intent":
+        return
+    payment_intent_id = ((action.get("process_payment_intent") or {}).get("payment_intent"))
+    if not payment_intent_id:
+        return
+    # Checking the claim row alone isn't enough: the claim is written BEFORE
+    # the sale document, inside the same try block _create_pos_sale_impl
+    # rolls back on failure — but a rollback only runs for a caught
+    # Exception. A request interrupted by something that isn't one (e.g.
+    # asyncio.CancelledError from a worker restart) can leave the claim row
+    # behind with no sale ever written, which would make a claim-only check
+    # wrongly treat a genuinely orphaned charge as already handled. Checking
+    # for the real, completed sale is what the "never made it into a
+    # completed sale" case this handler exists for actually means.
+    claimed = await db.stripe_terminal_payment_claims.find_one({"payment_intent_id": payment_intent_id}, {"_id": 0, "pos_sale_id": 1})
+    sale = (await db.pos_sales.find_one({"id": claimed["pos_sale_id"]}, {"_id": 0, "status": 1})) if claimed else None
+    if not sale or sale.get("status") != "completed":
+        logger.warning(
+            "Stripe Terminal reader charge %s succeeded but is not attached to a completed POS sale — "
+            "it may still be mid-checkout, or it may be an orphaned charge that needs manual review.",
+            payment_intent_id,
+        )
 
 
 async def _handle_checkout_session_paid_event(session_obj: dict) -> None:
@@ -44386,6 +44535,27 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             if float(t.tendered_amount) < amount - 0.005:
                 raise HTTPException(status_code=400, detail="Cash received cannot be less than the amount applied.")
             cash_component += amount
+        elif t.method == "stripe_terminal":
+            # The browser is never financial authority here either: re-verify
+            # directly with Stripe that this exact PaymentIntent succeeded and
+            # for this exact amount, rather than trusting what the client
+            # claims. The id is consumed exactly once below, right before the
+            # sale document is written (see the unique index on
+            # stripe_terminal_payment_claims.payment_intent_id). The feature
+            # gate is checked here too, not just at charge-creation time — a
+            # location with Terminal switched off must never accept an
+            # otherwise-real PaymentIntent id as payment.
+            _require_stripe_terminal_enabled()
+            if not (t.provider_ref or "").strip():
+                raise HTTPException(status_code=400, detail="Missing Stripe Terminal payment reference.")
+            try:
+                pi = stripe.PaymentIntent.retrieve(t.provider_ref)
+            except stripe.error.StripeError as exc:
+                raise HTTPException(status_code=400, detail=f"Could not verify the card payment: {exc.user_message or 'Stripe error.'}")
+            if pi.status != "succeeded":
+                raise HTTPException(status_code=400, detail="That card payment has not completed successfully.")
+            if abs(int(pi.amount_received or 0) - _stripe_amount_cents(amount)) > 1:
+                raise HTTPException(status_code=400, detail="The card payment amount doesn't match this tender.")
         elif t.tendered_amount is not None:
             raise HTTPException(status_code=400, detail="tendered_amount only applies to a cash tender.")
         tender_docs.append({
@@ -44418,7 +44588,7 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         body.client_id,
         [(li["kind"], li.get("product_id") or li.get("pack_id") or li.get("program_id"), li["qty"], li["amount"]) for li in priced["line_items"]],
         priced["discount_amount"], total,
-        [(td["method"], td["amount"], td["tendered_amount"]) for td in tender_docs],
+        [(td["method"], td["amount"], td["tendered_amount"], td["provider_ref"]) for td in tender_docs],
     )
     claim_id = str(uuid.uuid4())
     ts = now_iso()
@@ -44445,7 +44615,29 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     client_balance_deltas: Dict[str, int] = {}  # balance_field -> total $inc applied — reversed on failure
     client_balance_applied = False
     applied_stock_movements: List[tuple] = []  # (product_id, qty) already deducted — reversed on failure below
+    claimed_payment_intent_ids: List[str] = []  # stripe_terminal tenders claimed — released on failure below
     try:
+        # Stripe Terminal (Phase 4) — each verified PaymentIntent is consumed
+        # here exactly once, via the unique index on
+        # stripe_terminal_payment_claims.payment_intent_id. This runs before
+        # the sale document itself is written, so a collision here leaves
+        # nothing for the except block below to roll back. If the sale then
+        # fails for an unrelated reason (e.g. lost a stock race), the claim
+        # is released below — the card really was charged, so the same
+        # PaymentIntent must still be usable on a retry instead of stranding
+        # money the customer already paid.
+        for td in tender_docs:
+            if td["method"] != "stripe_terminal":
+                continue
+            try:
+                await db.stripe_terminal_payment_claims.insert_one({
+                    "id": str(uuid.uuid4()), "payment_intent_id": td["provider_ref"],
+                    "pos_sale_id": sale_id, "amount": td["amount"], "created_at": ts,
+                })
+            except DuplicateKeyError:
+                raise HTTPException(status_code=409, detail="That card payment was already applied to a different sale.")
+            claimed_payment_intent_ids.append(td["provider_ref"])
+
         item_count = len(priced["line_items"])
         sale_doc = {
             "id": sale_id, "receipt_number": sale_id[:8].upper(),
@@ -44589,6 +44781,8 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             )
             applied_stock_movements.append((product_id, qty))
     except Exception:
+        if claimed_payment_intent_ids:
+            await deletion_log.delete_many(db, "stripe_terminal_payment_claims", {"payment_intent_id": {"$in": claimed_payment_intent_ids}})
         for product_id, qty in applied_stock_movements:
             try:
                 await _mutate_product_stock(
@@ -44962,6 +45156,26 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
         except Exception as exc:
             logger.warning("Stock restoration failed for product %s on void of pos_sale %s: %s", li.get("product_id"), sale_id, exc)
 
+    # A stripe_terminal tender was a REAL card-present charge, unlike the
+    # manual "card" method — voiding the sale must also actually refund it,
+    # not just reverse the ledger. Best-effort, post-commit, same discipline
+    # as stock restoration above: the void itself (the books) already fully
+    # committed and is never undone by a failure here. Any failure is
+    # surfaced in the response so staff know to refund it by hand in Stripe
+    # instead of assuming the customer was already credited back.
+    stripe_refund_failures: List[str] = []
+    for t in original.get("tenders") or []:
+        if t.get("method") != "stripe_terminal" or not t.get("provider_ref"):
+            continue
+        try:
+            stripe.Refund.create(
+                payment_intent=t["provider_ref"], amount=_stripe_amount_cents(float(t.get("amount") or 0)),
+                idempotency_key=f"pos-void-{sale_id}-{t['provider_ref']}",
+            )
+        except stripe.error.StripeError as exc:
+            logger.error("Stripe refund failed for voided pos_sale %s, PaymentIntent %s: %s", sale_id, t["provider_ref"], exc)
+            stripe_refund_failures.append(t["provider_ref"])
+
     pos_open_drawer_token = None
     try:
         # Giving cash back is a physical drawer action, so the token is only
@@ -44975,7 +45189,10 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
         logger.warning("POS token issuance failed for pos_sale void %s: %s", sale_id, exc)
 
     final_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
-    return {"ok": True, "sale": final_sale, "pos_open_drawer_token": pos_open_drawer_token}
+    result = {"ok": True, "sale": final_sale, "pos_open_drawer_token": pos_open_drawer_token}
+    if stripe_refund_failures:
+        result["stripe_refund_failed"] = stripe_refund_failures
+    return result
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarterly Tax Estimate (Sole-Proprietor / Schedule C)

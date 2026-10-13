@@ -59,17 +59,17 @@ class PosSaleTenderIn(BaseModel):
     # "card" is the SAME manually-recorded/offline card method used by
     # checkout, refunds, and tab payments everywhere else in the app — it
     # reports into the existing card register bucket and never touches
-    # expected drawer cash. It is NOT a processor integration; Stripe
-    # Terminal remains a separate, future step.
-    method: Literal["cash", "card", "check", "venmo", "paypal", "other", "gift_card"]
+    # expected drawer cash. It is NOT a processor integration; use
+    # "stripe_terminal" for an actual card-present charge on the reader.
+    method: Literal["cash", "card", "check", "venmo", "paypal", "other", "gift_card", "stripe_terminal"]
     amount: float = Field(gt=0)
     tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
     gift_card_code: Optional[str] = Field(default=None, max_length=40)  # gift_card only
     notes: Optional[str] = Field(default=None, max_length=500)  # required when method == "other"
-    # Forward-compat placeholder only — unused today. When Stripe Card/
-    # Terminal is added later, "method" gains new literals and this field
-    # carries the provider's charge/transaction id. Nothing reads or writes
-    # this field yet.
+    # Required when method == "stripe_terminal" — the Stripe PaymentIntent id
+    # the reader actually charged. Re-verified against Stripe's own API (not
+    # trusted as given) and consumed exactly once via a unique-indexed claim
+    # before a sale carrying it is allowed to commit.
     provider_ref: Optional[str] = None
 
 

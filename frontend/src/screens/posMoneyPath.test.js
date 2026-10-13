@@ -300,6 +300,88 @@ test("removing a tender puts the money back on the bill", async () => {
   expect(all("pos-tender-row")).toHaveLength(0);
 });
 
+// ------------------------------------------------------- Stripe Terminal tender
+
+const mockTerminalCreateAndCancel = () => {
+  api.post.mockImplementation((path, body) => {
+    posted.push({ path, body });
+    if (String(path).includes("preview")) return Promise.resolve({ data: priceCart(body?.lines || []) });
+    if (String(path) === "/pos/terminal/charges") return Promise.resolve({ data: { payment_intent_id: "pi_test123", status: "processing" } });
+    if (String(path) === "/pos/terminal/charges/pi_test123/cancel") return Promise.resolve({ data: { ok: true } });
+    if (String(path) === "/pos/sales" || String(path) === "/pos/checkout") return Promise.resolve({ data: { ok: true, pos_sale_id: "sale-1", sale: { id: "sale-1" } } });
+    return Promise.resolve({ data: {} });
+  });
+};
+
+test("a terminal charge waits for the reader, then adds the tender once the card succeeds", async () => {
+  await openTender();
+  mockTerminalCreateAndCancel();
+  let pollStatus = "processing";
+  api.get.mockImplementation((path) =>
+    String(path) === "/pos/terminal/charges/pi_test123"
+      ? Promise.resolve({ data: { payment_intent_id: "pi_test123", status: pollStatus } })
+      : Promise.resolve({ data: path in GET ? GET[path] : {} }));
+
+  await click("pos-tender-method-stripe_terminal");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add"); // "Charge Card" when this method is selected
+
+  expect(posted.some((p) => p.path === "/pos/terminal/charges" && p.body.amount === 13.87)).toBe(true);
+  expect(q("pos-terminal-status")).toBeTruthy();
+  expect(all("pos-tender-row")).toHaveLength(0); // not added until the reader confirms
+
+  pollStatus = "succeeded";
+  await act(async () => { jest.advanceTimersByTime(1600); });
+  await settle();
+
+  expect(all("pos-tender-row")).toHaveLength(1);
+  expect(q("pos-terminal-status")).toBeNull();
+  expect(q("pos-complete-sale").disabled).toBe(false);
+  await click("pos-complete-sale");
+
+  const sale = lastSale();
+  expect(sale.body.tenders[0]).toMatchObject({ method: "stripe_terminal", amount: 13.87, provider_ref: "pi_test123" });
+});
+
+test("canceling a waiting terminal charge tells the backend and adds no tender", async () => {
+  await openTender();
+  mockTerminalCreateAndCancel();
+  api.get.mockImplementation((path) =>
+    String(path) === "/pos/terminal/charges/pi_test123"
+      ? Promise.resolve({ data: { payment_intent_id: "pi_test123", status: "processing" } })
+      : Promise.resolve({ data: path in GET ? GET[path] : {} }));
+
+  await click("pos-tender-method-stripe_terminal");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add");
+  expect(q("pos-terminal-status")).toBeTruthy();
+
+  await click("pos-terminal-cancel");
+  expect(posted.some((p) => p.path === "/pos/terminal/charges/pi_test123/cancel")).toBe(true);
+  expect(q("pos-terminal-status")).toBeNull();
+  expect(all("pos-tender-row")).toHaveLength(0);
+});
+
+test("a declined card shows why and lets the cashier try again", async () => {
+  await openTender();
+  mockTerminalCreateAndCancel();
+  api.get.mockImplementation((path) =>
+    String(path) === "/pos/terminal/charges/pi_test123"
+      ? Promise.resolve({ data: { payment_intent_id: "pi_test123", status: "requires_payment_method", last_payment_error: "Your card was declined." } })
+      : Promise.resolve({ data: path in GET ? GET[path] : {} }));
+
+  await click("pos-tender-method-stripe_terminal");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add");
+  await act(async () => { jest.advanceTimersByTime(1600); });
+  await settle();
+
+  expect(q("pos-terminal-status").textContent).toContain("declined");
+  await click("pos-terminal-retry");
+  expect(q("pos-terminal-status")).toBeNull();
+  expect(q("pos-tender-add").textContent).toContain("Charge Card");
+});
+
 test("one sale is posted per completed sale, not two", async () => {
   // A double-submit at the counter is a double charge. The key is per-sale,
   // and the button must not fire twice.

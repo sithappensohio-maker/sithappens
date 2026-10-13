@@ -719,6 +719,18 @@ async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
             raise HTTPException(status_code=400, detail="That return comes to nothing. Check the quantities.")
 
         tenders = _refund_by_tender(sale, refund_total)
+        # A stripe_terminal tender was a real card-present charge — unlike
+        # the full-sale void path (which can refund the whole PaymentIntent
+        # in one call), a PARTIAL return's proportional slice is refused
+        # here rather than silently booked as "refunded" with the customer's
+        # card never actually credited. Same shape as the gift-card refusal
+        # right below: a reversal this function can't safely automate is
+        # refused with guidance, not guessed at.
+        if any(t["method"] == "stripe_terminal" for t in tenders):
+            raise HTTPException(
+                status_code=409,
+                detail=("This sale was paid with a card reader charge, so a partial return can't go back on the "
+                        "card automatically. Void the whole sale instead, or refund the card by hand in Stripe."))
         if any(t["method"] == "gift_card" for t in tenders):
             # Older sales record the paying card only on the revenue row.
             ids = iter(await gift_cards_services.paying_cards(sale))

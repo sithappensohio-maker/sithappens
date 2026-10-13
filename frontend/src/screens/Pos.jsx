@@ -51,9 +51,11 @@ import {
 import ReceiptLogo from "../components/ReceiptLogo";
 import StuckOnlinePayments from "../components/StuckOnlinePayments";
 
-// "card" here is a manually-recorded/offline card payment (external reader),
-// not a Stripe Terminal integration.
-const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other", gift_card: "Gift Card" };
+// "card" is a manually-recorded/offline card payment (an external reader,
+// written down by hand) — "stripe_terminal" is the actual Stripe Terminal
+// reader charge, verified live against Stripe before a sale carrying it
+// can commit (see _create_pos_sale_impl).
+const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other", gift_card: "Gift Card", stripe_terminal: "Card (Reader)" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos({ onOpenShopManager } = {}) {
@@ -656,6 +658,102 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [emailBusy, setEmailBusy] = useState(false);
   const [receiptViewOpen, setReceiptViewOpen] = useState(null); // receipt payload JSON, or null
 
+  // ── Stripe Terminal tender (Phase 4) ─────────────────────────────────────
+  // null, or { paymentIntentId, phase: "waiting" | "error", error? }. The
+  // sale itself only ever trusts the backend's own re-verification of the
+  // PaymentIntent at commit time (see _create_pos_sale_impl) — this is just
+  // the register watching for that same result so the cashier isn't
+  // standing at a frozen screen.
+  const [terminalCharge, setTerminalCharge] = useState(null);
+  const terminalPollRef = useRef(null);
+  const terminalStartingRef = useRef(false); // synchronous double-submit guard — React state lags a render behind a fast double-click
+  const terminalPollBusyRef = useRef(false); // true while a poll tick's request is in flight, so a slow response can't overlap the next tick
+  const stopTerminalPolling = () => {
+    if (terminalPollRef.current) { clearInterval(terminalPollRef.current); terminalPollRef.current = null; }
+    terminalPollBusyRef.current = false;
+  };
+  useEffect(() => () => stopTerminalPolling(), []); // stop polling if the screen unmounts mid-charge
+
+  const addTerminalTender = (amount, piId) => {
+    const row = { method: "stripe_terminal", amount: Math.round(amount * 100) / 100, provider_ref: piId };
+    setTenders((t) => [...t, row]);
+    const left = Math.max(0, Math.round((remaining - amount) * 100) / 100);
+    setTenderAmount(String(left));
+    setTerminalCharge(null);
+  };
+
+  const chargeTerminal = async () => {
+    if (terminalStartingRef.current) return; // a second click/tap before the "waiting" state has rendered
+    const amount = Number(tenderAmount);
+    if (!(amount > 0)) { toast.error("Enter a positive amount"); return; }
+    if (amount > remaining + 0.005) { toast.error(`Amount can't exceed the remaining ${money(remaining)} due`); return; }
+    terminalStartingRef.current = true;
+    setTerminalCharge({ paymentIntentId: null, phase: "waiting", amount });
+    try {
+      const { data } = await api.post("/pos/terminal/charges", {
+        amount: Math.round(amount * 100) / 100, idempotency_key: crypto.randomUUID(),
+      });
+      const piId = data.payment_intent_id;
+      setTerminalCharge({ paymentIntentId: piId, phase: "waiting", amount });
+      const startedAt = Date.now();
+      terminalPollRef.current = setInterval(async () => {
+        if (terminalPollBusyRef.current) return; // previous tick's request hasn't resolved yet — never run two at once
+        if (Date.now() - startedAt > 120000) { // ~2 minutes — the reader itself times out well before this
+          stopTerminalPolling();
+          terminalStartingRef.current = false;
+          setTerminalCharge({ paymentIntentId: piId, phase: "error", amount, error: "The reader didn't respond in time. Try again." });
+          return;
+        }
+        terminalPollBusyRef.current = true;
+        try {
+          const { data: status } = await api.get(`/pos/terminal/charges/${piId}`);
+          if (status.status === "succeeded") {
+            stopTerminalPolling();
+            terminalStartingRef.current = false;
+            addTerminalTender(amount, piId);
+          } else if (status.status === "canceled" || (status.status === "requires_payment_method" && status.last_payment_error)) {
+            // A plain cancellation (reader-side, or a stale cancel call) carries no
+            // last_payment_error — only a decline does — but canceled is always terminal.
+            stopTerminalPolling();
+            terminalStartingRef.current = false;
+            setTerminalCharge({ paymentIntentId: piId, phase: "error", amount, error: status.last_payment_error || "The card payment was canceled." });
+          }
+          // Any other status (requires_confirmation, processing, etc.) — keep polling, the customer is still at the reader.
+        } catch {
+          // A transient poll failure isn't the charge failing — just try again next tick.
+        }
+        terminalPollBusyRef.current = false;
+      }, 1500);
+    } catch (e) {
+      terminalStartingRef.current = false;
+      setTerminalCharge({ paymentIntentId: null, phase: "error", amount, error: e?.response?.data?.detail || "Could not start the card reader charge." });
+    }
+  };
+
+  const cancelTerminalCharge = async () => {
+    const piId = terminalCharge?.paymentIntentId;
+    const amount = terminalCharge?.amount; // snapshot before state clears below — never re-read the (still-editable) amount field
+    stopTerminalPolling();
+    terminalStartingRef.current = false;
+    setTerminalCharge(null);
+    if (!piId) return;
+    try {
+      await api.post(`/pos/terminal/charges/${piId}/cancel`);
+    } catch {
+      // The cancel can fail for a reason that matters: the charge already
+      // succeeded the instant before Cancel was clicked. One last status
+      // check settles which actually happened, rather than silently
+      // discarding a card that was genuinely charged.
+      try {
+        const { data: status } = await api.get(`/pos/terminal/charges/${piId}`);
+        if (status.status === "succeeded" && amount > 0) {
+          toast.success("The card was charged right as you canceled — added to the sale.");
+          addTerminalTender(amount, piId);
+        }
+      } catch { /* can't reach the backend to settle it — nothing more to do from here */ }
+    }
+  };
+
   const total = priced?.total ?? 0;
   const tenderedSoFar = tenders.reduce((s, t) => s + t.amount, 0);
   const remaining = Math.max(0, Math.round((total - tenderedSoFar) * 100) / 100);
@@ -669,6 +767,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   const openTender = () => {
     if (!priced || cartLines.length === 0) { toast.error("Add something to the cart first"); return; }
     setTenders([]); setTenderAmount(String(total)); setCashReceived(""); setTenderNotes(""); setTenderMethod("cash");
+    setTerminalCharge(null); // a declined/errored charge from a prior sale must never carry over
     setTenderOpen(true);
   };
 
@@ -892,6 +991,13 @@ export default function Pos({ onOpenShopManager } = {}) {
       if (data.pos_open_drawer_token) {
         const r = await posOpenDrawer(data.pos_open_drawer_token);
         if (!r.ok) toast.error(r.error || "Cash drawer failed to open for the void");
+      }
+      // The void itself always commits — but a stripe_terminal tender is a
+      // real card charge, and the backend's own refund-back-to-the-card call
+      // can fail independently of that. Surfaced so staff know to refund it
+      // by hand in Stripe rather than assuming the customer was credited.
+      if (data.stripe_refund_failed?.length) {
+        toast.error("Sale voided, but the card refund failed — refund it manually in Stripe.");
       }
       setVoidingSaleId(null); setVoidReason("");
       loadRecent();
@@ -1128,10 +1234,11 @@ export default function Pos({ onOpenShopManager } = {}) {
 
         {remaining > 0.005 && (
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-3">
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {Object.entries(TENDER_LABELS).map(([k, label]) => (
-                <button key={k} onClick={() => setTenderMethod(k)} data-testid={`pos-tender-method-${k}`}
-                        className={`py-2 rounded text-[11px] font-black uppercase tracking-wide ${tenderMethod === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
+                <button key={k} onClick={() => { setTenderMethod(k); if (terminalCharge?.phase === "error") setTerminalCharge(null); }}
+                        disabled={terminalCharge?.phase === "waiting"} data-testid={`pos-tender-method-${k}`}
+                        className={`py-2 rounded text-[11px] font-black uppercase tracking-wide disabled:opacity-40 ${tenderMethod === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                   {label}
                 </button>
               ))}
@@ -1190,14 +1297,47 @@ export default function Pos({ onOpenShopManager } = {}) {
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText" />
             )}
 
-            <button onClick={addTender} data-testid="pos-tender-add" className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest">
-              Add Tender
-            </button>
+            {tenderMethod === "stripe_terminal" && terminalCharge && (
+              <div className="rounded-xl border p-4 text-center space-y-2" data-testid="pos-terminal-status"
+                   style={terminalCharge.phase === "error"
+                     ? { borderColor: "var(--sh-danger, #ef4444)", background: "rgba(239,68,68,0.08)" }
+                     : { borderColor: "var(--sh-primary)", background: "rgba(140,198,63,0.08)" }}>
+                {terminalCharge.phase === "waiting" ? (
+                  <>
+                    <p className="text-shText font-black uppercase tracking-widest text-sm">
+                      <i className="fas fa-circle-notch fa-spin mr-2" />Follow the prompt on the reader
+                    </p>
+                    <p className="text-shTextMuted text-sm">Waiting for the card…</p>
+                    <button onClick={cancelTerminalCharge} data-testid="pos-terminal-cancel"
+                            className="text-shTextMuted hover:text-shDanger text-[12px] font-black uppercase tracking-widest mt-1">
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-shDanger font-black uppercase tracking-widest text-sm">Card payment failed</p>
+                    <p className="text-shTextMuted text-sm">{terminalCharge.error}</p>
+                    <button onClick={() => setTerminalCharge(null)} data-testid="pos-terminal-retry"
+                            className="text-shPrimary text-[12px] font-black uppercase tracking-widest mt-1">
+                      Try Again
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {!(tenderMethod === "stripe_terminal" && terminalCharge) && (
+              <button onClick={tenderMethod === "stripe_terminal" ? chargeTerminal : addTender} data-testid="pos-tender-add"
+                      className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest">
+                {tenderMethod === "stripe_terminal" ? "Charge Card" : "Add Tender"}
+              </button>
+            )}
           </div>
         )}
 
         <div className="flex gap-3">
-          <button onClick={() => setTenderOpen(false)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
+          <button onClick={() => { if (terminalCharge) cancelTerminalCharge(); setTenderOpen(false); }}
+                  className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
             Cancel
           </button>
           <button onClick={completeSale} disabled={remaining > 0.005 || saleBusy} data-testid="pos-complete-sale"
