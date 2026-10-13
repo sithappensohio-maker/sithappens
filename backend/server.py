@@ -10470,6 +10470,7 @@ DEFAULT_FEATURE_VISIBILITY = {
     "payment_plans":   True,
     "manual_payments": True,
     "waitlist":        True,
+    "online_school":   True,
 }
 
 

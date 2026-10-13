@@ -100,7 +100,7 @@ describe("how people reach an event", () => {
     expect(eventsNavItem([{ slug: "trunk-or-treat-2026" }])).toEqual({ key: "events", label: "Events", to: "/events/trunk-or-treat-2026" });
     expect(eventsNavItem([{ slug: "a" }, { slug: "b" }]).to).toBe("/events");
     expect(eventHref({ slug: "x" })).toBe("/events/x");
-    expect(shell).toMatch(/const navItems = eventsItem \? \[\.\.\.PUBLIC_NAV, eventsItem\] : PUBLIC_NAV;/);
+    expect(shell).toMatch(/const navItems = eventsItem \? \[\.\.\.baseNav, eventsItem\] : baseNav;/);
     expect(shell.match(/navItems\./g).length).toBe(3); // header, drawer, footer
     expect(shell).not.toMatch(/\{PUBLIC_NAV\.map/);
   });

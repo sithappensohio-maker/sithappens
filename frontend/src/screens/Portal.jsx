@@ -772,6 +772,7 @@ export default function Portal() {
     training:         useFeature("training"),
     grooming:         useFeature("grooming"),
     photography:      useFeature("photography"),
+    online_school:    useFeature("online_school"),
     homework:         useFeature("homework"),
     rewards:          useFeature("rewards"),
     trivia:           useFeature("trivia"),
@@ -1376,6 +1377,7 @@ export default function Portal() {
       <ClientSidebar
         shopCartCount={shopCartCount}
         messagesUnread={messagesUnread}
+        showSchool={feat.online_school}
         showPhotography={feat.photography}
         showMessages={sectionOn("messages")}
         showHelp={sectionOn("help_button")}
@@ -2657,6 +2659,7 @@ export default function Portal() {
 
         <ClientMobileNav
           shopCartCount={shopCartCount}
+          showSchool={feat.online_school}
           showPhotography={feat.photography}
           showHelp={sectionOn("help_button")}
           onHome={goHome} onBook={goBook} onShop={goShop} onPhotography={goPhotography}

@@ -390,6 +390,7 @@ export const FEATURE_KEYS = [
   "daycare", "boarding", "training", "grooming", "photography",
   "retail", "rewards", "trivia", "homework", "staff_portal",
   "client_messaging", "payment_plans", "manual_payments", "waitlist",
+  "online_school",
 ];
 
 export function useFeature(key) {

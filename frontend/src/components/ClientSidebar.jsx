@@ -33,6 +33,7 @@ function NavItem({ icon, label, itemKey, badge, onClick, active, muted, onSelect
 export default function ClientSidebar({
   shopCartCount = 0,
   messagesUnread = 0,
+  showSchool = true,
   showPhotography = false,
   showMessages = true,
   showHelp = false,
@@ -66,7 +67,9 @@ export default function ClientSidebar({
       <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
         <NavItem icon="fa-house" label="Home" itemKey="home" active={activeKey === "home"} onSelect={setActiveKey} onClick={onHome} />
         <NavItem icon="fa-calendar-plus" label="Book" itemKey="book" active={activeKey === "book"} onSelect={setActiveKey} onClick={onBook} />
-        <NavItem icon="fa-graduation-cap" label="School" itemKey="school" active={activeKey === "school"} onSelect={setActiveKey} onClick={openSchool} />
+        {showSchool && (
+          <NavItem icon="fa-graduation-cap" label="School" itemKey="school" active={activeKey === "school"} onSelect={setActiveKey} onClick={openSchool} />
+        )}
         <NavItem icon="fa-bag-shopping" label="Shop" itemKey="shop" active={activeKey === "shop"} onSelect={setActiveKey} badge={shopCartCount} onClick={onShop} />
         {showPhotography && (
           <NavItem icon="fa-camera-retro" label="Photography" itemKey="photography" active={activeKey === "photography"} onSelect={setActiveKey} onClick={onPhotography} />

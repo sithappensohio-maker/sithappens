@@ -25,7 +25,9 @@ export default function PublicSiteShell({ children, testid = "public-site" }) {
   const events = usePublicEvents();
   // "Events" appears only while something is on the calendar.
   const eventsItem = eventsNavItem(events);
-  const navItems = eventsItem ? [...PUBLIC_NAV, eventsItem] : PUBLIC_NAV;
+  const showSchool = data?.feature_visibility?.online_school !== false;
+  const baseNav = showSchool ? PUBLIC_NAV : PUBLIC_NAV.filter((i) => i.key !== "school");
+  const navItems = eventsItem ? [...baseNav, eventsItem] : baseNav;
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   useEffect(() => { setOpen(false); }, [pathname]);

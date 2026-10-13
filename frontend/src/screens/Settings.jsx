@@ -848,6 +848,9 @@ const FEATURE_VISIBILITY_META = [
   { id: "homework",        label: "School Practice",        icon: "fa-book-open",      color: "purple-400",
     desc: "Practice assignments, Practice Coach, and step tracking used by School programs. Disable to hide Practice from School and the portal.",
     affects: ["Admin nav", "Portal", "Quick links"] },
+  { id: "online_school",   label: "Online School",   icon: "fa-laptop-file",    color: "shAccent",
+    desc: "Self-paced online courses. Disable to hide School from the portal nav, public site nav/homepage, and shop. Clients already enrolled keep their course access.",
+    affects: ["Portal nav", "Public site", "Shop"] },
   // portals & comms
   { id: "staff_portal",    label: "Staff Portal",    icon: "fa-id-badge",       color: "shSecondary",
     desc: "Employee clock-in, schedule, payroll surface. Disable to hide the staff portal entry point.",

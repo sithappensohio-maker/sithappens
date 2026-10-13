@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
+import { useFeature } from "../lib/theme";
 import { api } from "../lib/api";
 import ForgotPasswordModal from "../components/ForgotPasswordModal";
 import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
@@ -96,6 +97,10 @@ const HOW = [
 
 export default function Login({ focus = false }) {
   const { login, verifyMfa, cancelMfa, mfaChallenge, register, error, setError } = useAuth();
+  const showSchool = useFeature("online_school");
+  const tagline = showSchool
+    ? "Dog Training · Online School · Daycare · Boarding · Photography"
+    : "Dog Training · Daycare · Boarding · Photography";
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -276,7 +281,7 @@ export default function Login({ focus = false }) {
               <img src="/logo.png" alt="Sit Happens" className="h-12 sm:h-14 shrink-0 drop-shadow-[0_0_18px_color-mix(in_srgb,var(--sh-green)_35%,transparent)]"/>
               <span className="min-w-0">
                 <span className="sh-public-wordmark sh-public-wordmark--header block">Sit Happens</span>
-                <span className="block text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">Dog Training · Online School · Daycare · Boarding · Photography</span>
+                <span className="block text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">{tagline}</span>
               </span>
             </a>
             <a href="/" className="shrink-0 text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white whitespace-nowrap" data-testid="login-back-site">
@@ -293,7 +298,9 @@ export default function Login({ focus = false }) {
             {authCard}
             <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[12px] uppercase tracking-widest font-black text-gray-500">
               <button type="button" onClick={() => setMeetGreetOpen(true)} className="hover:text-white" data-testid="login-meet-greet">Book a free Meet &amp; Greet</button>
-              <button type="button" onClick={openOnlineSchool} className="hover:text-white" data-testid="login-online-school">Explore Online School</button>
+              {showSchool && (
+                <button type="button" onClick={openOnlineSchool} className="hover:text-white" data-testid="login-online-school">Explore Online School</button>
+              )}
             </div>
           </div>
         </div>
@@ -316,7 +323,7 @@ export default function Login({ focus = false }) {
             <div className="hidden sm:block min-w-0">
               <p className="sh-public-wordmark sh-public-wordmark--header">Sit Happens</p>
               <p className="text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">
-                Dog Training · Online School · Daycare · Boarding · Photography
+                {tagline}
               </p>
             </div>
           </div>
@@ -373,7 +380,7 @@ export default function Login({ focus = false }) {
             {/* Two clear entry paths. Local/in-person services keep the free
                 Meet & Greet; Online School can be explored immediately from
                 anywhere without pretending an in-person evaluation is needed. */}
-            <div className="mt-7 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="landing-get-started-paths">
+            <div className={`mt-7 grid grid-cols-1 gap-4 ${showSchool ? "md:grid-cols-2" : ""}`} data-testid="landing-get-started-paths">
               <div className="relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_color-mix(in_srgb,var(--sh-orange)_50%,transparent)] flex flex-col">
                 <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shOrange mb-2">
                   <i className="fas fa-location-dot mr-2"/>In-person services
@@ -391,29 +398,31 @@ export default function Login({ focus = false }) {
                 </button>
               </div>
 
-              <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/25 via-shBlue/10 to-shGreen/10 border-2 border-shBlue rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_color-mix(in_srgb,var(--sh-blue)_50%,transparent)] flex flex-col" data-testid="landing-online-school-card">
-                <div className="absolute -right-8 -top-8 w-28 h-28 rounded-full bg-shGreen/10 blur-xl pointer-events-none"/>
-                <div className="relative flex items-center justify-between gap-2 mb-2">
-                  <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
-                    <i className="fas fa-graduation-cap mr-2"/>Online School
+              {showSchool && (
+                <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/25 via-shBlue/10 to-shGreen/10 border-2 border-shBlue rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_color-mix(in_srgb,var(--sh-blue)_50%,transparent)] flex flex-col" data-testid="landing-online-school-card">
+                  <div className="absolute -right-8 -top-8 w-28 h-28 rounded-full bg-shGreen/10 blur-xl pointer-events-none"/>
+                  <div className="relative flex items-center justify-between gap-2 mb-2">
+                    <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
+                      <i className="fas fa-graduation-cap mr-2"/>Online School
+                    </p>
+                    <span className="shrink-0 px-2 py-1 rounded-full bg-shGreen text-bgHeader text-[9px] font-black uppercase tracking-widest">Now open</span>
+                  </div>
+                  <h2 className="relative text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
+                    Train from home
+                  </h2>
+                  <p className="relative text-[14px] text-gray-300 leading-relaxed mb-3">
+                    Work through real Sit Happens training with step-by-step lessons, guided practice, progress tracking and course certificates — from your phone or computer.
                   </p>
-                  <span className="shrink-0 px-2 py-1 rounded-full bg-shGreen text-bgHeader text-[9px] font-black uppercase tracking-widest">Now open</span>
+                  <p className="relative text-[11px] font-black uppercase tracking-widest text-shGreen mb-4">
+                    <i className="fas fa-gift mr-1.5"/>Free starter course available
+                  </p>
+                  <button onClick={openOnlineSchool}
+                          data-testid="landing-hero-online-school-cta"
+                          className="relative mt-auto w-full justify-center bg-shBlue text-white px-6 py-3.5 rounded-full font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90 transition inline-flex items-center gap-2">
+                    <i className="fas fa-laptop-file"/>Explore Online School
+                  </button>
                 </div>
-                <h2 className="relative text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
-                  Train from home
-                </h2>
-                <p className="relative text-[14px] text-gray-300 leading-relaxed mb-3">
-                  Work through real Sit Happens training with step-by-step lessons, guided practice, progress tracking and course certificates — from your phone or computer.
-                </p>
-                <p className="relative text-[11px] font-black uppercase tracking-widest text-shGreen mb-4">
-                  <i className="fas fa-gift mr-1.5"/>Free starter course available
-                </p>
-                <button onClick={openOnlineSchool}
-                        data-testid="landing-hero-online-school-cta"
-                        className="relative mt-auto w-full justify-center bg-shBlue text-white px-6 py-3.5 rounded-full font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90 transition inline-flex items-center gap-2">
-                  <i className="fas fa-laptop-file"/>Explore Online School
-                </button>
-              </div>
+              )}
             </div>
 
             {/* Third door: people who don't yet know which service fits. The
@@ -467,7 +476,7 @@ export default function Login({ focus = false }) {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {CATEGORIES.map((c) => (
+            {CATEGORIES.filter((c) => c.key !== "online_school" || showSchool).map((c) => (
               <div key={c.key}
                    data-testid={`landing-category-${c.key}`}
                    className="group relative bg-bgBase border border-bgHover hover:border-shGreen/40 rounded-xl p-5 transition shadow-md hover:shadow-lg flex flex-col">

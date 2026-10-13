@@ -21,6 +21,7 @@ jest.mock("../lib/api", () => ({
   clearSharedApiCache: jest.fn(),
   formatErr: (e) => String(e || ""),
 }));
+jest.mock("../lib/theme", () => ({ useFeature: () => true }));
 
 const { api } = require("../lib/api");
 

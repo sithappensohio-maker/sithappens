@@ -28,6 +28,7 @@ function NavButton({ icon, label, badge, onClick, testid }) {
 
 export default function ClientMobileNav({
   shopCartCount = 0,
+  showSchool = true,
   showPhotography = false,
   onHome, onBook, onSchool, onShop, onPhotography,
   onMyDogs, onPayments, onCredits, onRewards, onRefer, onHelp, showHelp,
@@ -44,7 +45,9 @@ export default function ClientMobileNav({
       >
         <NavButton icon="fa-house" label="Home" onClick={onHome} testid="mobile-nav-home" />
         <NavButton icon="fa-calendar-plus" label="Book" onClick={onBook} testid="mobile-nav-book" />
-        <NavButton icon="fa-graduation-cap" label="School" onClick={openSchool} testid="mobile-nav-school" />
+        {showSchool && (
+          <NavButton icon="fa-graduation-cap" label="School" onClick={openSchool} testid="mobile-nav-school" />
+        )}
         <NavButton icon="fa-bag-shopping" label="Shop" badge={shopCartCount} onClick={onShop} testid="mobile-nav-shop" />
         <NavButton icon="fa-ellipsis" label="More" onClick={() => setMoreOpen(true)} testid="mobile-nav-more" />
       </nav>
