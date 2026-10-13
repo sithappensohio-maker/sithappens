@@ -37660,13 +37660,13 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-register-activity-{stamp}.csv")
 
     if safe_kind == "payment-methods":
-        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
+        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Online Card (Stripe)", "Card (Reader)", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
         for d in days:
             day = await _register_day_summary(d)
             m = day.get("incoming_by_method") or {}
             t = day.get("totals") or {}
             src = day.get("incoming_sources") or {}
-            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
+            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('stripe_online',0):.2f}", f"{m.get('stripe_terminal',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
         return _csv_response(rows, f"sit-happens-register-methods-{stamp}.csv")
 
     if safe_kind == "closeouts":
@@ -37741,7 +37741,7 @@ async def admin_register_tax_packet_zip(
     files: Dict[str, bytes] = {}
 
     activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Tender Details", "Amount"]]
-    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
+    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Online Card (Stripe)", "Card (Reader)", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
     for d in days:
         day = await _register_day_summary(d)
         labels = day.get("method_labels") or {}
@@ -37750,7 +37750,7 @@ async def admin_register_tax_packet_zip(
         m = day.get("incoming_by_method") or {}
         t = day.get("totals") or {}
         src = day.get("incoming_sources") or {}
-        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
+        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('stripe_online',0):.2f}", f"{m.get('stripe_terminal',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
     files[f"register-activity-{stamp}.csv"] = csv_bytes(activity_rows)
     files[f"payment-methods-{stamp}.csv"] = csv_bytes(methods_rows)
 

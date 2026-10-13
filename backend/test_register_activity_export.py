@@ -315,6 +315,23 @@ def test_j_payment_methods_csv_regression():
         _cleanup(retail_ids=ids, pos_ids=[pos_id])
 
 
+# ── payment-methods CSV carries its own column for a Terminal reader charge,
+# not folded into "Other" ──────────────────────────────────────────────────
+def test_stripe_terminal_sales_get_their_own_csv_column():
+    d = "2001-11-06"
+    rid = str(uuid.uuid4())
+    run(server.db.retail_sales.insert_one({
+        "id": rid, "date": d, "amount": 55.0, "payment_method": "stripe_terminal",
+        "description": f"{TAG} reader sale", "created_at": f"{d}T10:00:00",
+    }))
+    try:
+        row = _methods_csv_row(d)
+        assert float(row["Card (Reader)"]) == 55.0
+        assert float(row["Other"]) == 0.0
+    finally:
+        _cleanup(retail_ids=[rid])
+
+
 # ── CSV structure: stable columns, correct quoting for commas ───────────────
 def test_structure_column_count_and_comma_quoting():
     d = "2001-11-05"
