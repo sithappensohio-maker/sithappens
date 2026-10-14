@@ -20,8 +20,13 @@ import ItemThumbnail from "./ItemThumbnail";
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 const BLANK_FORM = {
-  name: "", category: "", description: "", price: "", cost: "",
+  name: "", sku: "", category: "", description: "", price: "", cost: "",
   starting_stock: "0", low_stock_threshold: "", track_inventory: false, active: true,
+  // Options like size/color — a barcode-scannable sku per option, its own
+  // stock, and an optional price different from the base product. Empty
+  // means "no options" (every existing product). See the Variants section
+  // of this form below.
+  variants: [],
   show_online: false, online_description: "", image_id: null, image_ids: [], online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
@@ -36,6 +41,20 @@ const BLANK_FORM = {
   // Curated relationships — references only, never a copied name or price.
   shop_relationships: [],
 };
+
+// Turns the editor's variant rows into what POST/PUT /pos/products expects
+// (PosProductVariantIn: id/name/sku/price_override/starting_stock) — strips
+// the display-only stock_on_hand and the React-only _localKey. Shared by
+// this panel AND Shop Manager's save call so there is one translation, not two.
+export function variantsPayload(formVariants) {
+  return (formVariants || []).map((v) => ({
+    id: v.id || null,
+    name: v.name.trim(),
+    sku: (v.sku || "").trim() || null,
+    price_override: v.price_override !== "" && v.price_override != null ? Number(v.price_override) : null,
+    starting_stock: v.id ? 0 : Number(v.starting_stock || 0),
+  }));
+}
 
 // Shared product add/edit form — used by this panel AND the unified Shop
 // Manager Items tab. Parent owns `form`/`setForm`/`originalImageId` state
@@ -54,6 +73,58 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
   // name instead of asking anyone to paste an id. Optional: a caller that has
   // not loaded a catalogue simply gets no picker rather than a broken one.
   relatableItems = [] }) {
+  // Defensive, same reason originalImageIds/relatableItems default above:
+  // a caller built before this field existed (see productEditorMounts.test.js,
+  // which exists specifically to catch a prop a caller forgot) must still
+  // render instead of crashing — never trust form.variants to be present.
+  const variants = form.variants || [];
+  // `_localKey` is a React list-key only — never sent to the backend (see
+  // handleSave's strip in both callers). A row with a real `id` is an
+  // existing variant (its stock is read-only here; Receive/Adjust changes
+  // it); one without is brand new (its "Starting Stock" is what the create/
+  // edit call actually sends).
+  const addVariantRow = () => setForm((f) => {
+    const fv = f.variants || [];
+    return { ...f, variants: [...fv, { _localKey: `new-${Date.now()}-${fv.length}`, name: "", sku: "", price_override: "", starting_stock: "0" }] };
+  });
+  const updateVariantRow = (i, patch) => setForm((f) => {
+    const copy = [...(f.variants || [])];
+    copy[i] = { ...copy[i], ...patch };
+    return { ...f, variants: copy };
+  });
+  const removeVariantRow = (i) => setForm((f) => ({ ...f, variants: (f.variants || []).filter((_, idx) => idx !== i) }));
+
+  // Inline Receive/Adjust for an EXISTING variant's stock — the one place
+  // this form steps outside "purely presentational" (see the file-level
+  // comment on this component), because the alternative is wiring a second
+  // copy of the stock-adjust modal through both callers just to reach a
+  // variant. Mirrors adjust_pos_product_stock's own two reasons (RESTOCK a
+  // shipment vs. a free-form count correction) at the plain-product level.
+  const [adjustingVariant, setAdjustingVariant] = useState(null); // index into variants, or null
+  const [variantAdjustQty, setVariantAdjustQty] = useState("");
+  const [variantAdjustReason, setVariantAdjustReason] = useState("");
+  const [variantAdjustBusy, setVariantAdjustBusy] = useState(false);
+  const submitVariantAdjust = async (i, mode) => {
+    const v = variants[i];
+    const qty = Number(variantAdjustQty);
+    if (!qty) { toast.error("Enter a non-zero quantity"); return; }
+    if (mode === "receive" && qty <= 0) { toast.error("Receive Stock only accepts a positive quantity"); return; }
+    if (variantAdjustReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
+    setVariantAdjustBusy(true);
+    try {
+      const { data } = await api.post(`/pos/products/${editingId}/variants/${v.id}/adjust-stock`, {
+        quantity_delta: mode === "receive" ? Math.abs(qty) : qty,
+        reason: variantAdjustReason.trim(), source: mode === "receive" ? "RESTOCK" : "MANUAL_ADJUSTMENT",
+      });
+      updateVariantRow(i, { stock_on_hand: data.stock_on_hand });
+      toast.success(`Stock updated — now ${data.stock_on_hand}`);
+      setAdjustingVariant(null); setVariantAdjustQty(""); setVariantAdjustReason("");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not adjust stock");
+    }
+    setVariantAdjustBusy(false);
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
@@ -101,13 +172,27 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               <input type="number" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
             </div>
-            <div>
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
-                {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
-              </label>
-              <input type="number" disabled={!!editingId} value={form.starting_stock}
-                     onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
+            {variants.length === 0 && (
+              <div>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
+                  {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
+                </label>
+                <input type="number" disabled={!!editingId} value={form.starting_stock}
+                       onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+              </div>
+            )}
+            <div className="col-span-2">
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Barcode / SKU (optional)</label>
+              <input value={form.sku || ""} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                     placeholder="Scan it here, or type it in" data-testid="product-sku"
+                     disabled={variants.length > 0}
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+              <p className="text-[11px] text-shTextMuted mt-0.5">
+                {variants.length > 0
+                  ? "This product has options below — each option gets its own code instead."
+                  : "Scanning this at the register adds the item straight to the cart."}
+              </p>
             </div>
           </>
         )}
@@ -193,6 +278,105 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           <label htmlFor="show-at-register" className="text-shText text-sm">Show at Register</label>
         </div>
       </div>
+
+      {/* Options — size/color/etc. A barcode-scannable sku, its own stock,
+          and an optional price per option, instead of one flat product. */}
+      {form.sales_destination === "internal" && (
+        <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Options (size, color, etc.)</p>
+            <button type="button" onClick={addVariantRow} data-testid="product-add-variant"
+                    className="text-shPrimary text-[11px] font-black uppercase tracking-widest">
+              <i className="fas fa-plus mr-1" />Add Option
+            </button>
+          </div>
+          {variants.length === 0 ? (
+            <p className="text-[11px] text-shTextMuted">No options — sold as one single item. Add an option if it comes in sizes or colors.</p>
+          ) : (
+            <div className="space-y-2">
+              {variants.map((v, i) => (
+                <div key={v.id || v._localKey} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-2.5" data-testid={`product-variant-row-${i}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Option {i + 1}{v.id ? "" : " (new)"}</label>
+                    <button type="button" onClick={() => removeVariantRow(i)} data-testid={`product-remove-variant-${i}`}
+                            className="text-shTextMuted hover:text-shDanger text-[12px]"><i className="fas fa-times" /></button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Name *</label>
+                      <input value={v.name} onChange={(e) => updateVariantRow(i, { name: e.target.value })}
+                             placeholder="e.g. Small" data-testid={`product-variant-name-${i}`}
+                             className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Barcode / SKU</label>
+                      <input value={v.sku || ""} onChange={(e) => updateVariantRow(i, { sku: e.target.value })}
+                             placeholder="Scan it here" data-testid={`product-variant-sku-${i}`}
+                             className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Price (blank = same as above)</label>
+                      <input type="number" value={v.price_override ?? ""} onChange={(e) => updateVariantRow(i, { price_override: e.target.value })}
+                             placeholder={form.price || "0"} data-testid={`product-variant-price-${i}`}
+                             className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">
+                        {v.id ? "Stock" : "Starting Stock"}
+                      </label>
+                      {v.id ? (
+                        <div className="flex items-center gap-2">
+                          <span className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" data-testid={`product-variant-stock-${i}`}>
+                            {v.stock_on_hand ?? 0}
+                          </span>
+                          <button type="button" onClick={() => { setAdjustingVariant(adjustingVariant === i ? null : i); setVariantAdjustQty(""); setVariantAdjustReason(""); }}
+                                  data-testid={`product-variant-adjust-toggle-${i}`}
+                                  className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                            {adjustingVariant === i ? "Cancel" : "Receive/Adjust"}
+                          </button>
+                        </div>
+                      ) : (
+                        <input type="number" value={v.starting_stock ?? "0"}
+                               onChange={(e) => updateVariantRow(i, { starting_stock: e.target.value })}
+                               data-testid={`product-variant-stock-${i}`}
+                               className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                      )}
+                    </div>
+                  </div>
+                  {adjustingVariant === i && (
+                    <div className="mt-2 pt-2 border-t border-shBorder grid grid-cols-2 gap-2" data-testid={`product-variant-adjust-panel-${i}`}>
+                      <div>
+                        <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Quantity (+ to add, − to remove)</label>
+                        <input type="number" value={variantAdjustQty} onChange={(e) => setVariantAdjustQty(e.target.value)}
+                               data-testid={`product-variant-adjust-qty-${i}`}
+                               className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Reason</label>
+                        <input value={variantAdjustReason} onChange={(e) => setVariantAdjustReason(e.target.value)}
+                               placeholder="e.g. Shipment received" data-testid={`product-variant-adjust-reason-${i}`}
+                               className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                      </div>
+                      <div className="col-span-2 flex gap-2">
+                        <button type="button" disabled={variantAdjustBusy} onClick={() => submitVariantAdjust(i, "receive")}
+                                data-testid={`product-variant-adjust-receive-${i}`}
+                                className="flex-1 bg-shPrimary text-bgHeader rounded py-1.5 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                          Receive Stock
+                        </button>
+                        <button type="button" disabled={variantAdjustBusy} onClick={() => submitVariantAdjust(i, "adjust")}
+                                data-testid={`product-variant-adjust-submit-${i}`}
+                                className="flex-1 bg-[var(--sh-card-base)] border border-shBorder text-shText rounded py-1.5 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                          Apply Adjustment
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sales tax. Merchandise is taxed — that is the rule and it is not
           per-category any more — so this is only ever about the rare item
@@ -441,9 +625,12 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
     setOriginalImageId(p.image_id || null);
     setOriginalImageIds(productGallery(p));
     setForm({
-      name: p.name || "", category: p.category || "", description: p.description || "",
+      name: p.name || "", sku: p.sku || "", category: p.category || "", description: p.description || "",
       price: String(p.price ?? ""), cost: p.cost != null ? String(p.cost) : "",
       starting_stock: String(p.stock_on_hand ?? 0),
+      // Backend shape already matches what this form reads/writes per row
+      // (id/name/sku/price_override/stock_on_hand) — just copied in as-is.
+      variants: Array.isArray(p.variants) ? p.variants.map((v) => ({ ...v })) : [],
       low_stock_threshold: p.low_stock_threshold != null ? String(p.low_stock_threshold) : "",
       track_inventory: !!p.track_inventory, active: p.active !== false,
       show_online: !!p.show_online, online_description: p.online_description || "",
@@ -503,11 +690,14 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
     const isShopify = form.sales_destination === "shopify_external";
     if (!isShopify && !(Number(form.price) >= 0)) { toast.error("Selling price is required"); return; }
     if (isShopify && !form.shopify_product_url.trim()) { toast.error("A Shopify product URL is required"); return; }
+    if (form.variants.some((v) => !v.name.trim())) { toast.error("Every option needs a name."); return; }
     const body = {
-      name: form.name.trim(), category: isShopify ? "" : form.category.trim(), description: form.description.trim() || null,
+      name: form.name.trim(), sku: isShopify ? null : (form.sku.trim() || null),
+      category: isShopify ? "" : form.category.trim(), description: form.description.trim() || null,
       price: isShopify ? 0 : Number(form.price), cost: (!isShopify && form.cost !== "") ? Number(form.cost) : null,
       low_stock_threshold: (!isShopify && form.low_stock_threshold !== "") ? Number(form.low_stock_threshold) : null,
       track_inventory: !isShopify && form.track_inventory, active: form.active,
+      variants: isShopify ? [] : variantsPayload(form.variants),
       show_online: form.show_online, online_description: form.online_description.trim() || null,
       image_id: form.image_id || null,
       image_ids: form.image_ids || [],

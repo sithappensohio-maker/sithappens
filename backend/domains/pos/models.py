@@ -19,6 +19,10 @@ from pydantic import BaseModel, Field
 class PosSaleLineIn(BaseModel):
     kind: Literal["retail", "custom", "credit_pack", "training_program", "gift_card"] = "retail"
     product_id: Optional[str] = None  # required when kind == "retail"
+    # Set only when the product has variants and one was picked (e.g. a
+    # size) — never set for a plain, non-variant product. Resolves its own
+    # price_override/stock against product.variants; see _price_pos_cart.
+    variant_id: Optional[str] = None
     pack_id: Optional[str] = None  # required when kind == "credit_pack"
     program_id: Optional[str] = None  # required when kind == "training_program"
     description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail/pack/program

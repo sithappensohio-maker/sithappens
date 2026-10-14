@@ -58,13 +58,24 @@ const WIPES = { kind: "product", id: "p-wipes", name: "Ear Wipes", effective_pri
                 in_stock: true, taxable: true, track_inventory: false, category: "Care", sku: "SKU-WIPES-001" };
 const TOY = { kind: "product", id: "p-toy", name: "Rope Toy", effective_price: 7.00, list_price: 7.00,
               in_stock: true, taxable: true, track_inventory: false, category: "Care" };
+const SHIRT = {
+  kind: "product", id: "p-shirt", name: "Sit Happens Tee", effective_price: 20.00, list_price: 20.00,
+  in_stock: true, taxable: true, track_inventory: false, category: "Apparel",
+  variants: [
+    { id: "v-s", name: "Small", sku: "TEE-S", price: 20.00, stock_on_hand: 3, in_stock: true },
+    { id: "v-m", name: "Medium", sku: "TEE-M", price: 20.00, stock_on_hand: 1, in_stock: true },
+    { id: "v-l", name: "Large", sku: "TEE-L", price: 22.00, stock_on_hand: 0, in_stock: false },
+  ],
+};
 
 // What the SERVER says the cart costs. The screen must show this, never its
 // own arithmetic — the server is the one that will actually charge it.
+const VARIANT_PRICE = { "v-s": 20.00, "v-m": 20.00, "v-l": 22.00 };
 const priceCart = (lines) => {
   // A gift card is money, so it is priced at face value and never taxed —
   // the same rule the server applies.
-  const taxable = lines.reduce((n, l) => n + ({ "p-wipes": 12.99, "p-toy": 7.00 }[l.product_id] || 0) * l.qty, 0);
+  const unitPrice = (l) => l.variant_id ? (VARIANT_PRICE[l.variant_id] || 0) : ({ "p-wipes": 12.99, "p-toy": 7.00 }[l.product_id] || 0);
+  const taxable = lines.reduce((n, l) => n + unitPrice(l) * l.qty, 0);
   const cards = lines.reduce((n, l) => n + (l.kind === "gift_card" ? Number(l.gift_card_amount || 0) : 0), 0);
   const subtotal = Math.round((taxable + cards) * 100) / 100;
   const tax = Math.round(taxable * 0.0675 * 100) / 100;
@@ -101,7 +112,7 @@ const GET = {
   "/admin/register/status": { date: "2026-09-19", status: "OPEN", opened_at: "2026-09-19T08:00:00Z", opened_by: "Owner" },
   "/admin/register/day": { totals: { expected_cash: 100 }, activity: [], register_closed: false, method_labels: {} },
   "/employee/roster-today": { roster: [] },
-  "/pos/catalog": { items: [WIPES, TOY] },
+  "/pos/catalog": { items: [WIPES, TOY, SHIRT] },
   "/clients": [], "/services": [],
   "/pos/sales": [{ id: "sale-1", receipt_number: "AB12CD34", client_name: "Dana",
                    status: "completed", total: 32.03, created_at: "2026-09-19T10:00:00Z" }],
@@ -257,6 +268,70 @@ test("typing a partial name and hitting Enter never auto-adds — only an exact 
   await type("pos-product-search", "Wipe"); // matches Ear Wipes by name, but isn't its sku
   await pressEnter("pos-product-search");
   expect(all("pos-cart-line")).toHaveLength(0);
+});
+
+test("scanning a variant's own barcode adds that exact option, skipping the picker", async () => {
+  await mount();
+  await type("pos-product-search", "TEE-M");
+  await pressEnter("pos-product-search");
+  expect(all("pos-cart-line")).toHaveLength(1);
+  expect(q("pos-variant-picker")).toBeNull(); // never opened — the scan already named the exact option
+  expect(text()).toContain("Sit Happens Tee — Medium");
+});
+
+// --------------------------------------------------------------- variants
+
+test("clicking a product with options opens the picker instead of adding it", async () => {
+  await mount();
+  await click("pos-product-p-shirt");
+  expect(all("pos-cart-line")).toHaveLength(0);
+  expect(q("pos-variant-picker")).toBeTruthy();
+  expect(text()).toContain("Small");
+  expect(text()).toContain("Medium");
+  expect(text()).toContain("Large");
+});
+
+test("an out-of-stock option can't be picked, an in-stock one can", async () => {
+  await mount();
+  await click("pos-product-p-shirt");
+  expect(q("pos-variant-v-l").disabled).toBe(true); // Large: 0 in stock
+  await click("pos-variant-v-s");
+  expect(all("pos-cart-line")).toHaveLength(1);
+  expect(text()).toContain("Sit Happens Tee — Small");
+  expect(q("pos-variant-picker")).toBeNull(); // picking closes it
+});
+
+test("two different options of the same product are two separate cart lines", async () => {
+  await mount();
+  await click("pos-product-p-shirt");
+  await click("pos-variant-v-s");
+  await click("pos-product-p-shirt");
+  await click("pos-variant-v-m");
+  expect(all("pos-cart-line")).toHaveLength(2);
+});
+
+test("picking the same option twice bumps its quantity instead of adding a second line", async () => {
+  await mount();
+  await click("pos-product-p-shirt");
+  await click("pos-variant-v-s");
+  await click("pos-product-p-shirt");
+  await click("pos-variant-v-s");
+  expect(all("pos-cart-line")).toHaveLength(1);
+  expect(text()).toContain("2"); // qty shown somewhere on the line
+});
+
+test("the sale posts which exact option was sold, not just the parent product", async () => {
+  await mount();
+  await click("pos-product-p-shirt");
+  await click("pos-variant-v-s");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-card");
+  await type("pos-tender-amount", "21.35"); // 20.00 + 6.75%
+  await click("pos-tender-add");
+  await click("pos-complete-sale");
+  const sale = lastSale();
+  const line = sale.body.lines.find((l) => l.product_id === "p-shirt");
+  expect(line).toMatchObject({ product_id: "p-shirt", variant_id: "v-s", qty: 1 });
 });
 
 // ---------------------------------------------------------------- the tender

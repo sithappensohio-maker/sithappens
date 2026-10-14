@@ -709,7 +709,7 @@ async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
             refund_net = round(refund_net + net, 2)
             refund_tax = round(refund_tax + tax, 2)
             refund_lines.append({
-                "line_index": idx, "product_id": line.get("product_id"),
+                "line_index": idx, "product_id": line.get("product_id"), "variant_id": line.get("variant_id"),
                 "description": line.get("description"), "qty": req["qty"],
                 "restock": req["restock"], "net_amount": net, "tax_amount": tax,
                 "refund_amount": round(net + tax, 2),
@@ -806,10 +806,10 @@ async def _return_pos_sale_held(*, sale_id: str, body, user: dict) -> dict:
                 await _mutate_product_stock_fn(
                     row["product_id"], row["qty"], "RETURN",
                     f"Return against #{sale.get('receipt_number')}: {body.reason.strip()}",
-                    user=user, pos_sale_id=sale_id,
+                    user=user, pos_sale_id=sale_id, variant_id=row.get("variant_id"),
                 )
             except Exception:
-                _logger.exception("Return %s could not restock %s", record["id"], row["product_id"])
+                _logger.exception("Return %s could not restock %s (variant %s)", record["id"], row["product_id"], row.get("variant_id"))
 
         await gift_cards_services.refill_for_return(
             tenders, sale_id=sale_id, key=body.idempotency_key, user=user, receipt=sale.get("receipt_number") or "")
@@ -915,6 +915,15 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
             "low_stock_threshold": p.get("low_stock_threshold") if track else None,
             "taxable": bool(p.get("taxable", True)),
             "tax_exempt_reason": p.get("tax_exempt_reason"),
+            # Variant prices don't go through client-tier resolution (see
+            # price_pos_cart) — just the variant's own override, or the
+            # product's plain list price, same rule in both places.
+            "variants": [{
+                "id": v["id"], "name": v["name"], "sku": v.get("sku") or "",
+                "price": round(float(v["price_override"]), 2) if v.get("price_override") is not None else list_price,
+                "stock_on_hand": round(float(v.get("stock_on_hand") or 0), 2),
+                "in_stock": float(v.get("stock_on_hand") or 0) > 0.0005,
+            } for v in (p.get("variants") or [])],
             **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
         })
 
@@ -1059,6 +1068,7 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     pack_cache: Dict[str, dict] = {}
     program_cache: Dict[str, dict] = {}
     qty_by_product: Dict[str, float] = {}
+    qty_by_variant: Dict[tuple, float] = {}  # (product_id, variant_id) -> qty
     has_entitlement_line = False
 
     for line in lines:
@@ -1092,22 +1102,43 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                     raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
                 product_cache[line.product_id] = product
             qty = round(float(line.qty or 1), 3)
-            list_price = round(float(product["price"]), 2)
-            pricing = await _resolve_client_price_fn(client_id, "pos_product", product["id"], list_price)
-            unit_price = round(float(pricing["effective_price"]), 2)
-            has_override = pricing["pricing_source"] != "standard"
-            amount = round(qty * unit_price, 2)
             taxable = bool(product.get("taxable", True))
-            line_items.append({
-                "kind": "retail", "product_id": product["id"],
-                "description": (line.description or product["name"]).strip(),
-                "qty": qty, "unit_price": unit_price, "amount": amount,
-                "list_price": list_price,
-                "has_price_override": has_override,
-                "price_override_id": pricing["override_id"],
-                "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
-            })
-            qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
+            if line.variant_id:
+                variant = next((v for v in (product.get("variants") or []) if v.get("id") == line.variant_id), None)
+                if not variant:
+                    raise HTTPException(status_code=400, detail="That option is no longer available.")
+                # Variant pricing is deliberately simpler than the plain-product
+                # path: no per-client grandfathered-price resolution (that
+                # system is keyed per-product, not per-variant, and composing
+                # the two risks a wrong price for a rare combination this small
+                # a catalog is unlikely to actually need) — just the variant's
+                # own override, falling back to the parent product's price.
+                unit_price = round(float(variant["price_override"]), 2) if variant.get("price_override") is not None else round(float(product["price"]), 2)
+                amount = round(qty * unit_price, 2)
+                line_items.append({
+                    "kind": "retail", "product_id": product["id"], "variant_id": variant["id"],
+                    "description": (line.description or f"{product['name']} — {variant['name']}").strip(),
+                    "qty": qty, "unit_price": unit_price, "amount": amount,
+                    "list_price": unit_price, "has_price_override": False, "price_override_id": None,
+                    "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
+                })
+                qty_by_variant[(product["id"], variant["id"])] = qty_by_variant.get((product["id"], variant["id"]), 0) + qty
+            else:
+                list_price = round(float(product["price"]), 2)
+                pricing = await _resolve_client_price_fn(client_id, "pos_product", product["id"], list_price)
+                unit_price = round(float(pricing["effective_price"]), 2)
+                has_override = pricing["pricing_source"] != "standard"
+                amount = round(qty * unit_price, 2)
+                line_items.append({
+                    "kind": "retail", "product_id": product["id"],
+                    "description": (line.description or product["name"]).strip(),
+                    "qty": qty, "unit_price": unit_price, "amount": amount,
+                    "list_price": list_price,
+                    "has_price_override": has_override,
+                    "price_override_id": pricing["override_id"],
+                    "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
+                })
+                qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
         elif line.kind == "gift_card":
             amount = round(float(line.gift_card_amount or 0), 2)
             if amount <= 0:
@@ -1231,6 +1262,17 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
         held = max(0.0, float(product.get("stock_reserved") or 0))
         if total_qty > stock - held + 0.0005:
             raise HTTPException(status_code=400, detail=stock_refusal(product.get("name"), stock, held))
+
+    # Variant stock is always enforced (no track_inventory opt-in to check —
+    # a variant's whole purpose is per-option stock) and has no online-hold
+    # concept the way a plain product does (variants aren't reservable by
+    # the client Shop in this phase).
+    for (product_id, variant_id), total_qty in qty_by_variant.items():
+        product = product_cache[product_id]
+        variant = next((v for v in (product.get("variants") or []) if v.get("id") == variant_id), None)
+        stock = float((variant or {}).get("stock_on_hand") or 0)
+        if total_qty > stock + 0.0005:
+            raise HTTPException(status_code=400, detail=stock_refusal(f"{product.get('name')} ({(variant or {}).get('name', '?')})", stock, 0))
 
     subtotal = round(sum(li["amount"] for li in line_items), 2)
     # A gift card is money in at its face value, so a cart discount is taken off the

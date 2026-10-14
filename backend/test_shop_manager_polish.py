@@ -75,6 +75,20 @@ def test_shop_manager_item_view_missing_image_flag():
     assert view2["missing_image"] is False
 
 
+def test_shop_manager_item_view_exposes_variants_for_the_items_table_stock_math():
+    """A product with options carries zero stock at its own top level —
+    every unit lives on a variant row instead. The Items table (and its
+    low/out-of-stock filters, see frontend/src/lib/shopManagerPolish.js)
+    needs the real variant rows to show real stock, not the always-zero
+    top-level field."""
+    variants = [{"id": "v1", "name": "Small", "stock_on_hand": 5.0}, {"id": "v2", "name": "Large", "stock_on_hand": 0.0}]
+    view = server._shop_manager_item_view(_product(variants=variants), "physical_product")
+    assert view["variants"] == variants
+
+    no_variants = server._shop_manager_item_view(_product(), "physical_product")
+    assert no_variants["variants"] == []
+
+
 def test_shop_manager_item_view_shopify_listing_never_exposes_cost():
     shopify = _product(sales_destination="shopify_external", cost=999.0)
     view = server._shop_manager_item_view(shopify, "physical_product")

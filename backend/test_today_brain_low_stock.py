@@ -121,3 +121,30 @@ def test_the_count_covers_every_low_product_not_just_one():
         assert _low_stock_count() == before + 2
     finally:
         _cleanup([a["id"], b["id"]])
+
+
+def test_a_product_with_options_is_judged_on_summed_variant_stock_not_the_zero_top_level_field():
+    """A product with options carries zero stock at its own top level —
+    every unit lives on a variant row instead. Comparing the (always-zero)
+    top-level field against a configured threshold would wrongly flag
+    every such product as low stock regardless of its real variant stock."""
+    before = _low_stock_count()
+    well_stocked = _product(
+        stock_on_hand=0.0, low_stock_threshold=5.0,
+        variants=[{"id": "v1", "name": "Small", "stock_on_hand": 20.0}, {"id": "v2", "name": "Large", "stock_on_hand": 0.0}],
+    )
+    run(server.db.pos_products.insert_one(dict(well_stocked)))
+    try:
+        assert _low_stock_count() == before  # 20 summed units, well above the threshold of 5
+    finally:
+        _cleanup([well_stocked["id"]])
+
+    low = _product(
+        stock_on_hand=0.0, low_stock_threshold=5.0,
+        variants=[{"id": "v1", "name": "Small", "stock_on_hand": 2.0}, {"id": "v2", "name": "Large", "stock_on_hand": 0.0}],
+    )
+    run(server.db.pos_products.insert_one(dict(low)))
+    try:
+        assert _low_stock_count() == before + 1  # 2 summed units, at/below the threshold of 5
+    finally:
+        _cleanup([low["id"]])

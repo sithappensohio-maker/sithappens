@@ -1,6 +1,6 @@
 import {
   inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
-  catalogProfitSummary,
+  catalogProfitSummary, effectiveStock,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
 } from "./shopManagerPolish";
 
@@ -30,6 +30,47 @@ test("inventoryStatus classifies In Stock / Low Stock / Out of Stock correctly",
 test("inventoryStatus is null for credit packs/programs (no inventory concept)", () => {
   expect(inventoryStatus({ kind: "credit_pack" })).toBeNull();
   expect(inventoryStatus({ kind: "training_program" })).toBeNull();
+});
+
+// A product with options carries zero stock at its own top level — every
+// unit lives on a variant row instead. effectiveStock/inventoryStatus/
+// itemWarnings/filterItemsByView/catalogProfitSummary all have to read the
+// summed variant stock instead of the always-zero top-level field, or a
+// product that's fully in stock via its variants reads as permanently
+// Out of Stock everywhere in the Items table.
+const variantProduct = (variants, overrides = {}) => trackedProduct({ stock_on_hand: 0, variants, ...overrides });
+
+test("effectiveStock sums variant stock when a product has options, else falls back to stock_on_hand", () => {
+  expect(effectiveStock(trackedProduct({ stock_on_hand: 7 }))).toBe(7);
+  expect(effectiveStock(variantProduct([{ stock_on_hand: 5 }, { stock_on_hand: 0 }]))).toBe(5);
+  expect(effectiveStock(variantProduct([]))).toBe(0); // empty variants array -> falls back, not treated as "has variants"
+});
+
+test("inventoryStatus reads summed variant stock, not the always-zero top-level field", () => {
+  expect(inventoryStatus(variantProduct([{ stock_on_hand: 5 }, { stock_on_hand: 0 }]))).toEqual({ label: "In Stock · 5", tone: "ok" });
+  expect(inventoryStatus(variantProduct([{ stock_on_hand: 2 }, { stock_on_hand: 0 }]))).toEqual({ label: "Low Stock · 2", tone: "warn" });
+  expect(inventoryStatus(variantProduct([{ stock_on_hand: 0 }, { stock_on_hand: 0 }]))).toEqual({ label: "Out of Stock · 0", tone: "bad" });
+});
+
+test("itemWarnings reads summed variant stock for the stock badge", () => {
+  expect(itemWarnings(variantProduct([{ stock_on_hand: 5 }]))).not.toContainEqual(expect.objectContaining({ label: "Out of Stock" }));
+  expect(itemWarnings(variantProduct([{ stock_on_hand: 0 }]))).toContainEqual({ label: "Out of Stock", tone: "bad" });
+});
+
+test("filterItemsByView Low Stock / Out of Stock use summed variant stock", () => {
+  const items = [
+    variantProduct([{ stock_on_hand: 10 }], { id: "variant-in-stock" }),
+    variantProduct([{ stock_on_hand: 2 }], { id: "variant-low" }),
+    variantProduct([{ stock_on_hand: 0 }, { stock_on_hand: 0 }], { id: "variant-out" }),
+  ];
+  expect(filterItemsByView(items, "low_stock").map((i) => i.id)).toEqual(["variant-low"]);
+  expect(filterItemsByView(items, "out_of_stock").map((i) => i.id)).toEqual(["variant-out"]);
+});
+
+test("catalogProfitSummary values variant stock at the product's single cost/price", () => {
+  const ps = catalogProfitSummary([variantProduct([{ stock_on_hand: 5 }, { stock_on_hand: 3 }], { cost: 10, list_price: 25 })]);
+  expect(ps.inventoryCost).toBe("$80.00"); // 8 units * $10
+  expect(ps.inventoryRetail).toBe("$200.00"); // 8 units * $25
 });
 
 test("itemWarnings bundles online-listing gaps into one Needs Setup badge, only when show_online", () => {

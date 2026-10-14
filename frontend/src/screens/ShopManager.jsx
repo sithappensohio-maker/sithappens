@@ -7,7 +7,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 import { pickupActionToast } from "../lib/shopPolish";
 import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
-import { ProductEditor } from "../components/ManageProductsPanel";
+import { ProductEditor, variantsPayload } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor, fetchProgramById } from "../components/Programs";
@@ -56,7 +56,7 @@ const SECTION_TABS = [
 const KIND_LABEL = { physical_product: "Product", credit_pack: "Prepaid Pack", training_program: "Training Program" };
 
 const BLANK_PRODUCT_FORM = {
-  name: "", category: "", description: "", price: "", cost: "",
+  name: "", sku: "", variants: [], category: "", description: "", price: "", cost: "",
   starting_stock: "0", low_stock_threshold: "", track_inventory: false, active: true,
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
@@ -1602,9 +1602,10 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       setProductOriginalImageId(raw.image_id || null);
       setProductOriginalImageIds(galleryIds(raw));
       setProductForm({
-        name: raw.name || "", category: raw.category || "", description: raw.description || "",
+        name: raw.name || "", sku: raw.sku || "", category: raw.category || "", description: raw.description || "",
         price: String(raw.price ?? ""), cost: raw.cost != null ? String(raw.cost) : "",
         starting_stock: String(raw.stock_on_hand ?? 0),
+        variants: Array.isArray(raw.variants) ? raw.variants.map((v) => ({ ...v })) : [],
         low_stock_threshold: raw.low_stock_threshold != null ? String(raw.low_stock_threshold) : "",
         track_inventory: !!raw.track_inventory, active: raw.active !== false,
         show_online: !!raw.show_online, online_description: raw.online_description || "",
@@ -1648,11 +1649,14 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
     const isShopify = productForm.sales_destination === "shopify_external";
     if (!isShopify && !(Number(productForm.price) >= 0)) { toast.error("Selling price is required"); return; }
     if (isShopify && !productForm.shopify_product_url.trim()) { toast.error("A Shopify product URL is required"); return; }
+    if (productForm.variants.some((v) => !v.name.trim())) { toast.error("Every option needs a name."); return; }
     const body = {
-      name: productForm.name.trim(), category: isShopify ? "" : productForm.category.trim(), description: productForm.description.trim() || null,
+      name: productForm.name.trim(), sku: isShopify ? null : (productForm.sku.trim() || null),
+      category: isShopify ? "" : productForm.category.trim(), description: productForm.description.trim() || null,
       price: isShopify ? 0 : Number(productForm.price), cost: (!isShopify && productForm.cost !== "") ? Number(productForm.cost) : null,
       low_stock_threshold: (!isShopify && productForm.low_stock_threshold !== "") ? Number(productForm.low_stock_threshold) : null,
       track_inventory: !isShopify && productForm.track_inventory, active: productForm.active,
+      variants: isShopify ? [] : variantsPayload(productForm.variants),
       show_online: productForm.show_online, online_description: productForm.online_description.trim() || null,
       image_id: productForm.image_id || null,
       image_ids: productForm.image_ids || [],

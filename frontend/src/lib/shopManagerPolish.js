@@ -11,13 +11,25 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 // _mutate_product_stock so "zero" and "at threshold" read consistently here.
 export const STOCK_TOLERANCE = 0.0005;
 
+// A product with options carries zero stock at its own top level — every
+// unit lives on a variant row instead. Everywhere this file reports or
+// filters on stock has to read the SAME number the register picker shows,
+// so this is the one place that decides which number that is.
+export function effectiveStock(it) {
+  const variants = it.variants;
+  if (Array.isArray(variants) && variants.length > 0) {
+    return variants.reduce((sum, v) => sum + Number(v.stock_on_hand || 0), 0);
+  }
+  return it.stock_on_hand ?? 0;
+}
+
 // Clear status + quantity instead of a bare number — Shopify-linked listings
 // never show internal stock (Shopify remains authoritative for those).
 export function inventoryStatus(it) {
   if (it.kind !== "physical_product") return null;
   if (it.sales_destination === "shopify_external") return { label: "Shopify Managed", tone: "muted" };
   if (!it.track_inventory) return { label: "Not Tracked", tone: "muted" };
-  const qty = it.stock_on_hand ?? 0;
+  const qty = effectiveStock(it);
   if (qty <= STOCK_TOLERANCE) return { label: `Out of Stock · ${qty}`, tone: "bad" };
   if (it.low_stock_threshold != null && qty <= it.low_stock_threshold) return { label: `Low Stock · ${qty}`, tone: "warn" };
   return { label: `In Stock · ${qty}`, tone: "ok" };
@@ -45,7 +57,7 @@ export function itemWarnings(it) {
     if (gaps.length > 0) badges.push({ label: `Needs Setup · Missing ${joinWords(gaps)}`, tone: "warn" });
   }
   if (it.kind === "physical_product" && it.track_inventory && it.active) {
-    const qty = it.stock_on_hand ?? 0;
+    const qty = effectiveStock(it);
     if (qty <= STOCK_TOLERANCE) badges.push({ label: "Out of Stock", tone: "bad" });
     else if (it.low_stock_threshold != null && qty <= it.low_stock_threshold) badges.push({ label: `Low Stock · ${qty} remaining`, tone: "warn" });
   }
@@ -82,7 +94,7 @@ export function catalogProfitSummary(items) {
   let inventoryRetail = 0;
   for (const it of costed) {
     if (!it.track_inventory) continue;
-    const qty = Math.max(Number(it.stock_on_hand ?? 0), 0);
+    const qty = Math.max(Number(effectiveStock(it)), 0);
     inventoryCost += qty * Number(it.cost);
     inventoryRetail += qty * Number(it.list_price || 0);
   }
@@ -109,11 +121,14 @@ export function filterItemsByView(items, view) {
     return items.filter((it) => it.show_online && (it.missing_description || it.missing_image || !it.category_id || it.category_hidden));
   }
   if (view === "low_stock") {
-    return items.filter((it) => it.kind === "physical_product" && it.active && it.track_inventory
-      && (it.stock_on_hand ?? 0) > STOCK_TOLERANCE && it.low_stock_threshold != null && (it.stock_on_hand ?? 0) <= it.low_stock_threshold);
+    return items.filter((it) => {
+      if (it.kind !== "physical_product" || !it.active || !it.track_inventory) return false;
+      const qty = effectiveStock(it);
+      return qty > STOCK_TOLERANCE && it.low_stock_threshold != null && qty <= it.low_stock_threshold;
+    });
   }
   if (view === "out_of_stock") {
-    return items.filter((it) => it.kind === "physical_product" && it.active && it.track_inventory && (it.stock_on_hand ?? 0) <= STOCK_TOLERANCE);
+    return items.filter((it) => it.kind === "physical_product" && it.active && it.track_inventory && effectiveStock(it) <= STOCK_TOLERANCE);
   }
   if (view === "inactive") return items.filter((it) => !it.active);
   return items;

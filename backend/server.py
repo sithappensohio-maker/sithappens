@@ -29673,12 +29673,18 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         low_stock_count = 0
         async for p in db.pos_products.find(
             {"track_inventory": True, "active": {"$ne": False}, "archived": {"$ne": True}},
-            {"_id": 0, "stock_on_hand": 1, "low_stock_threshold": 1},
+            {"_id": 0, "stock_on_hand": 1, "low_stock_threshold": 1, "variants": 1},
         ):
             threshold = p.get("low_stock_threshold")
             if threshold is None:
                 continue
-            if float(p.get("stock_on_hand") or 0) <= float(threshold) + 0.0005:
+            variants = p.get("variants") or []
+            # A product with options carries zero stock at its own top level
+            # — every unit lives on a variant row instead. Comparing the
+            # (always-zero) top-level field against a configured threshold
+            # would wrongly flag every such product as low stock.
+            stock = sum(float(v.get("stock_on_hand") or 0) for v in variants) if variants else float(p.get("stock_on_hand") or 0)
+            if stock <= float(threshold) + 0.0005:
                 low_stock_count += 1
         if low_stock_count > 0:
             items.append({
@@ -41584,6 +41590,11 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "track_inventory": bool(doc.get("track_inventory")),
             "stock_on_hand": round(float(doc.get("stock_on_hand") or 0), 2) if doc.get("track_inventory") else None,
             "low_stock_threshold": doc.get("low_stock_threshold"),
+            # A product with options carries zero stock at its own top
+            # level — every unit lives here instead. The Items table reads
+            # this to show real stock/status for a variant product (see
+            # shopManagerPolish.js effectiveStock).
+            "variants": doc.get("variants") or [],
             "missing_description": not (doc.get("online_description") or doc.get("description") or "").strip(),
             # Admin-only (this whole endpoint is gated on the pricing
             # permission) — never surfaced through _build_shop_catalog, so
@@ -43906,6 +43917,30 @@ def _product_image_fields(body) -> dict:
     return {"image_ids": gallery, "image_id": gallery[0] if gallery else None}
 
 
+class PosProductVariantIn(BaseModel):
+    """One option of a variant product — e.g. "Small" on a t-shirt, "Red" on
+    a leash. Deliberately single-axis (one list of named options), not a
+    Shopify-style size×color matrix — this is a small register catalog, and
+    a second axis is easy to add later if it's ever actually needed.
+
+    `id` is None for a brand-new variant being added in this edit; set (and
+    echoed back) for an existing one — see _reconcile_pos_product_variants,
+    the one place that decides create-vs-keep-vs-refuse-removal from this."""
+    id: Optional[str] = None
+    name: str = Field(min_length=1, max_length=100)
+    sku: Optional[str] = Field(default=None, max_length=100)
+    price_override: Optional[float] = Field(default=None, ge=0)
+    starting_stock: float = Field(default=0, ge=0)  # only read when `id` is None (a new variant)
+
+
+class PosProductVariantOut(BaseModel):
+    id: str
+    name: str
+    sku: Optional[str] = None
+    price_override: Optional[float] = None
+    stock_on_hand: float = 0
+
+
 class PosProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     sku: Optional[str] = Field(default=None, max_length=100)
@@ -43979,6 +44014,13 @@ class PosProductIn(BaseModel):
     # it live (see domains/shop/relationships.py). Absent means none, so no
     # existing product needs migrating.
     shop_relationships: Optional[List[dict]] = None
+    # Register-only for now (Phase 5) — a variant product isn't purchasable
+    # through the client Shop yet; see _resolve_pos_product_destination_fields
+    # for where that's enforced. An empty list (the default, and every
+    # existing product) means "no variants" — this product's own
+    # price/stock_on_hand/track_inventory keep meaning exactly what they
+    # always have.
+    variants: List[PosProductVariantIn] = Field(default_factory=list)
 
 
 class PosProductCreateIn(PosProductIn):
@@ -43990,6 +44032,7 @@ class PosProductOut(PosProductIn):
     stock_on_hand: float
     created_at: str
     updated_at: Optional[str] = None
+    variants: List[PosProductVariantOut] = Field(default_factory=list)
 
 
 def _require_take_payments(user: dict):
@@ -44088,6 +44131,48 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
     }
 
 
+def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: List["PosProductVariantIn"]) -> List[dict]:
+    """Turns the edit form's variant list into the list actually stored.
+
+    A variant with an `id` that matches an existing one is an edit — name/
+    sku/price_override update, but stock_on_hand is carried over untouched
+    (same "never edited by the product form" invariant stock_on_hand itself
+    already has — see update_pos_product). A variant with no id (or an id
+    that doesn't match anything existing) is new — gets a fresh server id
+    and its stock starts at starting_stock. An existing variant simply
+    missing from the incoming list was removed in the edit; refused if it
+    still has stock, the same way the rest of this codebase never lets an
+    edit silently discard tracked inventory."""
+    by_id = {v["id"]: v for v in existing_variants}
+    seen_ids = set()
+    out = []
+    for v in incoming:
+        if v.id and v.id in by_id:
+            seen_ids.add(v.id)
+            prior = by_id[v.id]
+            out.append({
+                "id": v.id, "name": v.name.strip(),
+                "sku": (v.sku or "").strip() or None,
+                "price_override": round(float(v.price_override), 2) if v.price_override is not None else None,
+                "stock_on_hand": prior.get("stock_on_hand", 0.0),
+            })
+        else:
+            out.append({
+                "id": str(uuid.uuid4()), "name": v.name.strip(),
+                "sku": (v.sku or "").strip() or None,
+                "price_override": round(float(v.price_override), 2) if v.price_override is not None else None,
+                "stock_on_hand": round(float(v.starting_stock or 0), 3),
+            })
+    dropped = [v for v in existing_variants if v["id"] not in seen_ids]
+    stocked = [v for v in dropped if float(v.get("stock_on_hand") or 0) > 0.0005]
+    if stocked:
+        names = ", ".join(v["name"] for v in stocked)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Can't remove {names} — it still has stock. Adjust its stock to 0 first.")
+    return out
+
+
 async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="merch")
     destination_fields = _resolve_pos_product_destination_fields(body)
@@ -44126,6 +44211,10 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
         **destination_fields,
+        # Shopify-linked listings never carry variants either — Shopify owns
+        # inventory/options entirely for those (see _resolve_pos_product_
+        # destination_fields above for the same rule on track_inventory).
+        "variants": [] if is_shopify else _reconcile_pos_product_variants([], body.variants),
     }
     # Validated against the id this product is about to have, so "related to
     # itself" is caught on the very first save rather than only on edits.
@@ -44183,6 +44272,8 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         **({"shop_relationships": shop_relationships.normalize(
             body.shop_relationships, self_kind="product", self_id=product_id)}
            if body.shop_relationships is not None else {}),
+        "variants": [] if body.sales_destination == "shopify_external"
+                    else _reconcile_pos_product_variants(existing.get("variants") or [], body.variants),
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
     return {**existing, **patch}
@@ -44206,6 +44297,11 @@ async def duplicate_pos_product(product_id: str, user: dict = Depends(require_ad
         "stock_on_hand": 0.0,
         "stock_reserved": 0.0,
         "shop_reservations": [],
+        # Fresh ids and zero stock per variant, same "not a stock split" rule
+        # as the product itself — never the original's variant ids, which
+        # inventory_movements rows for the original still reference.
+        "variants": [{**v, "id": str(uuid.uuid4()), "sku": None, "stock_on_hand": 0.0}
+                     for v in (existing.get("variants") or [])],
         "show_online": False,
         "active": True,
         "archived": False,
@@ -44338,43 +44434,63 @@ async def pos_product_categories(user: dict = Depends(require_employee_or_admin)
 async def _mutate_product_stock(
     product_id: str, quantity_delta: float, movement_type: str, reason: str, *,
     user: Optional[dict] = None, pos_sale_id: Optional[str] = None, allow_negative: bool = False,
-    respect_holds: bool = False,
+    respect_holds: bool = False, variant_id: Optional[str] = None,
 ) -> dict:
-    """Atomically applies quantity_delta to a product's stock_on_hand and
-    writes exactly one inventory_movements row recording the change. Uses an
-    optimistic stock_before precondition on the update itself, so two
-    concurrent mutations against the same product (e.g. two simultaneous
-    sales of the last unit) can never silently clobber one another — the
-    loser rereads the fresh value and retries, never overselling. Raises
-    HTTPException(400) on insufficient stock (unless allow_negative, used
-    when restoring stock on a void, where going below zero can't happen) and
-    HTTPException(404) if the product no longer exists."""
+    """Atomically applies quantity_delta to a product's stock_on_hand (or,
+    with variant_id, to that one variant's own stock_on_hand inside the
+    product's `variants` array) and writes exactly one inventory_movements
+    row recording the change. Uses an optimistic stock_before precondition
+    on the update itself, so two concurrent mutations against the same
+    product/variant (e.g. two simultaneous sales of the last unit) can never
+    silently clobber one another — the loser rereads the fresh value and
+    retries, never overselling. Raises HTTPException(400) on insufficient
+    stock (unless allow_negative, used when restoring stock on a void, where
+    going below zero can't happen) and HTTPException(404) if the product (or
+    variant) no longer exists.
+
+    respect_holds (the online-Shop reservation hold) only applies to the
+    product-level path — variants aren't reservable by the client Shop
+    (Phase 5 scope: register-only), so there is nothing to hold back there."""
     for _ in range(5):
         product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
-        stock_before = float(product.get("stock_on_hand") or 0)
+        variant = None
+        if variant_id:
+            variant = next((v for v in (product.get("variants") or []) if v.get("id") == variant_id), None)
+            if not variant:
+                raise HTTPException(status_code=404, detail="Variant not found")
+            stock_before = float(variant.get("stock_on_hand") or 0)
+        else:
+            stock_before = float(product.get("stock_on_hand") or 0)
         stock_after = round(stock_before + quantity_delta, 3)
         # A sale never takes what online buyers are paying for (audit #59);
         # a count adjustment or a void may.
-        held = max(0.0, float(product.get("stock_reserved") or 0)) if respect_holds else 0.0
+        held = max(0.0, float(product.get("stock_reserved") or 0)) if (respect_holds and not variant_id) else 0.0
         if stock_after < held - 0.0005 and not allow_negative:
-            raise HTTPException(status_code=400, detail=pos_domain_services.stock_refusal(product.get("name"), stock_before, held))
+            display_name = f"{product.get('name')} ({variant['name']})" if variant else product.get("name")
+            raise HTTPException(status_code=400, detail=pos_domain_services.stock_refusal(display_name, stock_before, held))
         stock_after = max(0.0, stock_after) if allow_negative else stock_after
         ts = now_iso()
-        # ...and an online hold landing in between makes it re-read.
-        raw_held = product.get("stock_reserved")
-        holds_as_read = ({} if not respect_holds else
-                         {"$or": [{"stock_reserved": 0}, {"stock_reserved": None}]} if raw_held in (None, 0)
-                         else {"stock_reserved": raw_held})
-        result = await db.pos_products.find_one_and_update(
-            {"id": product_id, "stock_on_hand": stock_before, **holds_as_read},
-            {"$set": {"stock_on_hand": stock_after, "updated_at": ts}},
-        )
+        if variant_id:
+            result = await db.pos_products.find_one_and_update(
+                {"id": product_id, "variants": {"$elemMatch": {"id": variant_id, "stock_on_hand": stock_before}}},
+                {"$set": {"variants.$.stock_on_hand": stock_after, "updated_at": ts}},
+            )
+        else:
+            # ...and an online hold landing in between makes it re-read.
+            raw_held = product.get("stock_reserved")
+            holds_as_read = ({} if not respect_holds else
+                             {"$or": [{"stock_reserved": 0}, {"stock_reserved": None}]} if raw_held in (None, 0)
+                             else {"stock_reserved": raw_held})
+            result = await db.pos_products.find_one_and_update(
+                {"id": product_id, "stock_on_hand": stock_before, **holds_as_read},
+                {"$set": {"stock_on_hand": stock_after, "updated_at": ts}},
+            )
         if result is None:
             continue  # lost the race — reread the fresh value and retry
         movement = {
-            "id": str(uuid.uuid4()), "product_id": product_id, "type": movement_type,
+            "id": str(uuid.uuid4()), "product_id": product_id, "variant_id": variant_id, "type": movement_type,
             "quantity_delta": round(quantity_delta, 3),
             "stock_before": stock_before, "stock_after": stock_after,
             "reason": reason, "pos_sale_id": pos_sale_id,
@@ -44415,8 +44531,32 @@ async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, use
     return {"ok": True, **result}
 
 
-async def list_inventory_movements(product_id: str, limit: int = 100, user: dict = Depends(require_admin_and_permission("pricing"))):
-    cursor = db.inventory_movements.find({"product_id": product_id}, {"_id": 0}).sort("created_at", -1)
+async def adjust_pos_product_variant_stock(
+    product_id: str, variant_id: str, body: InventoryAdjustIn, user: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """Same manual correction as adjust_pos_product_stock, scoped to one
+    variant. Not gated on track_inventory — a variant product's stock is
+    tracked per-variant inherently, there's no separate opt-in flag for it
+    the way a plain product has."""
+    product = await db.pos_products.find_one({"id": product_id}, {"_id": 0, "variants": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not any(v.get("id") == variant_id for v in (product.get("variants") or [])):
+        raise HTTPException(status_code=404, detail="Variant not found")
+    result = await _mutate_product_stock(
+        product_id, body.quantity_delta, body.source, body.reason.strip(), user=user, variant_id=variant_id,
+    )
+    return {"ok": True, **result}
+
+
+async def list_inventory_movements(
+    product_id: str, limit: int = 100, variant_id: Optional[str] = None,
+    user: dict = Depends(require_admin_and_permission("pricing")),
+):
+    q: Dict[str, Any] = {"product_id": product_id}
+    if variant_id:
+        q["variant_id"] = variant_id
+    cursor = db.inventory_movements.find(q, {"_id": 0}).sort("created_at", -1)
     return await cursor.to_list(max(1, min(limit, 500)))
 
 
@@ -44643,7 +44783,7 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     created_lot_ids: List[str] = []
     client_balance_deltas: Dict[str, int] = {}  # balance_field -> total $inc applied — reversed on failure
     client_balance_applied = False
-    applied_stock_movements: List[tuple] = []  # (product_id, qty) already deducted — reversed on failure below
+    applied_stock_movements: List[tuple] = []  # (product_id, qty, variant_id) already deducted — reversed on failure below
     claimed_payment_intent_ids: List[str] = []  # stripe_terminal tenders claimed — released on failure below
     try:
         # Stripe Terminal (Phase 4) — each verified PaymentIntent is consumed
@@ -44797,8 +44937,14 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         # deduction already applied in this sale is restored before the sale
         # itself is rolled back in the except block below.
         qty_by_product: Dict[str, float] = {}
+        qty_by_variant: Dict[tuple, float] = {}
         for li in priced["line_items"]:
-            if li["kind"] == "retail":
+            if li["kind"] != "retail":
+                continue
+            if li.get("variant_id"):
+                key = (li["product_id"], li["variant_id"])
+                qty_by_variant[key] = qty_by_variant.get(key, 0) + li["qty"]
+            else:
                 qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + li["qty"]
         for product_id, qty in qty_by_product.items():
             if not product_cache.get(product_id, {}).get("track_inventory"):
@@ -44808,18 +44954,25 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
                 reason=f"POS Sale #{sale_doc['receipt_number']}",
                 user=user, pos_sale_id=sale_id, respect_holds=True,
             )
-            applied_stock_movements.append((product_id, qty))
+            applied_stock_movements.append((product_id, qty, None))
+        for (product_id, variant_id), qty in qty_by_variant.items():
+            await _mutate_product_stock(
+                product_id, -qty, "SALE",
+                reason=f"POS Sale #{sale_doc['receipt_number']}",
+                user=user, pos_sale_id=sale_id, variant_id=variant_id,
+            )
+            applied_stock_movements.append((product_id, qty, variant_id))
     except Exception:
         if claimed_payment_intent_ids:
             await deletion_log.delete_many(db, "stripe_terminal_payment_claims", {"payment_intent_id": {"$in": claimed_payment_intent_ids}})
-        for product_id, qty in applied_stock_movements:
+        for product_id, qty, variant_id in applied_stock_movements:
             try:
                 await _mutate_product_stock(
                     product_id, qty, "VOID", reason="Rollback — sale failed to commit",
-                    user=user, pos_sale_id=sale_id, allow_negative=True,
+                    user=user, pos_sale_id=sale_id, allow_negative=True, variant_id=variant_id,
                 )
             except Exception as exc:
-                logger.error("Failed to reverse stock deduction for product %s during sale rollback: %s", product_id, exc)
+                logger.error("Failed to reverse stock deduction for product %s (variant %s) during sale rollback: %s", product_id, variant_id, exc)
         if client_balance_applied and client_balance_deltas:
             try:
                 await db.clients.update_one({"id": body.client_id}, {"$inc": {k: -v for k, v in client_balance_deltas.items()}})
@@ -45175,15 +45328,22 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
         if li.get("kind") != "retail" or not li.get("product_id"):
             continue
         try:
-            product = await db.pos_products.find_one({"id": li["product_id"]}, {"_id": 0, "track_inventory": 1})
-            if product and product.get("track_inventory"):
+            if li.get("variant_id"):
                 await _mutate_product_stock(
                     li["product_id"], float(li.get("qty") or 0), "VOID",
                     reason=f"Void of POS Sale #{original.get('receipt_number')}",
-                    user=user, pos_sale_id=sale_id, allow_negative=True,
+                    user=user, pos_sale_id=sale_id, allow_negative=True, variant_id=li["variant_id"],
                 )
+            else:
+                product = await db.pos_products.find_one({"id": li["product_id"]}, {"_id": 0, "track_inventory": 1})
+                if product and product.get("track_inventory"):
+                    await _mutate_product_stock(
+                        li["product_id"], float(li.get("qty") or 0), "VOID",
+                        reason=f"Void of POS Sale #{original.get('receipt_number')}",
+                        user=user, pos_sale_id=sale_id, allow_negative=True,
+                    )
         except Exception as exc:
-            logger.warning("Stock restoration failed for product %s on void of pos_sale %s: %s", li.get("product_id"), sale_id, exc)
+            logger.warning("Stock restoration failed for product %s (variant %s) on void of pos_sale %s: %s", li.get("product_id"), li.get("variant_id"), sale_id, exc)
 
     # A stripe_terminal tender was a REAL card-present charge, unlike the
     # manual "card" method — voiding the sale must also actually refund it,

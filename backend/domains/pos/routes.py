@@ -20,6 +20,7 @@ ROUTES = [
     ('POST', '/pos/products/{product_id}/restore', 'restore_pos_product', None),
     ('GET', '/pos/products/categories', 'pos_product_categories', None),
     ('POST', '/pos/products/{product_id}/adjust-stock', 'adjust_pos_product_stock', None),
+    ('POST', '/pos/products/{product_id}/variants/{variant_id}/adjust-stock', 'adjust_pos_product_variant_stock', None),
     ('GET', '/pos/products/{product_id}/movements', 'list_inventory_movements', None),
     ('POST', '/pos/checkout/preview', 'preview_pos_sale', None),
     ('POST', '/pos/sales/preview', 'preview_pos_sale', None),

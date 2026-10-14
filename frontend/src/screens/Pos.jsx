@@ -288,6 +288,13 @@ export default function Pos({ onOpenShopManager } = {}) {
       if (!idField) return l; // custom lines have no catalog counterpart
       const match = items.find((it) => it.kind === CATALOG_KIND_FOR_CART[l.kind] && it.id === l[idField]);
       if (!match) return l;
+      if (l.variant_id) {
+        // Variant pricing never carries a per-client override (see addItem) —
+        // just re-read the matched variant's own current price.
+        const variant = match.variants?.find((v) => v.id === l.variant_id);
+        if (!variant) return l; // the variant itself vanished — leave the line as last known, checkout will refuse it cleanly
+        return { ...l, unit_price: variant.price, list_price: variant.price, has_price_override: false };
+      }
       return { ...l, unit_price: match.effective_price, list_price: match.list_price, has_price_override: match.has_price_override };
     }));
   };
@@ -310,7 +317,8 @@ export default function Pos({ onOpenShopManager } = {}) {
     return products.filter((p) => {
       if (activeCategory && p.category_id !== activeCategory) return false;
       if (!q) return true;
-      const haystack = [p.name, p.description, p.sku, p.category_name, p.category, p.service_type, p.program_type]
+      const variantText = (p.variants || []).flatMap((v) => [v.name, v.sku]);
+      const haystack = [p.name, p.description, p.sku, p.category_name, p.category, p.service_type, p.program_type, ...variantText]
         .filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);
     });
@@ -324,13 +332,17 @@ export default function Pos({ onOpenShopManager } = {}) {
   const productSearchRef = useRef(null);
   const scanProductBySku = (e) => {
     if (e.key !== "Enter") return;
-    const code = productSearch.trim();
+    const code = productSearch.trim().toLowerCase();
     if (!code) return;
-    const match = products.find((p) => p.kind === "product" && (p.sku || "").trim().toLowerCase() === code.toLowerCase());
-    if (!match) { toast.error(`No product found for code "${code}"`); return; }
-    addItem(match);
-    setProductSearch("");
-    productSearchRef.current?.focus(); // stay in the field — the next scan shouldn't need a click first
+    for (const p of products) {
+      if (p.kind !== "product") continue;
+      if ((p.sku || "").trim().toLowerCase() === code) { addItem(p); setProductSearch(""); productSearchRef.current?.focus(); return; }
+      // A variant's own barcode identifies the exact option — skip the
+      // picker and add it directly, same as scanning a plain product does.
+      const variant = (p.variants || []).find((v) => (v.sku || "").trim().toLowerCase() === code);
+      if (variant) { addItem(p, variant); setProductSearch(""); productSearchRef.current?.focus(); return; }
+    }
+    toast.error(`No product found for code "${productSearch.trim()}"`);
   };
 
   // Declared here (ahead of the Client panel section below) because the
@@ -351,7 +363,12 @@ export default function Pos({ onOpenShopManager } = {}) {
   const CART_KIND = { product: "retail", credit_pack: "credit_pack", training_program: "training_program" };
   const CART_ID_FIELD = { retail: "product_id", credit_pack: "pack_id", training_program: "program_id" };
 
-  const addItem = (item) => {
+  // A product with variants (e.g. sizes) can't be added directly from the
+  // tile — tapping it opens this picker instead; addItem is then called
+  // with the chosen variant. null when no picker is open.
+  const [variantPickerItem, setVariantPickerItem] = useState(null);
+
+  const addItem = (item, variant) => {
     const cartKind = CART_KIND[item.kind];
     if (cartKind !== "retail" && !selectedClient) {
       toast.error(item.kind === "credit_pack"
@@ -359,8 +376,14 @@ export default function Pos({ onOpenShopManager } = {}) {
         : "Select a client first — training programs are tied to a client's account.");
       return;
     }
-    if (item.kind === "product" && item.track_inventory) {
-      const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id)?.qty || 0;
+    if (item.kind === "product" && variant) {
+      const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id && l.variant_id === variant.id)?.qty || 0;
+      if (inCart + 1 > Number(variant.stock_on_hand || 0) + 0.0005) {
+        toast.error(`Only ${variant.stock_on_hand} in stock for ${item.name} (${variant.name}).`);
+        return;
+      }
+    } else if (item.kind === "product" && item.track_inventory) {
+      const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id && !l.variant_id)?.qty || 0;
       if (inCart + 1 > Number(item.stock_on_hand || 0) + 0.0005) {
         // stock_on_hand here is what the register can sell: the shelf less
         // what online buyers are paying for (audit #59).
@@ -373,18 +396,26 @@ export default function Pos({ onOpenShopManager } = {}) {
     }
     const idField = CART_ID_FIELD[cartKind];
     setCartLines((lines) => {
-      const idx = lines.findIndex((l) => l.kind === cartKind && l[idField] === item.id);
+      const idx = lines.findIndex((l) => l.kind === cartKind && l[idField] === item.id && (l.variant_id || null) === (variant?.id || null));
       if (idx >= 0) {
         const copy = [...lines];
         copy[idx] = { ...copy[idx], qty: copy[idx].qty + 1 };
         return copy;
       }
       return [...lines, {
-        kind: cartKind, [idField]: item.id, name: item.name,
-        unit_price: item.effective_price, list_price: item.list_price,
-        has_price_override: item.has_price_override, qty: 1,
+        kind: cartKind, [idField]: item.id, name: variant ? `${item.name} — ${variant.name}` : item.name,
+        variant_id: variant?.id, variant_name: variant?.name,
+        unit_price: variant ? variant.price : item.effective_price,
+        list_price: variant ? variant.price : item.list_price,
+        has_price_override: variant ? false : item.has_price_override, qty: 1,
       }];
     });
+    setVariantPickerItem(null);
+  };
+
+  const openItem = (item) => {
+    if (item.kind === "product" && item.variants?.length > 0) { setVariantPickerItem(item); return; }
+    addItem(item);
   };
   const updateQty = (i, delta) => setCartLines((lines) => {
     const copy = [...lines];
@@ -536,7 +567,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, gift_card_topup: !!l.gift_card_topup, gift_card_recipient_email: l.gift_card_recipient_email || null, qty: 1 };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
-    return { kind: "retail", product_id: l.product_id, qty: l.qty };
+    return { kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty };
   });
 
   useEffect(() => {
@@ -2038,11 +2069,12 @@ export default function Pos({ onOpenShopManager } = {}) {
             )}
             <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-2">
               {filteredProducts.map((item) => {
-                const outOfStock = item.kind === "product" && item.track_inventory && Number(item.stock_on_hand || 0) <= 0.0005;
-                const lowStock = item.kind === "product" && item.track_inventory && !outOfStock && item.low_stock_threshold != null &&
+                const hasVariants = item.kind === "product" && item.variants?.length > 0;
+                const outOfStock = item.kind === "product" && !hasVariants && item.track_inventory && Number(item.stock_on_hand || 0) <= 0.0005;
+                const lowStock = item.kind === "product" && !hasVariants && item.track_inventory && !outOfStock && item.low_stock_threshold != null &&
                   Number(item.stock_on_hand || 0) <= Number(item.low_stock_threshold) + 0.0005;
                 return (
-                  <button key={`${item.kind}-${item.id}`} onClick={() => addItem(item)} disabled={outOfStock}
+                  <button key={`${item.kind}-${item.id}`} onClick={() => openItem(item)} disabled={outOfStock}
                           data-testid={`pos-product-${item.id}`}
                           className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-shBorder">
                     <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={80} fit="contain" className="mb-1.5" />
@@ -2050,7 +2082,12 @@ export default function Pos({ onOpenShopManager } = {}) {
                     {item.category_name && (
                       <p className="text-shTextMuted text-[10px] font-black uppercase tracking-widest truncate">{item.category_name}</p>
                     )}
-                    {item.has_price_override ? (
+                    {hasVariants ? (
+                      <p className="text-shPrimary font-black">
+                        {(() => { const prices = item.variants.map((v) => v.price); const lo = Math.min(...prices), hi = Math.max(...prices);
+                          return lo === hi ? money(lo) : `From ${money(lo)}`; })()}
+                      </p>
+                    ) : item.has_price_override ? (
                       <div>
                         <p className="text-shPrimary font-black">{money(item.effective_price)} <span className="text-shTextMuted text-[10px] font-black uppercase tracking-widest">Your Price</span></p>
                         <p className="text-shTextMuted text-[11px] line-through">{money(item.list_price)}</p>
@@ -2058,7 +2095,13 @@ export default function Pos({ onOpenShopManager } = {}) {
                     ) : (
                       <p className="text-shPrimary font-black">{money(item.effective_price)}</p>
                     )}
-                    {item.kind === "product" && item.track_inventory && (
+                    {hasVariants && (
+                      <p className="text-shTextMuted text-[11px] font-black uppercase tracking-widest mt-0.5">
+                        {item.variants.length} option{item.variants.length === 1 ? "" : "s"}
+                        {item.variants.every((v) => !v.in_stock) && <span className="text-shDanger"> • All Out of Stock</span>}
+                      </p>
+                    )}
+                    {item.kind === "product" && !hasVariants && item.track_inventory && (
                       <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-shDanger" : lowStock ? "text-shAccent" : "text-shTextMuted"}`}>
                         {outOfStock ? (Number(item.stock_held || 0) > 0 ? "Held for online order" : "Out of Stock") : lowStock ? `${item.stock_on_hand} left • Low Stock` : `${item.stock_on_hand} in stock`}
                         {!outOfStock && Number(item.stock_held || 0) > 0 && ` • ${item.stock_held} held online`}
@@ -2335,6 +2378,33 @@ export default function Pos({ onOpenShopManager } = {}) {
             if (selectedClient) refreshClientInvoice(selectedClient.id);
           }}
         />
+      )}
+      {variantPickerItem && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" data-testid="pos-variant-picker"
+             onClick={() => setVariantPickerItem(null)}>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <p className="text-shText font-black text-sm mb-3">{variantPickerItem.name} — choose an option</p>
+            <div className="space-y-2">
+              {variantPickerItem.variants.map((v) => (
+                <button key={v.id} onClick={() => addItem(variantPickerItem, v)} disabled={!v.in_stock}
+                        data-testid={`pos-variant-${v.id}`}
+                        className="w-full flex items-center justify-between bg-black/10 border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40">
+                  <span className="text-shText font-bold text-sm">{v.name}</span>
+                  <span className="text-right">
+                    <span className="block text-shPrimary font-black text-sm">{money(v.price)}</span>
+                    <span className={`block text-[10px] font-black uppercase tracking-widest ${v.in_stock ? "text-shTextMuted" : "text-shDanger"}`}>
+                      {v.in_stock ? `${v.stock_on_hand} in stock` : "Out of Stock"}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setVariantPickerItem(null)} data-testid="pos-variant-picker-cancel"
+                    className="w-full text-shTextMuted text-[12px] font-black uppercase tracking-widest mt-3 py-2">
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
       {walkInOpen && (
         <WalkInModal
