@@ -202,9 +202,10 @@ async def process_outbox(db) -> Dict[str, int]:
     scheduler tick (see server.py's _scheduler_jobs) — a plain no-op return
     when Printify isn't configured yet, so it's always safe to register
     regardless of whether an admin has set it up. Each row's own
-    (source, source_id) is where the order actually came from (a register
-    sale today; a Shop order in a later phase) — this function only reads
-    the outbox queue, never those collections directly."""
+    (source, source_id) is where the order actually came from — a register
+    sale ("pos_sale"); Printify items are register-only, online ordering
+    stays entirely on Shopify — this function only reads the outbox queue,
+    never that source collection directly."""
     if not PRINTIFY_ENABLED:
         return {"skipped": 1, "submitted": 0, "held": 0, "checked": 0}
     now = _now_iso()

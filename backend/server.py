@@ -41928,11 +41928,11 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     items = []
 
     products = await db.pos_products.find(
-        # Printify POD listings are deliberately left out of the client Shop
-        # for now — this catalog (and _price_shop_cart below) has no size/
-        # variant selection yet, and a Printify product is unsellable
-        # without picking one. Remove this exclusion once the client Shop
-        # gains variant support; the register already sells these correctly.
+        # Printify POD listings never appear in the client Shop — online
+        # ordering for this business goes entirely through Shopify (the
+        # existing shopify_external link-out card), never through this
+        # app's own cart/checkout. A printify listing is register-only, by
+        # design, not a gap waiting on size/variant support here.
         {"show_online": True, "active": True, "archived": {"$ne": True}, "sales_destination": {"$ne": "printify"}},
         {"_id": 0},
     ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None) if _section_visible["merch"] else []
@@ -42838,14 +42838,14 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
                     detail="This item is Shopify merchandise and can't be added to the Sit Happens cart — use its Shopify link instead.",
                 )
             if product.get("sales_destination") == "printify":
-                # The client Shop has no size/variant picker yet (register
-                # does) — _build_shop_catalog already keeps these off the
-                # catalog entirely; this is the same defense-in-depth refusal
-                # as the shopify_external branch above, for a stale catalog
-                # or a direct API call.
+                # Printify items are register-only by design — online
+                # ordering goes entirely through Shopify. _build_shop_catalog
+                # already keeps these off the catalog entirely; this is the
+                # same defense-in-depth refusal as the shopify_external
+                # branch above, for a stale catalog or a direct API call.
                 raise HTTPException(
                     status_code=400,
-                    detail="This item isn't available in the online Shop yet — it can be sold at the register.",
+                    detail="This item isn't available in the online Shop — it can be sold at the register.",
                 )
             # Never trust a client-supplied price — resolve_client_price() is
             # the SAME source of truth credit_pack lines (below) and
@@ -44274,8 +44274,9 @@ def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[
     up fresh from each product's own stored printify_product_id/variant's
     printify_variant_id (never trusted from the request), so a listing's
     Printify mapping can be fixed after the fact without corrupting orders
-    already queued against the old one. Shared by the register (Phase 2)
-    and the client Shop (Phase 4) outbox writers."""
+    already queued against the old one. Used by the register's outbox
+    writer — Printify items are register-only; online ordering goes
+    entirely through Shopify instead."""
     out = []
     for li in printify_lines:
         product = product_cache[li["product_id"]]

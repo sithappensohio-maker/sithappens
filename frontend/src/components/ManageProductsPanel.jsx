@@ -603,7 +603,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         </div>
         {isPrintify && (
           <p className="text-[11px] text-shTextMuted" data-testid="product-printify-online-note">
-            Not available in the client Shop yet — sizes can only be picked at the register for now. This stays sellable there regardless of this setting.
+            Not available in the client Shop — Printify items are sold at the register only; online ordering goes through Shopify instead. This stays sellable at the register regardless of this setting.
           </p>
         )}
         {form.show_online && (
@@ -671,7 +671,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           )}
           {form.publicly_visible && isPrintify && (
             <p className="text-[11px] text-shTextMuted" data-testid="product-printify-public-note">
-              This listing isn't in the client Shop yet (see the note above), so guests won't see it here either until that's wired up.
+              This listing isn't in the client Shop (see the note above), so guests won't see it here either — register-only, same as for clients.
             </p>
           )}
           {form.publicly_visible && form.sales_destination === "internal" && (
