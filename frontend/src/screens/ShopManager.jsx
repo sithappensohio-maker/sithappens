@@ -62,6 +62,7 @@ const BLANK_PRODUCT_FORM = {
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
+  printify_product_id: "",
   // Merchandise is taxable by default; this is the per-item exemption. Missing here meant it was never
   // loaded on edit or sent on save, so an exempt item kept getting taxed no matter what the box showed.
   taxable: true, tax_exempt_reason: "",
@@ -91,6 +92,7 @@ const blankProgramForm = (type = "private_lessons") => ({
 
 function itemKindLabel(it) {
   if (it.kind === "physical_product" && it.sales_destination === "shopify_external") return "Shopify Merchandise";
+  if (it.kind === "physical_product" && it.sales_destination === "printify") return "Printify Print-on-Demand";
   return KIND_LABEL[it.kind];
 }
 
@@ -607,6 +609,7 @@ function TypePickerModal({ onClose, onPick }) {
   const options = [
     { key: "physical_product", label: "Physical Product", icon: "fa-box", desc: "Inventory, SKU, cost, tax, register + Shop checkout." },
     { key: "shopify_external", label: "Shopify/External Merchandise", icon: "fa-arrow-up-right-from-square", desc: "Display-only Shop link — Shopify handles checkout." },
+    { key: "printify", label: "Printify Print-on-Demand", icon: "fa-shirt", desc: "Sold and paid for here — Printify only handles production/shipping." },
     { key: "credit_pack", label: "Prepaid Visit Pack", icon: "fa-ticket", desc: "Bulk daycare/boarding/visit credits." },
     { key: "training_program", label: "Training Program", icon: "fa-graduation-cap", desc: "Sessions, curriculum, enrollment." },
   ];
@@ -1750,11 +1753,11 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
 
   const pickType = (key) => {
     setPickerOpen(false);
-    if (key === "physical_product" || key === "shopify_external") {
+    if (key === "physical_product" || key === "shopify_external" || key === "printify") {
       setProductEditingId(null);
       setProductOriginalImageId(null);
       setProductOriginalImageIds([]);
-      setProductForm({ ...BLANK_PRODUCT_FORM, image_ids: [], sales_destination: key === "shopify_external" ? "shopify_external" : "internal" });
+      setProductForm({ ...BLANK_PRODUCT_FORM, image_ids: [], sales_destination: key === "shopify_external" || key === "printify" ? key : "internal" });
     } else if (key === "credit_pack") {
       setPackEditing(null);
       setPackOriginalImageId(null);
@@ -1788,10 +1791,12 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         online_sort_order: raw.online_sort_order != null ? String(raw.online_sort_order) : "",
         category_id: raw.category_id || null, subcategory_id: raw.subcategory_id || null,
         featured: !!raw.featured, show_at_register: raw.show_at_register !== false,
-        sales_destination: raw.sales_destination === "shopify_external" ? "shopify_external" : "internal",
+        sales_destination: (raw.sales_destination === "shopify_external" || raw.sales_destination === "printify")
+          ? raw.sales_destination : "internal",
         shopify_product_url: raw.shopify_product_url || "",
         shopify_display_price: raw.shopify_display_price != null ? String(raw.shopify_display_price) : "",
         shopify_from_price: !!raw.shopify_from_price,
+        printify_product_id: raw.printify_product_id || "",
         publicly_visible: !!raw.publicly_visible, guest_cart_allowed: !!raw.guest_cart_allowed,
         show_public_price: raw.show_public_price !== false,
         requires_approval: !!raw.requires_approval, requires_completed_onboarding: !!raw.requires_completed_onboarding,
@@ -1821,8 +1826,14 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
   const saveProduct = async () => {
     if (!productForm.name.trim()) { toast.error("Product name is required"); return; }
     const isShopify = productForm.sales_destination === "shopify_external";
+    const isPrintify = productForm.sales_destination === "printify";
     if (!isShopify && !(Number(productForm.price) >= 0)) { toast.error("Selling price is required"); return; }
     if (isShopify && !productForm.shopify_product_url.trim()) { toast.error("A Shopify product URL is required"); return; }
+    if (isPrintify && !productForm.printify_product_id.trim()) { toast.error("A Printify product ID is required"); return; }
+    if (isPrintify && productForm.variants.length === 0) { toast.error("A Printify listing needs at least one size"); return; }
+    if (isPrintify && productForm.variants.some((v) => !(v.printify_variant_id || "").trim())) {
+      toast.error("Every size needs its Printify variant ID"); return;
+    }
     if (productForm.variants.some((v) => !v.name.trim())) { toast.error("Every option needs a name."); return; }
     const body = {
       name: productForm.name.trim(), sku: isShopify ? null : (productForm.sku.trim() || null),
@@ -1841,6 +1852,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       shopify_product_url: isShopify ? productForm.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && productForm.shopify_display_price !== "") ? Number(productForm.shopify_display_price) : null,
       shopify_from_price: isShopify && productForm.shopify_from_price,
+      printify_product_id: isPrintify ? productForm.printify_product_id.trim() : null,
       // See ManageProductsPanel: a Shopify listing is allowed to be public.
       publicly_visible: !!productForm.publicly_visible,
       guest_cart_allowed: !isShopify && productForm.publicly_visible && productForm.guest_cart_allowed,

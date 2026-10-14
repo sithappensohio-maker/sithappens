@@ -30,6 +30,10 @@ const BLANK_FORM = {
   show_online: false, online_description: "", image_id: null, image_ids: [], online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
+  // Printify POD — the Printify product id this listing submits production
+  // orders against. Each variant row carries its own printify_variant_id
+  // (see the Options section below) instead of a plain barcode SKU.
+  printify_product_id: "",
   // Public no-account storefront — see the "Public Storefront" section of
   // the editor below. guest_cart_allowed never permits guest checkout, only
   // temporary local cart placement.
@@ -53,6 +57,7 @@ export function variantsPayload(formVariants) {
     sku: (v.sku || "").trim() || null,
     price_override: v.price_override !== "" && v.price_override != null ? Number(v.price_override) : null,
     starting_stock: v.id ? 0 : Number(v.starting_stock || 0),
+    printify_variant_id: (v.printify_variant_id || "").trim() || null,
   }));
 }
 
@@ -175,6 +180,11 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
   // which exists specifically to catch a prop a caller forgot) must still
   // render instead of crashing — never trust form.variants to be present.
   const variants = form.variants || [];
+  const isShopify = form.sales_destination === "shopify_external";
+  const isPrintify = form.sales_destination === "printify";
+  // Printify and plain internal products both keep the normal
+  // price/cost/options machinery — only a Shopify link zeroes it all out.
+  const showsOptions = !isShopify;
   // `_localKey` is a React list-key only — never sent to the backend (see
   // handleSave's strip in both callers). A row with a real `id` is an
   // existing variant (its stock is read-only here; Receive/Adjust changes
@@ -252,20 +262,29 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                     className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "shopify_external" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
               External Shopify Product
             </button>
+            <button type="button" data-testid="destination-printify"
+                    onClick={() => setForm((f) => ({ ...f, sales_destination: "printify" }))}
+                    className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${isPrintify ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+              Printify Print-on-Demand
+            </button>
           </div>
           <p className="text-[11px] text-shTextMuted mt-1">
-            Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout.
+            {isPrintify
+              ? "Sold and paid for right here, same as a normal product — Printify only takes over production and shipping after payment."
+              : "Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout."}
           </p>
         </div>
 
         {form.sales_destination === "internal" && (
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Register Group (optional)</label>
+            <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            <p className="text-[11px] text-shTextMuted mt-0.5">Groups products into tabs on the in-person register only. Use Shop Category below for the client Shop.</p>
+          </div>
+        )}
+        {(form.sales_destination === "internal" || isPrintify) && (
           <>
-            <div>
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Register Group (optional)</label>
-              <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-              <p className="text-[11px] text-shTextMuted mt-0.5">Groups products into tabs on the in-person register only. Use Shop Category below for the client Shop.</p>
-            </div>
             <div>
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Selling Price *</label>
               <input type="number" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
@@ -275,38 +294,55 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cost (optional)</label>
               <input type="number" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-            </div>
-            {variants.length === 0 && (
-              <div>
-                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
-                  {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
-                </label>
-                <input type="number" disabled={!!editingId} value={form.starting_stock}
-                       onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
-                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
-              </div>
-            )}
-            <div className="col-span-2">
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Barcode / SKU (optional)</label>
-              <div className="flex gap-2">
-                <input value={form.sku || ""} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                       placeholder="Scan it here, or type it in" data-testid="product-sku"
-                       disabled={variants.length > 0}
-                       className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
-                {editingId && variants.length === 0 && (
-                  <button type="button" onClick={() => setPrintTarget({ kind: "product" })} data-testid="product-print-label"
-                          className="text-shPrimary text-[11px] font-black uppercase tracking-widest whitespace-nowrap px-2">
-                    <i className="fas fa-print mr-1" />Print Label
-                  </button>
-                )}
-              </div>
-              <p className="text-[11px] text-shTextMuted mt-0.5">
-                {variants.length > 0
-                  ? "This product has options below — each option gets its own code instead."
-                  : "Scanning this at the register adds the item straight to the cart. No code yet? Print Label will make one."}
-              </p>
+              {isPrintify && (
+                <p className="text-[11px] text-shTextMuted mt-0.5">Printify's own production cost, for your own margin tracking only — never synced automatically.</p>
+              )}
             </div>
           </>
+        )}
+        {form.sales_destination === "internal" && variants.length === 0 && (
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
+              {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
+            </label>
+            <input type="number" disabled={!!editingId} value={form.starting_stock}
+                   onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+          </div>
+        )}
+        {form.sales_destination === "internal" && (
+          <div className="col-span-2">
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Barcode / SKU (optional)</label>
+            <div className="flex gap-2">
+              <input value={form.sku || ""} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                     placeholder="Scan it here, or type it in" data-testid="product-sku"
+                     disabled={variants.length > 0}
+                     className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+              {editingId && variants.length === 0 && (
+                <button type="button" onClick={() => setPrintTarget({ kind: "product" })} data-testid="product-print-label"
+                        className="text-shPrimary text-[11px] font-black uppercase tracking-widest whitespace-nowrap px-2">
+                  <i className="fas fa-print mr-1" />Print Label
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-shTextMuted mt-0.5">
+              {variants.length > 0
+                ? "This product has options below — each option gets its own code instead."
+                : "Scanning this at the register adds the item straight to the cart. No code yet? Print Label will make one."}
+            </p>
+          </div>
+        )}
+        {isPrintify && (
+          <div className="col-span-2">
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Printify Product ID *</label>
+            <input value={form.printify_product_id || ""} onChange={(e) => setForm((f) => ({ ...f, printify_product_id: e.target.value }))}
+                   placeholder="Copy from the product's page in your Printify dashboard"
+                   data-testid="product-printify-id"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            <p className="text-[11px] text-shTextMuted mt-0.5">
+              The Printify product this listing submits production orders against. Set up the product in Printify first, then copy its id here — each size below needs its own Printify variant id too.
+            </p>
+          </div>
         )}
 
         <div className="col-span-2">
@@ -323,7 +359,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                              onChange={(ids) => setForm((f) => ({ ...f, image_ids: ids, image_id: ids[0] || null }))} />
         </div>
 
-        {form.sales_destination === "internal" && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
+        {(form.sales_destination === "internal" || isPrintify) && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
           <div className="col-span-2 rounded border border-shBorder bg-[var(--sh-card-base)] px-3 py-2 text-sm text-shText" data-testid="product-margin-preview">
             <span className="text-[11px] text-shTextMuted uppercase tracking-widest mr-2">Profit per unit</span>
             <span className="font-black">{money(Number(form.price) - Number(form.cost))}</span>
@@ -392,18 +428,27 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
       </div>
 
       {/* Options — size/color/etc. A barcode-scannable sku, its own stock,
-          and an optional price per option, instead of one flat product. */}
-      {form.sales_destination === "internal" && (
+          and an optional price per option, instead of one flat product. A
+          Printify listing uses the same rows for its sizes, but swaps the
+          barcode/stock fields for a Printify variant id — nothing is
+          scanned or stocked for a made-to-order item. */}
+      {showsOptions && (
         <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Options (size, color, etc.)</p>
+            <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">
+              {isPrintify ? "Sizes (required)" : "Options (size, color, etc.)"}
+            </p>
             <button type="button" onClick={addVariantRow} data-testid="product-add-variant"
                     className="text-shPrimary text-[11px] font-black uppercase tracking-widest">
-              <i className="fas fa-plus mr-1" />Add Option
+              <i className="fas fa-plus mr-1" />Add {isPrintify ? "Size" : "Option"}
             </button>
           </div>
           {variants.length === 0 ? (
-            <p className="text-[11px] text-shTextMuted">No options — sold as one single item. Add an option if it comes in sizes or colors.</p>
+            <p className="text-[11px] text-shTextMuted">
+              {isPrintify
+                ? "A Printify listing needs at least one size before it can be saved."
+                : "No options — sold as one single item. Add an option if it comes in sizes or colors."}
+            </p>
           ) : (
             <div className="space-y-2">
               {variants.map((v, i) => (
@@ -420,49 +465,60 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                              placeholder="e.g. Small" data-testid={`product-variant-name-${i}`}
                              className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
                     </div>
-                    <div>
-                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Barcode / SKU</label>
-                      <div className="flex gap-1.5">
-                        <input value={v.sku || ""} onChange={(e) => updateVariantRow(i, { sku: e.target.value })}
-                               placeholder="Scan it here" data-testid={`product-variant-sku-${i}`}
-                               className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
-                        {v.id && (
-                          <button type="button" onClick={() => setPrintTarget({ kind: "variant", index: i })}
-                                  data-testid={`product-variant-print-label-${i}`}
-                                  className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap px-1">
-                            <i className="fas fa-print" />
-                          </button>
-                        )}
+                    {isPrintify ? (
+                      <div>
+                        <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Printify Variant ID *</label>
+                        <input value={v.printify_variant_id || ""} onChange={(e) => updateVariantRow(i, { printify_variant_id: e.target.value })}
+                               placeholder="From this size's row in Printify" data-testid={`product-variant-printify-id-${i}`}
+                               className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
                       </div>
-                    </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Barcode / SKU</label>
+                        <div className="flex gap-1.5">
+                          <input value={v.sku || ""} onChange={(e) => updateVariantRow(i, { sku: e.target.value })}
+                                 placeholder="Scan it here" data-testid={`product-variant-sku-${i}`}
+                                 className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                          {v.id && (
+                            <button type="button" onClick={() => setPrintTarget({ kind: "variant", index: i })}
+                                    data-testid={`product-variant-print-label-${i}`}
+                                    className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap px-1">
+                              <i className="fas fa-print" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div>
                       <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Price (blank = same as above)</label>
                       <input type="number" value={v.price_override ?? ""} onChange={(e) => updateVariantRow(i, { price_override: e.target.value })}
                              placeholder={form.price || "0"} data-testid={`product-variant-price-${i}`}
                              className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
                     </div>
-                    <div>
-                      <label className="text-[10px] text-shTextMuted uppercase tracking-widest">
-                        {v.id ? "Stock" : "Starting Stock"}
-                      </label>
-                      {v.id ? (
-                        <div className="flex items-center gap-2">
-                          <span className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" data-testid={`product-variant-stock-${i}`}>
-                            {v.stock_on_hand ?? 0}
-                          </span>
-                          <button type="button" onClick={() => { setAdjustingVariant(adjustingVariant === i ? null : i); setVariantAdjustQty(""); setVariantAdjustReason(""); }}
-                                  data-testid={`product-variant-adjust-toggle-${i}`}
-                                  className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                            {adjustingVariant === i ? "Cancel" : "Receive/Adjust"}
-                          </button>
-                        </div>
-                      ) : (
-                        <input type="number" value={v.starting_stock ?? "0"}
-                               onChange={(e) => updateVariantRow(i, { starting_stock: e.target.value })}
-                               data-testid={`product-variant-stock-${i}`}
-                               className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
-                      )}
-                    </div>
+                    {!isPrintify && (
+                      <div>
+                        <label className="text-[10px] text-shTextMuted uppercase tracking-widest">
+                          {v.id ? "Stock" : "Starting Stock"}
+                        </label>
+                        {v.id ? (
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" data-testid={`product-variant-stock-${i}`}>
+                              {v.stock_on_hand ?? 0}
+                            </span>
+                            <button type="button" onClick={() => { setAdjustingVariant(adjustingVariant === i ? null : i); setVariantAdjustQty(""); setVariantAdjustReason(""); }}
+                                    data-testid={`product-variant-adjust-toggle-${i}`}
+                                    className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                              {adjustingVariant === i ? "Cancel" : "Receive/Adjust"}
+                            </button>
+                          </div>
+                        ) : (
+                          <input type="number" value={v.starting_stock ?? "0"}
+                                 onChange={(e) => updateVariantRow(i, { starting_stock: e.target.value })}
+                                 data-testid={`product-variant-stock-${i}`}
+                                 className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                        )}
+                      </div>
+                    )}
                   </div>
                   {adjustingVariant === i && (
                     <div className="mt-2 pt-2 border-t border-shBorder grid grid-cols-2 gap-2" data-testid={`product-variant-adjust-panel-${i}`}>
@@ -545,6 +601,11 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                  data-testid="product-show-online" />
           <label htmlFor="show-online" className="text-shText text-sm">Show Online (client Shop)</label>
         </div>
+        {isPrintify && (
+          <p className="text-[11px] text-shTextMuted" data-testid="product-printify-online-note">
+            Not available in the client Shop yet — sizes can only be picked at the register for now. This stays sellable there regardless of this setting.
+          </p>
+        )}
         {form.show_online && (
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -601,11 +662,16 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               <label htmlFor="show-public-price" className="text-shText text-sm">Show Price to Guests</label>
             </div>
           )}
-          {form.publicly_visible && form.sales_destination !== "internal" && (
+          {form.publicly_visible && isShopify && (
             <p className="text-[11px] text-shTextMuted" data-testid="product-shopify-public-note">
               Guests will see this listing and can open it on Shopify. Checkout,
               stock and payment stay with Shopify, so there is no guest cart or
               account requirement to set here.
+            </p>
+          )}
+          {form.publicly_visible && isPrintify && (
+            <p className="text-[11px] text-shTextMuted" data-testid="product-printify-public-note">
+              This listing isn't in the client Shop yet (see the note above), so guests won't see it here either until that's wired up.
             </p>
           )}
           {form.publicly_visible && form.sales_destination === "internal" && (
@@ -791,10 +857,12 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       // Absent means taxable — the same default the pricing engine uses, so
       // a product saved before this field existed reads back honestly.
       taxable: p.taxable !== false, tax_exempt_reason: p.tax_exempt_reason || "",
-      sales_destination: p.sales_destination === "shopify_external" ? "shopify_external" : "internal",
+      sales_destination: (p.sales_destination === "shopify_external" || p.sales_destination === "printify")
+        ? p.sales_destination : "internal",
       shopify_product_url: p.shopify_product_url || "",
       shopify_display_price: p.shopify_display_price != null ? String(p.shopify_display_price) : "",
       shopify_from_price: !!p.shopify_from_price,
+      printify_product_id: p.printify_product_id || "",
       publicly_visible: !!p.publicly_visible, guest_cart_allowed: !!p.guest_cart_allowed,
       show_public_price: p.show_public_price !== false,
       requires_approval: !!p.requires_approval, requires_completed_onboarding: !!p.requires_completed_onboarding,
@@ -835,8 +903,14 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
   const saveForm = async () => {
     if (!form.name.trim()) { toast.error("Product name is required"); return; }
     const isShopify = form.sales_destination === "shopify_external";
+    const isPrintify = form.sales_destination === "printify";
     if (!isShopify && !(Number(form.price) >= 0)) { toast.error("Selling price is required"); return; }
     if (isShopify && !form.shopify_product_url.trim()) { toast.error("A Shopify product URL is required"); return; }
+    if (isPrintify && !form.printify_product_id.trim()) { toast.error("A Printify product ID is required"); return; }
+    if (isPrintify && form.variants.length === 0) { toast.error("A Printify listing needs at least one size"); return; }
+    if (isPrintify && form.variants.some((v) => !(v.printify_variant_id || "").trim())) {
+      toast.error("Every size needs its Printify variant ID"); return;
+    }
     if (form.variants.some((v) => !v.name.trim())) { toast.error("Every option needs a name."); return; }
     const body = {
       name: form.name.trim(), sku: isShopify ? null : (form.sku.trim() || null),
@@ -857,6 +931,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_product_url: isShopify ? form.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
       shopify_from_price: isShopify && form.shopify_from_price,
+      printify_product_id: isPrintify ? form.printify_product_id.trim() : null,
       // A Shopify listing may be public: it is a display-only card that sends
       // the visitor to Shopify. Everything below it stays internal-only,
       // because none of it describes buying something here.

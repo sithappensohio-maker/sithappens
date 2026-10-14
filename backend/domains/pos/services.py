@@ -886,6 +886,7 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
             continue
         track = bool(p.get("track_inventory"))
+        is_printify = p.get("sales_destination") == "printify"
         # What the register can sell: the shelf less what online buyers are
         # paying for right now (audit #59).
         held = max(0.0, float(p.get("stock_reserved") or 0)) if track else 0.0
@@ -922,7 +923,11 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
                 "id": v["id"], "name": v["name"], "sku": v.get("sku") or "",
                 "price": round(float(v["price_override"]), 2) if v.get("price_override") is not None else list_price,
                 "stock_on_hand": round(float(v.get("stock_on_hand") or 0), 2),
-                "in_stock": float(v.get("stock_on_hand") or 0) > 0.0005,
+                # Variant stock is enforced independent of the product's own
+                # track_inventory flag (a variant's whole purpose is its own
+                # per-option stock) — EXCEPT Printify, which makes each size
+                # on demand: there is no real stock to run out of.
+                "in_stock": is_printify or (float(v.get("stock_on_hand") or 0) > 0.0005),
             } for v in (p.get("variants") or [])],
             **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
         })
@@ -1266,9 +1271,12 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     # Variant stock is always enforced (no track_inventory opt-in to check —
     # a variant's whole purpose is per-option stock) and has no online-hold
     # concept the way a plain product does (variants aren't reservable by
-    # the client Shop in this phase).
+    # the client Shop in this phase) — EXCEPT a Printify-fulfilled product,
+    # which Printify makes on demand: there is no real stock to run out of.
     for (product_id, variant_id), total_qty in qty_by_variant.items():
         product = product_cache[product_id]
+        if product.get("sales_destination") == "printify":
+            continue
         variant = next((v for v in (product.get("variants") or []) if v.get("id") == variant_id), None)
         stock = float((variant or {}).get("stock_on_hand") or 0)
         if total_qty > stock + 0.0005:

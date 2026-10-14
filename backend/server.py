@@ -41925,7 +41925,13 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     items = []
 
     products = await db.pos_products.find(
-        {"show_online": True, "active": True, "archived": {"$ne": True}}, {"_id": 0},
+        # Printify POD listings are deliberately left out of the client Shop
+        # for now — this catalog (and _price_shop_cart below) has no size/
+        # variant selection yet, and a Printify product is unsellable
+        # without picking one. Remove this exclusion once the client Shop
+        # gains variant support; the register already sells these correctly.
+        {"show_online": True, "active": True, "archived": {"$ne": True}, "sales_destination": {"$ne": "printify"}},
+        {"_id": 0},
     ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None) if _section_visible["merch"] else []
     for p in products:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
@@ -42827,6 +42833,16 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
                 raise HTTPException(
                     status_code=400,
                     detail="This item is Shopify merchandise and can't be added to the Sit Happens cart — use its Shopify link instead.",
+                )
+            if product.get("sales_destination") == "printify":
+                # The client Shop has no size/variant picker yet (register
+                # does) — _build_shop_catalog already keeps these off the
+                # catalog entirely; this is the same defense-in-depth refusal
+                # as the shopify_external branch above, for a stale catalog
+                # or a direct API call.
+                raise HTTPException(
+                    status_code=400,
+                    detail="This item isn't available in the online Shop yet — it can be sold at the register.",
                 )
             # Never trust a client-supplied price — resolve_client_price() is
             # the SAME source of truth credit_pack lines (below) and
@@ -44010,6 +44026,13 @@ class PosProductVariantIn(BaseModel):
     sku: Optional[str] = Field(default=None, max_length=100)
     price_override: Optional[float] = Field(default=None, ge=0)
     starting_stock: float = Field(default=0, ge=0)  # only read when `id` is None (a new variant)
+    # Printify POD — the id of THIS size/option within the Printify product
+    # named by the parent's printify_product_id. Required per-variant when
+    # sales_destination == "printify" (checked in create/update_pos_product,
+    # not here — this model doesn't know the parent's destination); ignored
+    # for every other destination. Never auto-synced from Printify's catalog;
+    # the admin copies it in once when setting the product up.
+    printify_variant_id: Optional[str] = Field(default=None, max_length=80)
 
 
 class PosProductVariantOut(BaseModel):
@@ -44018,6 +44041,7 @@ class PosProductVariantOut(BaseModel):
     sku: Optional[str] = None
     price_override: Optional[float] = None
     stock_on_hand: float = 0
+    printify_variant_id: Optional[str] = None
 
 
 class PosProductIn(BaseModel):
@@ -44064,11 +44088,20 @@ class PosProductIn(BaseModel):
     # Shopify-linked merchandise (lightweight catalog link, not a second
     # commerce system) — see _resolve_pos_product_destination_fields for how
     # this reshapes the doc on create/update. "internal" is the default so
-    # every pre-existing product is completely unaffected.
-    sales_destination: Literal["internal", "shopify_external"] = "internal"
+    # every pre-existing product is completely unaffected. "printify" is a
+    # THIRD, different kind of external fulfillment: unlike shopify_external
+    # (a pure link-out card Shopify owns end to end), a printify product is
+    # still sold and paid for right here — only production/shipping is
+    # handed off — so it keeps variants, price and checkout; see
+    # _resolve_pos_product_destination_fields for the exact field set.
+    sales_destination: Literal["internal", "shopify_external", "printify"] = "internal"
     shopify_product_url: Optional[str] = Field(default=None, max_length=2000)
     shopify_display_price: Optional[float] = Field(default=None, ge=0)
     shopify_from_price: bool = False
+    # Printify POD — the Printify product id this listing submits production
+    # orders against. Required when sales_destination == "printify"; each
+    # variant separately carries its own printify_variant_id (the size).
+    printify_product_id: Optional[str] = Field(default=None, max_length=80)
     # Front Desk checkout integrity audit — per-item taxable configuration,
     # replacing the old hardcoded "kind == product" tax rule. Defaults True
     # (physical retail goods) so every existing product keeps its current
@@ -44181,7 +44214,11 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
     (track_inventory/cost/low_stock_threshold) server-side rather than
     trusting the client not to submit them, and requires a validated https
     URL. An internal product is completely unaffected (all pre-existing
-    products default to sales_destination="internal")."""
+    products default to sales_destination="internal"). A printify product
+    is sold and paid for here (register + client Shop) same as internal —
+    Printify only takes over production/shipping after payment — so price
+    and variants stay live; only stock tracking is forced off (Printify
+    makes each one on demand, so there is no real stock to track)."""
     if body.sales_destination == "shopify_external":
         url = _validate_shopify_product_url(body.shopify_product_url)
         if not url:
@@ -44191,9 +44228,26 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "shopify_product_url": url,
             "shopify_display_price": round(float(body.shopify_display_price), 2) if body.shopify_display_price is not None else None,
             "shopify_from_price": bool(body.shopify_from_price),
+            "printify_product_id": None,
             "featured": bool(body.featured),
             "price": 0.0,
             "cost": None,
+            "low_stock_threshold": None,
+            "track_inventory": False,
+        }
+    if body.sales_destination == "printify":
+        printify_product_id = (body.printify_product_id or "").strip()
+        if not printify_product_id:
+            raise HTTPException(status_code=400, detail="A Printify product ID is required for a Printify-fulfilled listing.")
+        return {
+            "sales_destination": "printify",
+            "shopify_product_url": None,
+            "shopify_display_price": None,
+            "shopify_from_price": False,
+            "printify_product_id": printify_product_id,
+            "featured": bool(body.featured),
+            "price": round(float(body.price), 2),
+            "cost": round(float(body.cost), 2) if body.cost is not None else None,
             "low_stock_threshold": None,
             "track_inventory": False,
         }
@@ -44202,12 +44256,26 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
         "shopify_product_url": None,
         "shopify_display_price": None,
         "shopify_from_price": False,
+        "printify_product_id": None,
         "featured": bool(body.featured),
         "price": round(float(body.price), 2),
         "cost": round(float(body.cost), 2) if body.cost is not None else None,
         "low_stock_threshold": body.low_stock_threshold,
         "track_inventory": body.track_inventory,
     }
+
+
+def _validate_printify_variants(variants: List[dict]) -> None:
+    """A printify product is useless to checkout without at least one size,
+    and each size must be mapped to the Printify variant id it actually
+    submits production against — refuse the save rather than silently
+    letting a to-be-fixed-later blank through to a real customer order."""
+    if not variants:
+        raise HTTPException(status_code=400, detail="A Printify-fulfilled listing needs at least one size/option.")
+    missing = [v["name"] for v in variants if not (v.get("printify_variant_id") or "").strip()]
+    if missing:
+        names = ", ".join(missing)
+        raise HTTPException(status_code=400, detail=f"Missing Printify variant ID for: {names}.")
 
 
 def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: List["PosProductVariantIn"]) -> List[dict]:
@@ -44234,6 +44302,7 @@ def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: Lis
                 "sku": (v.sku or "").strip() or None,
                 "price_override": round(float(v.price_override), 2) if v.price_override is not None else None,
                 "stock_on_hand": prior.get("stock_on_hand", 0.0),
+                "printify_variant_id": (v.printify_variant_id or "").strip() or None,
             })
         else:
             out.append({
@@ -44241,6 +44310,7 @@ def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: Lis
                 "sku": (v.sku or "").strip() or None,
                 "price_override": round(float(v.price_override), 2) if v.price_override is not None else None,
                 "stock_on_hand": round(float(v.starting_stock or 0), 3),
+                "printify_variant_id": (v.printify_variant_id or "").strip() or None,
             })
     dropped = [v for v in existing_variants if v["id"] not in seen_ids]
     stocked = [v for v in dropped if float(v.get("stock_on_hand") or 0) > 0.0005]
@@ -44292,9 +44362,12 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         **destination_fields,
         # Shopify-linked listings never carry variants either — Shopify owns
         # inventory/options entirely for those (see _resolve_pos_product_
-        # destination_fields above for the same rule on track_inventory).
+        # destination_fields above for the same rule on track_inventory). A
+        # printify listing keeps them — its whole point is selling sizes.
         "variants": [] if is_shopify else _reconcile_pos_product_variants([], body.variants),
     }
+    if destination_fields["sales_destination"] == "printify":
+        _validate_printify_variants(doc["variants"])
     # Validated against the id this product is about to have, so "related to
     # itself" is caught on the very first save rather than only on edits.
     doc["shop_relationships"] = shop_relationships.normalize(
@@ -44354,6 +44427,8 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "variants": [] if body.sales_destination == "shopify_external"
                     else _reconcile_pos_product_variants(existing.get("variants") or [], body.variants),
     }
+    if patch["sales_destination"] == "printify":
+        _validate_printify_variants(patch["variants"])
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
     return {**existing, **patch}
 
@@ -44596,10 +44671,17 @@ async def duplicate_pos_product(product_id: str, user: dict = Depends(require_ad
         "stock_on_hand": 0.0,
         "stock_reserved": 0.0,
         "shop_reservations": [],
+        # A duplicate never inherits the original's Printify links — two
+        # products pointing at the same Printify product/variant id would
+        # both submit production orders against the one listing Printify
+        # actually has. The copy needs its own, set before it's sellable
+        # (update_pos_product's _validate_printify_variants enforces this on
+        # the next save).
+        "printify_product_id": None,
         # Fresh ids and zero stock per variant, same "not a stock split" rule
         # as the product itself — never the original's variant ids, which
         # inventory_movements rows for the original still reference.
-        "variants": [{**v, "id": str(uuid.uuid4()), "sku": None, "stock_on_hand": 0.0}
+        "variants": [{**v, "id": str(uuid.uuid4()), "sku": None, "stock_on_hand": 0.0, "printify_variant_id": None}
                      for v in (existing.get("variants") or [])],
         "show_online": False,
         "active": True,
