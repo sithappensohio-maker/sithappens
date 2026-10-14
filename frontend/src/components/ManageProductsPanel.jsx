@@ -8,7 +8,7 @@
  * product's info (name/price/etc.) never touches stock_on_hand — that only
  * changes via a sale, a void, or an explicit adjustment here.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import RelatedItemsEditor from "./shop/RelatedItemsEditor";
@@ -56,6 +56,103 @@ export function variantsPayload(formVariants) {
   }));
 }
 
+// Printable barcode label for one product or option. Lazy-loads jsbarcode
+// (same "only ship it when actually used" pattern as html2pdf.js elsewhere
+// in this app) and renders the SAME code into every copy at once via
+// JsBarcode's selector form, since every copy on the sheet is identical.
+//
+// A product/option with no barcode yet gets one generated server-side on
+// open (POST .../generate-sku) — idempotent and collision-checked there,
+// never invented client-side. `onSkuResolved` hands the result back to the
+// caller's own form state so a later Save can't silently wipe it out by
+// sending back the stale blank value.
+export function PrintLabelsModal({ productId, variantId = null, itemName, initialSku, price, onClose, onSkuResolved }) {
+  const [sku, setSku] = useState(initialSku || "");
+  const [resolving, setResolving] = useState(!initialSku);
+  const [copies, setCopies] = useState(1);
+  const barcodeContainerRef = useRef(null);
+
+  useEffect(() => {
+    if (initialSku) return;
+    let cancelled = false;
+    setResolving(true);
+    const path = variantId
+      ? `/pos/products/${productId}/variants/${variantId}/generate-sku`
+      : `/pos/products/${productId}/generate-sku`;
+    api.post(path)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setSku(data.sku);
+        onSkuResolved?.(data.sku);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        toast.error(e?.response?.data?.detail || "Could not generate a barcode");
+        onClose();
+      })
+      .finally(() => { if (!cancelled) setResolving(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!sku || resolving || !barcodeContainerRef.current) return;
+    let cancelled = false;
+    import("jsbarcode").then((mod) => {
+      if (cancelled) return;
+      const JsBarcode = mod.default || mod;
+      // JsBarcode's selector form wants a real Array, not a NodeList — it
+      // silently renders nothing (no error) if handed one directly.
+      const nodes = Array.from(barcodeContainerRef.current?.querySelectorAll(".print-label-barcode") || []);
+      if (nodes.length) JsBarcode(nodes, sku, { format: "CODE128", width: 2, height: 50, fontSize: 14, margin: 4 });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sku, resolving, copies]);
+
+  const copyCount = Math.min(50, Math.max(1, Number(copies) || 1));
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4" onClick={onClose} data-testid="print-labels-modal">
+      <style>{`@media print { .no-print{display:none!important;} body{background:white!important;} .print-label{break-inside:avoid;} }`}</style>
+      <div onClick={(e) => e.stopPropagation()} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-6 space-y-4">
+        <div className="no-print space-y-4">
+          <p className="text-shText text-lg font-black uppercase tracking-widest">Print Barcode Label</p>
+          {resolving ? (
+            <p className="text-shTextMuted text-sm">Generating a barcode…</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Copies</label>
+                <input type="number" min={1} max={50} value={copies} data-testid="print-labels-copies"
+                       onChange={(e) => setCopies(e.target.value)}
+                       className="w-20 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={onClose} className="text-shTextMuted font-black uppercase text-sm tracking-widest">Close</button>
+                <button onClick={() => window.print()} data-testid="print-labels-print-btn"
+                        className="bg-shPrimary text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest">
+                  <i className="fas fa-print mr-1" />Print
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        {!resolving && (
+          <div ref={barcodeContainerRef} className="flex flex-wrap gap-3 justify-center" data-testid="print-labels-sheet">
+            {Array.from({ length: copyCount }).map((_, i) => (
+              <div key={i} className="print-label border border-shBorder rounded p-2 text-center bg-white" style={{ width: 220 }}>
+                <p className="text-black text-[12px] font-bold truncate">{itemName}</p>
+                <svg className="print-label-barcode mx-auto" />
+                {price != null && <p className="text-black text-[12px] font-black">${Number(price).toFixed(2)}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Shared product add/edit form — used by this panel AND the unified Shop
 // Manager Items tab. Parent owns `form`/`setForm`/`originalImageId` state
 // and the actual save call (mirrors ProgramEditor's pattern in Programs.jsx);
@@ -93,6 +190,13 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
     return { ...f, variants: copy };
   });
   const removeVariantRow = (i) => setForm((f) => ({ ...f, variants: (f.variants || []).filter((_, idx) => idx !== i) }));
+
+  // Print Barcode Label — same narrow, documented exception as Receive/
+  // Adjust below: {kind: "product"} for the plain product's own sku,
+  // {kind: "variant", index} for one option's. Only ever opened for an
+  // EXISTING row (a real id to generate/attach a barcode to), never a
+  // not-yet-saved product or option.
+  const [printTarget, setPrintTarget] = useState(null);
 
   // Inline Receive/Adjust for an EXISTING variant's stock — the one place
   // this form steps outside "purely presentational" (see the file-level
@@ -184,14 +288,22 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             )}
             <div className="col-span-2">
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Barcode / SKU (optional)</label>
-              <input value={form.sku || ""} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                     placeholder="Scan it here, or type it in" data-testid="product-sku"
-                     disabled={variants.length > 0}
-                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+              <div className="flex gap-2">
+                <input value={form.sku || ""} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                       placeholder="Scan it here, or type it in" data-testid="product-sku"
+                       disabled={variants.length > 0}
+                       className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+                {editingId && variants.length === 0 && (
+                  <button type="button" onClick={() => setPrintTarget({ kind: "product" })} data-testid="product-print-label"
+                          className="text-shPrimary text-[11px] font-black uppercase tracking-widest whitespace-nowrap px-2">
+                    <i className="fas fa-print mr-1" />Print Label
+                  </button>
+                )}
+              </div>
               <p className="text-[11px] text-shTextMuted mt-0.5">
                 {variants.length > 0
                   ? "This product has options below — each option gets its own code instead."
-                  : "Scanning this at the register adds the item straight to the cart."}
+                  : "Scanning this at the register adds the item straight to the cart. No code yet? Print Label will make one."}
               </p>
             </div>
           </>
@@ -310,9 +422,18 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                     </div>
                     <div>
                       <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Barcode / SKU</label>
-                      <input value={v.sku || ""} onChange={(e) => updateVariantRow(i, { sku: e.target.value })}
-                             placeholder="Scan it here" data-testid={`product-variant-sku-${i}`}
-                             className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                      <div className="flex gap-1.5">
+                        <input value={v.sku || ""} onChange={(e) => updateVariantRow(i, { sku: e.target.value })}
+                               placeholder="Scan it here" data-testid={`product-variant-sku-${i}`}
+                               className="flex-1 bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
+                        {v.id && (
+                          <button type="button" onClick={() => setPrintTarget({ kind: "variant", index: i })}
+                                  data-testid={`product-variant-print-label-${i}`}
+                                  className="text-shPrimary text-[10px] font-black uppercase tracking-widest whitespace-nowrap px-1">
+                            <i className="fas fa-print" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] text-shTextMuted uppercase tracking-widest">Price (blank = same as above)</label>
@@ -525,6 +646,32 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
+
+      {printTarget && printTarget.kind === "product" && (
+        <PrintLabelsModal
+          productId={editingId}
+          itemName={form.name}
+          initialSku={form.sku || ""}
+          price={form.price !== "" ? Number(form.price) : null}
+          onSkuResolved={(sku) => setForm((f) => ({ ...f, sku }))}
+          onClose={() => setPrintTarget(null)}
+        />
+      )}
+      {printTarget && printTarget.kind === "variant" && (() => {
+        const v = variants[printTarget.index];
+        if (!v) return null;
+        return (
+          <PrintLabelsModal
+            productId={editingId}
+            variantId={v.id}
+            itemName={`${form.name} — ${v.name}`}
+            initialSku={v.sku || ""}
+            price={v.price_override !== "" && v.price_override != null ? Number(v.price_override) : (form.price !== "" ? Number(form.price) : null)}
+            onSkuResolved={(sku) => updateVariantRow(printTarget.index, { sku })}
+            onClose={() => setPrintTarget(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

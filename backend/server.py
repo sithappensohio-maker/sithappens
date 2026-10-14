@@ -41657,6 +41657,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
         base.update({
             "show_online": bool(doc.get("show_online")),
             "archived": bool(doc.get("archived")),
+            "sku": None if is_shopify else doc.get("sku"),
             "list_price": None if is_shopify else round(float(doc.get("price") or 0), 2),
             "pricing_variable": not is_shopify,  # Shopify-linked items are never overridden — Shopify owns that price.
             "sales_destination": doc.get("sales_destination") or "internal",
@@ -44612,6 +44613,57 @@ async def duplicate_pos_product(product_id: str, user: dict = Depends(require_ad
     await db.pos_products.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+# A barcode generated here for printing, never a real manufacturer code — "2"
+# is the GS1-reserved in-store-use UPC-A prefix, so if this business ever
+# switches to a true UPC/EAN printer later, these codes are already in the
+# right reserved range and will never collide with a factory barcode.
+async def _unique_generated_sku() -> str:
+    for _ in range(20):
+        candidate = "2" + "".join(str(secrets.randbelow(10)) for _ in range(9))
+        taken = await db.pos_products.find_one(
+            {"$or": [{"sku": candidate}, {"variants.sku": candidate}]}, {"_id": 0, "id": 1})
+        if not taken:
+            return candidate
+    raise HTTPException(status_code=500, detail="Could not generate a unique barcode — try again.")
+
+
+async def generate_pos_product_sku(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """For printing a label on a product that doesn't have a barcode yet.
+    Idempotent — calling it again on a product that already has one just
+    hands that back rather than generating (and silently orphaning) a
+    second code. Refused for a product with options: each option gets its
+    own code instead (see generate_pos_product_variant_sku)."""
+    product = await db.pos_products.find_one({"id": product_id}, {"_id": 0, "sku": 1, "variants": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.get("sku"):
+        return {"sku": product["sku"]}
+    if product.get("variants"):
+        raise HTTPException(status_code=400, detail="This product has options — generate a barcode for each option instead.")
+    sku = await _unique_generated_sku()
+    await db.pos_products.update_one({"id": product_id}, {"$set": {"sku": sku, "updated_at": now_iso()}})
+    return {"sku": sku}
+
+
+async def generate_pos_product_variant_sku(
+    product_id: str, variant_id: str, user: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """Same as generate_pos_product_sku, scoped to one option."""
+    product = await db.pos_products.find_one({"id": product_id}, {"_id": 0, "variants": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    variants = product.get("variants") or []
+    idx = next((i for i, v in enumerate(variants) if v.get("id") == variant_id), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Option not found")
+    if variants[idx].get("sku"):
+        return {"sku": variants[idx]["sku"]}
+    sku = await _unique_generated_sku()
+    await db.pos_products.update_one(
+        {"id": product_id}, {"$set": {f"variants.{idx}.sku": sku, "updated_at": now_iso()}})
+    return {"sku": sku}
 
 
 async def _pos_product_has_history(product_id: str) -> bool:

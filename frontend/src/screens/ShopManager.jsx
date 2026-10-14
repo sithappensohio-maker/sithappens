@@ -7,7 +7,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 import { pickupActionToast } from "../lib/shopPolish";
 import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
-import { ProductEditor, variantsPayload } from "../components/ManageProductsPanel";
+import { ProductEditor, variantsPayload, PrintLabelsModal } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
 import RegisterSalesDashboard from "../components/shop/RegisterSalesDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
@@ -126,6 +126,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [forbidden, setForbidden] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [printLabelTarget, setPrintLabelTarget] = useState(null); // {productId, itemName, initialSku, price} — row-level quick print, non-variant products only
 
   const load = useCallback(() => {
     setLoading(true);
@@ -339,6 +340,12 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
         <CsvImportModal onClose={() => setImportOpen(false)} onApplied={load} />
       )}
 
+      {printLabelTarget && (
+        <PrintLabelsModal {...printLabelTarget}
+          onSkuResolved={load}
+          onClose={() => setPrintLabelTarget(null)} />
+      )}
+
       {forbidden ? (
         <div className="text-center text-shTextMuted py-10 text-sm" data-testid="sm-items-forbidden">
           You don't have permission to view Shop items and pricing. Ask an owner/admin to grant the pricing permission,
@@ -442,6 +449,11 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                         <button onClick={() => onEditItem(it)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Edit</button>
                         <button onClick={() => duplicateItem(it)} disabled={busyId === it.id} data-testid={`sm-duplicate-${it.id}`}
                                 className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Duplicate</button>
+                        {it.kind === "physical_product" && it.sales_destination !== "shopify_external" && (!it.variants || it.variants.length === 0) && (
+                          <button onClick={() => setPrintLabelTarget({ productId: it.id, itemName: it.name, initialSku: it.sku || "", price: it.list_price })}
+                                  data-testid={`sm-print-label-${it.id}`}
+                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Print Label</button>
+                        )}
                         {it.kind === "physical_product" && it.track_inventory && (
                           <>
                             <button onClick={() => openReceiveStock(it)} data-testid={`sm-receive-stock-${it.id}`}

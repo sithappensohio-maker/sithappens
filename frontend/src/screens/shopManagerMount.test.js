@@ -141,6 +141,24 @@ describe("the Shop Manager survives being rendered", () => {
     noReferenceErrors();
     expect(byTestId("register-sales-dashboard")).toBeTruthy();
   });
+
+  test("Print Label is offered for a plain physical product, never for a pack or a program", async () => {
+    await mount(<ShopManager />);
+    expect(byTestId("sm-print-label-p1")).toBeTruthy();
+    expect(byTestId("sm-print-label-k1")).toBeFalsy();
+    expect(byTestId("sm-print-label-t1")).toBeFalsy();
+  });
+
+  test("clicking Print Label opens the print sheet for that product, with no sku call yet made", async () => {
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { sku: "2000000000" } });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-print-label-p1").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    noReferenceErrors();
+    expect(byTestId("print-labels-modal")).toBeTruthy();
+    expect(api.post).toHaveBeenCalledWith("/pos/products/p1/generate-sku");
+  });
 });
 
 describe("CSV import", () => {
