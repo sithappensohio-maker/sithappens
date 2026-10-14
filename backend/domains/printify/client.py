@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -35,6 +36,28 @@ PRINTIFY_SHOP_ID = os.environ.get("PRINTIFY_SHOP_ID", "")
 PRINTIFY_ENABLED = bool(PRINTIFY_API_KEY and PRINTIFY_SHOP_ID)
 API_BASE = "https://api.printify.com/v1"
 REQUEST_TIMEOUT_SECONDS = 20.0
+
+# The business's own ship-to address, for a "pickup" order — Printify always
+# ships somewhere; pickup just means "to us," not "nowhere." Configured once
+# via plain env vars alongside PRINTIFY_API_KEY, same convention as
+# everything else here — deliberately NOT a guessed default (a wrong or
+# blank address is a real package sent to a real wrong place), so a row
+# needing this before it's set just holds for retry (see process_outbox).
+PRINTIFY_PICKUP_ADDRESS_ENV = {
+    "first_name": "PRINTIFY_PICKUP_FIRST_NAME",
+    "last_name": "PRINTIFY_PICKUP_LAST_NAME",
+    "email": "PRINTIFY_PICKUP_EMAIL",
+    "phone": "PRINTIFY_PICKUP_PHONE",
+    "address1": "PRINTIFY_PICKUP_ADDRESS1",
+    "address2": "PRINTIFY_PICKUP_ADDRESS2",
+    "city": "PRINTIFY_PICKUP_CITY",
+    "region": "PRINTIFY_PICKUP_REGION",
+    "zip": "PRINTIFY_PICKUP_ZIP",
+}
+OUTBOX_BATCH_LIMIT = 20
+# ~ 14 hours of backoff (5 + 10 + 20 + 40 + 80 + 160 + 320 + 360 min) before a
+# row is surfaced as needing a human rather than retried again automatically.
+OUTBOX_MAX_ATTEMPTS = 8
 
 
 class PrintifyNotConfigured(RuntimeError):
@@ -138,3 +161,92 @@ async def get_order(printify_order_id: str) -> Dict[str, Any]:
     if resp.status_code >= 300:
         raise PrintifyApiError(resp.status_code, resp.text)
     return resp.json()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def pickup_address() -> Optional[PrintifyAddress]:
+    """The configured business address, or None when any required field is
+    missing — see PRINTIFY_PICKUP_ADDRESS_ENV above for why this never
+    guesses a default."""
+    values = {field: os.environ.get(env_name, "").strip() for field, env_name in PRINTIFY_PICKUP_ADDRESS_ENV.items()}
+    required = ("first_name", "last_name", "address1", "city", "region", "zip")
+    if not all(values.get(f) for f in required):
+        return None
+    return PrintifyAddress(country="US", **values)
+
+
+async def _hold_outbox_row(db, row: dict, error: str) -> None:
+    """Records a failed submission attempt with exponential backoff — same
+    shape as email_service.process_email_outbox's retry formula. A row that
+    has exhausted OUTBOX_MAX_ATTEMPTS is marked "stuck" instead of
+    "pending" so it stops being retried blindly and is visible as needing a
+    human look (mirrors domains/shop/abandon.py's stuck-row surfacing)."""
+    attempts = int(row.get("attempts") or 0) + 1
+    delay_minutes = min(360, 5 * (2 ** min(attempts - 1, 6)))
+    next_attempt_at = (datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)).isoformat()
+    await db.printify_order_outbox.update_one(
+        {"id": row["id"]},
+        {"$set": {
+            "attempts": attempts, "last_error": error[:500], "next_attempt_at": next_attempt_at,
+            "status": "stuck" if attempts >= OUTBOX_MAX_ATTEMPTS else "pending",
+            "updated_at": _now_iso(),
+        }},
+    )
+
+
+async def process_outbox(db) -> Dict[str, int]:
+    """Submits every due printify_order_outbox row to Printify. Runs every
+    scheduler tick (see server.py's _scheduler_jobs) — a plain no-op return
+    when Printify isn't configured yet, so it's always safe to register
+    regardless of whether an admin has set it up. Each row's own
+    (source, source_id) is where the order actually came from (a register
+    sale today; a Shop order in a later phase) — this function only reads
+    the outbox queue, never those collections directly."""
+    if not PRINTIFY_ENABLED:
+        return {"skipped": 1, "submitted": 0, "held": 0, "checked": 0}
+    now = _now_iso()
+    rows = await db.printify_order_outbox.find(
+        {"status": "pending", "next_attempt_at": {"$lte": now}}, {"_id": 0},
+    ).sort("created_at", 1).limit(OUTBOX_BATCH_LIMIT).to_list(length=OUTBOX_BATCH_LIMIT)
+
+    submitted = held = 0
+    for row in rows:
+        if row["fulfillment_method"] == "ship":
+            address = PrintifyAddress(**row["shipping_address"])
+        else:
+            address = pickup_address()
+            if address is None:
+                await _hold_outbox_row(db, row, "Pickup address isn't configured — set PRINTIFY_PICKUP_* env vars to ship this to the business.")
+                held += 1
+                continue
+
+        line_items = [
+            PrintifyLineItem(li["printify_product_id"], li["printify_variant_id"], li["quantity"])
+            for li in row["line_items"]
+        ]
+        missing = [li["name"] for li, pli in zip(row["line_items"], line_items) if not pli.product_id or not pli.variant_id]
+        if missing:
+            await _hold_outbox_row(db, row, f"Missing Printify product/variant mapping for: {', '.join(missing)}.")
+            held += 1
+            continue
+
+        try:
+            result = await create_order(
+                external_id=row["source_id"], line_items=line_items, address_to=address,
+                send_shipping_notification=(row["fulfillment_method"] == "ship"),
+            )
+        except Exception as exc:
+            await _hold_outbox_row(db, row, str(exc))
+            held += 1
+            continue
+
+        await db.printify_order_outbox.update_one(
+            {"id": row["id"]},
+            {"$set": {"status": "submitted", "printify_order_id": result.get("id"), "updated_at": _now_iso()}},
+        )
+        submitted += 1
+
+    return {"skipped": 0, "submitted": submitted, "held": held, "checked": len(rows)}

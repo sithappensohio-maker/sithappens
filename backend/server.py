@@ -111,6 +111,7 @@ from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
 from domains.shop import income as shop_income
+from domains.printify import client as printify_client
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
@@ -30482,6 +30483,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("archive_sync", lambda: _run_once_per_business_day(client_archive.SYNC_JOB, lambda: client_archive.sync(db))),  # archived families stay archived (audit #36)
         ("prepaid_session_close", lambda: prepaid_close.run_job()),  # finished program lessons use their credit (audit #38)
         ("school_enrollment_mirror_sync", lambda: _run_once_per_business_day(school_mirror.SYNC_JOB, lambda: school_mirror.sync(db))),  # School HQ's copy (audit #54)
+        # Queued Printify production orders — a no-op whenever PRINTIFY_API_KEY isn't set.
+        ("printify_outbox", lambda: printify_client.process_outbox(db)),
     ]
 
 
