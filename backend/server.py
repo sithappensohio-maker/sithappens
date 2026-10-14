@@ -37650,6 +37650,83 @@ async def admin_register_closeouts(
     return {"range": {"start_date": sd, "end_date": ed}, "closeouts": rows, "count": len(rows)}
 
 
+async def admin_register_sales_by_product(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Walk-up register sales by product/option.
+
+    The Shop Manager's Insights tab (domains/shop/analytics_reports.py) only
+    ever reads shop_orders — the online channel. A register sale never shows
+    up there at all, so this is the register's own "what sells" answer,
+    built from pos_sales directly.
+
+    A voided sale never happened and is excluded outright. A partial return
+    reduces a line's net units (qty minus its own returned_qty) and its
+    revenue is prorated by that same net-of-return share — the authoritative
+    per-unit refund math lives in domains/pos/services.py and isn't
+    duplicated here for a display-only report. Revenue is net_amount
+    (post-discount, pre-tax — the same "tax isn't revenue" convention the
+    online analytics uses), never list_price or the tax-inclusive total.
+    """
+    sd, ed, _days = _date_range_for_register(start_date, end_date)
+    sales = await db.pos_sales.find(
+        {"business_date": {"$gte": sd, "$lte": ed}, "status": {"$ne": "voided"}},
+        {"_id": 0, "line_items": 1},
+    ).to_list(50000)
+
+    rows: Dict[Tuple[str, Optional[str]], Dict[str, Any]] = {}
+    for sale in sales:
+        for line in sale.get("line_items") or []:
+            if line.get("kind") != "retail" or not line.get("product_id"):
+                continue
+            qty = float(line.get("qty") or 0)
+            if qty <= 0:
+                continue
+            net_qty = max(0.0, qty - float(line.get("returned_qty") or 0))
+            if net_qty <= 0:
+                continue
+            key = (line["product_id"], line.get("variant_id"))
+            row = rows.setdefault(key, {
+                "product_id": line["product_id"], "variant_id": line.get("variant_id"),
+                "name": line.get("description") or "", "units": 0.0, "revenue": 0.0,
+            })
+            row["units"] = round(row["units"] + net_qty, 2)
+            row["revenue"] = round(row["revenue"] + float(line.get("net_amount") or 0) * (net_qty / qty), 2)
+
+    products = sorted(rows.values(), key=lambda r: (-r["revenue"], -r["units"], r["name"]))
+
+    # Dead stock: active, register-visible, tracked-inventory products that
+    # sold ZERO units this period despite having stock to sell. There is no
+    # "looked at" concept at a physical register, so unlike the online Shop's
+    # "Looked at, not bought" this can only ever say nothing moved, not why.
+    sold_product_ids = {pid for pid, _variant_id in rows.keys()}
+    not_sold = []
+    async for p in db.pos_products.find(
+        {"track_inventory": True, "active": {"$ne": False}, "archived": {"$ne": True}, "show_at_register": {"$ne": False}},
+        {"_id": 0, "id": 1, "name": 1, "stock_on_hand": 1, "variants": 1},
+    ):
+        if p["id"] in sold_product_ids:
+            continue
+        variants = p.get("variants") or []
+        stock = sum(float(v.get("stock_on_hand") or 0) for v in variants) if variants else float(p.get("stock_on_hand") or 0)
+        if stock <= 0:
+            continue  # out of stock isn't "dead stock" — there was nothing to sell
+        not_sold.append({"product_id": p["id"], "name": p.get("name") or "", "stock_on_hand": round(stock, 2)})
+    not_sold.sort(key=lambda r: (-r["stock_on_hand"], r["name"]))
+
+    return {
+        "range": {"start_date": sd, "end_date": ed},
+        "products": products,
+        "not_sold": not_sold[:50],
+        "totals": {
+            "units": round(sum(r["units"] for r in products), 2),
+            "revenue": round(sum(r["revenue"] for r in products), 2),
+        },
+    }
+
+
 def _activity_tender_details(a: Dict[str, Any], method_labels: Dict[str, str]) -> str:
     """Human-readable tender composition for one activity row (Step 4B-3).
 

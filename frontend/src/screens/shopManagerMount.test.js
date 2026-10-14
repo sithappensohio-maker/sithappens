@@ -17,6 +17,7 @@ import { MemoryRouter } from "react-router-dom";
 import { ConfirmProvider } from "../lib/useConfirm";
 import ShopManager from "./ShopManager";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
+import RegisterSalesDashboard from "../components/shop/RegisterSalesDashboard";
 
 jest.mock("../lib/api", () => ({
   api: { get: jest.fn(), post: jest.fn(), put: jest.fn(), delete: jest.fn(),
@@ -56,6 +57,13 @@ const OVERVIEW = {
   activity: { search: 20, search_zero_results: 4 },
 };
 
+const REGISTER_SALES = {
+  range: { start_date: "2026-09-15", end_date: "2026-09-21" },
+  products: [{ product_id: "p1", variant_id: null, name: "Rope Leash", units: 4, revenue: 100 }],
+  not_sold: [{ product_id: "p2", name: "Winter Coat — Large", stock_on_hand: 6 }],
+  totals: { units: 4, revenue: 100 },
+};
+
 let container, root, errors;
 
 beforeEach(() => {
@@ -66,6 +74,7 @@ beforeEach(() => {
   api.get.mockReset();
   api.get.mockImplementation((url) => {
     if (url.includes("/analytics/overview")) return Promise.resolve({ data: OVERVIEW });
+    if (url.includes("/register/sales-by-product")) return Promise.resolve({ data: REGISTER_SALES });
     if (url.includes("/shop-manager/items")) return Promise.resolve({ data: { items: ITEMS } });
     if (url.includes("/programs/meta")) return Promise.resolve({ data: { types: [], focuses: [] } });
     if (url.includes("/programs")) return Promise.resolve({ data: [] });
@@ -123,6 +132,14 @@ describe("the Shop Manager survives being rendered", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     noReferenceErrors();
     expect(byTestId("shop-analytics-dashboard")).toBeTruthy();
+  });
+
+  test("the Register Sales tab renders the dashboard", async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-register_sales").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    noReferenceErrors();
+    expect(byTestId("register-sales-dashboard")).toBeTruthy();
   });
 });
 
@@ -193,6 +210,59 @@ describe("the analytics dashboard", () => {
     expect(text()).toContain("Every search found something.");
     // An average of nothing is not zero — it is nothing.
     expect(text()).toContain("—");
+  });
+
+  test("a failure says so instead of showing an empty dashboard", async () => {
+    api.get.mockImplementation(() => Promise.reject({ response: { data: { detail: "Nope" } } }));
+    await show();
+    expect(document.querySelector('[role="alert"]').textContent).toContain("Nope");
+  });
+});
+
+describe("the register sales dashboard", () => {
+  const show = async () => {
+    await mount(<RegisterSalesDashboard />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  };
+
+  test("it shows register units/revenue, separately from the online Shop's own numbers", async () => {
+    await show();
+    noReferenceErrors();
+    expect(text()).toContain("$100.00");
+    expect(text()).toContain("Pre-tax, net of returns");
+  });
+
+  test("by-product table lists what actually sold at the register", async () => {
+    await show();
+    expect(byTestId("register-sales-products").textContent).toContain("Rope Leash");
+  });
+
+  test("not-moving table surfaces in-stock items with zero register sales", async () => {
+    await show();
+    expect(byTestId("register-sales-not-sold").textContent).toContain("Winter Coat — Large");
+  });
+
+  test("date range controls are real buttons with pressed state", async () => {
+    await show();
+    const btn = byTestId("register-sales-range-30");
+    expect(btn.tagName).toBe("BUTTON");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(byTestId("register-sales-range-7").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("an empty period says so rather than printing zeroes everywhere", async () => {
+    api.get.mockImplementation((url) => {
+      if (url.includes("/register/sales-by-product")) {
+        return Promise.resolve({ data: {
+          range: { start_date: "2026-09-15", end_date: "2026-09-21" },
+          products: [], not_sold: [], totals: { units: 0, revenue: 0 },
+        } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    await show();
+    expect(text()).toContain("No register sales in this period.");
+    expect(text()).toContain("everything in stock sold at least once");
   });
 
   test("a failure says so instead of showing an empty dashboard", async () => {

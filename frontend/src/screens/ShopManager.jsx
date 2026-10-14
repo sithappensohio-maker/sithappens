@@ -9,6 +9,7 @@ import { pickupActionToast } from "../lib/shopPolish";
 import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
 import { ProductEditor, variantsPayload } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
+import RegisterSalesDashboard from "../components/shop/RegisterSalesDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor, fetchProgramById } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
@@ -1815,6 +1816,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         items={[
           { key: "items", label: "Items", icon: "fa-boxes-stacked", testid: "sm-tab-items" },
           { key: "insights", label: "Insights", icon: "fa-chart-simple", testid: "sm-tab-insights", accent: "cyan" },
+          { key: "register_sales", label: "Register Sales", icon: "fa-cash-register", testid: "sm-tab-register_sales", accent: "cyan" },
           { key: "categories", label: "Categories & Layout", icon: "fa-layer-group", testid: "sm-tab-categories", accent: "cyan" },
           { key: "shop_settings", label: "Shop Settings", icon: "fa-sliders", testid: "sm-tab-shop_settings", accent: "cyan" },
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
@@ -1824,6 +1826,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
 
       {tab === "items" && <ItemsTab key={refreshKey} onEditItem={editItem} onAddShopItem={() => setPickerOpen(true)} />}
       {tab === "insights" && <ShopAnalyticsDashboard key={`insights-${refreshKey}`} />}
+      {tab === "register_sales" && <RegisterSalesDashboard key={`register-sales-${refreshKey}`} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
       {tab === "shop_settings" && <ShopSettingsTab key={`shop-settings-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}

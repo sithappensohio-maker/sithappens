@@ -10,6 +10,7 @@ from __future__ import annotations
 ROUTES = [
     ('GET', '/admin/register/range', 'admin_register_range', None),
     ('GET', '/admin/register/closeouts', 'admin_register_closeouts', None),
+    ('GET', '/admin/register/sales-by-product', 'admin_register_sales_by_product', None),
     ('GET', '/admin/register/export.csv', 'admin_register_export_csv', None),
     ('GET', '/admin/register/tax-packet.zip', 'admin_register_tax_packet_zip', None),
     ('GET', '/admin/register/day', 'admin_register_day', None),
