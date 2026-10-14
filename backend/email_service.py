@@ -3227,35 +3227,24 @@ async def send_contact_inquiry_received(to_email: str, client_name: str, dog_nam
     )
 
 
-def _dog_hero_photo(dog: dict) -> str:
-    """The picture to feature for a dog: first gallery photo, else the
-    profile photo (`photo`) — the one every UI surface uses and the one most
-    dogs actually have. The birthday card used to read only the gallery."""
-    photos = dog.get("photos") or []
-    first = photos[0] if photos and isinstance(photos[0], str) else ""
-    return first or (dog.get("photo") if isinstance(dog.get("photo"), str) else "") or ""
+# A branded graphic (not a per-dog photo) hosted as a frontend static asset,
+# same as the admin-settings logo. Shown whole, never CSS-cropped: Outlook's
+# Word rendering engine ignores object-fit, so a crop that depended on it
+# would silently break there. Width-only scaling keeps the full card intact
+# on every client.
+BIRTHDAY_CARD_IMAGE_PATH = "/email/birthday-card.jpg"
 
 
 async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
-    """Wish the owner a happy birthday for their dog. Uses the dog's first
-    photo (if any) as a hero image. No discount code — just a card."""
+    """Wish the owner a happy birthday for their dog. Every card carries the
+    same branded birthday graphic — no discount code, just a card."""
     to_email = client.get("email", "")
     if not to_email:
         return False
     dog_name = (dog.get("name") or "your pup").strip()
     breed = (dog.get("breed") or "").strip()
     first_name = (client.get("name") or "there").split(" ")[0]
-    hero = _dog_hero_photo(dog)
-    hero_html = ""
-    if hero:
-        hero_html = (
-            f'<div style="margin:-28px -32px 20px -32px;background:#0f172a;">'
-            f'<img src="{hero}" alt="{dog_name}" '
-            f'style="display:block;width:100%;max-height:300px;object-fit:cover;" />'
-            f"</div>"
-        )
     intro = (
-        f"{hero_html}"
         f"Hi {_h(first_name)} — it's a special day! 🎂<br/><br/>"
         f"All of us at Sit Happens want to wish <strong>{_h(dog_name)}</strong> "
         f"the happiest birthday. Whether it's their 1st or their 15th, every "
@@ -3265,6 +3254,19 @@ async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: s
         ("Birthday Pup", dog_name + (f" · {breed}" if breed else "")),
         ("From", "The Sit Happens crew 🐾"),
     ]
+    # body_html — unlike intro/title, which an admin can override from
+    # Settings → Email Templates (see _render) — always reaches the send, so
+    # it's the one place a caller can guarantee something shows up no matter
+    # how the text above it has been customized. A relative src means
+    # nothing inside an email client (no page origin to resolve against), so
+    # an unconfigured APP_PUBLIC_URL degrades to no image rather than a
+    # broken icon.
+    body_html = (
+        f'<div style="margin:4px 0 20px 0;">'
+        f'<img src="{APP_PUBLIC_URL}{BIRTHDAY_CARD_IMAGE_PATH}" alt="Happy Birthday, {_h(dog_name)}!" '
+        f'style="display:block;width:100%;height:auto;border-radius:10px;" />'
+        f"</div>"
+    ) if APP_PUBLIC_URL else ""
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     return bool(await _dispatch(
         slug="client_dog_birthday",
@@ -3276,6 +3278,7 @@ async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: s
             "age": dog.get("age", "") or "",
         },
         rows=rows,
+        body_html=body_html,
         cta_url=cta_url,
         fallback_title=f"🎉 Happy birthday, {dog_name}!",
         fallback_intro=intro,

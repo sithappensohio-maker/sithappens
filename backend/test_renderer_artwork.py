@@ -1,7 +1,7 @@
 """Uploaded artwork reaches every renderer: the Portal trophy ladder
 projection carries the upload, the thermal receipt payload carries a
-server-rasterised logo, the birthday email falls back to the profile photo,
-and the dog timeline counts the profile photo.
+server-rasterised logo, the birthday email carries the branded birthday
+graphic, and the dog timeline counts the profile photo.
 """
 import base64
 import contextlib
@@ -75,11 +75,95 @@ def test_logo_rasterizes_to_escpos_rows_and_attaches_to_pos_payload():
         server._LOGO_RASTER_CACHE.pop(media_id, None)
 
 
-def test_birthday_hero_falls_back_to_profile_photo():
-    assert email_service._dog_hero_photo({"photos": ["gallery"], "photo": "profile"}) == "gallery"
-    assert email_service._dog_hero_photo({"photos": [], "photo": "profile"}) == "profile"
-    assert email_service._dog_hero_photo({"photo": "profile"}) == "profile"
-    assert email_service._dog_hero_photo({"photos": [None], "photo": None}) == ""
+def test_birthday_email_always_carries_the_branded_hero_image():
+    """The birthday card's image is the fixed branded graphic, not a per-dog
+    photo — shown the same way whether or not the dog has one, and full
+    width/auto height (never object-fit) so Outlook's Word renderer, which
+    ignores object-fit, doesn't crop or distort it. It travels via
+    body_html, not intro — see the next test for why that matters."""
+    captured = {}
+
+    async def capture(*, body_html, **kw):
+        captured["body_html"] = body_html
+        return True
+
+    orig_dispatch = email_service._dispatch
+    orig_url = email_service.APP_PUBLIC_URL
+    email_service._dispatch = capture
+    email_service.APP_PUBLIC_URL = "https://sithappens.example"
+    try:
+        client = {"name": "Jamie Owner", "email": "jamie@example.com"}
+        with_photo = {"name": "Fido", "breed": "Beagle", "photos": ["https://example.com/fido.jpg"]}
+        without_photo = {"name": "Rex", "breed": ""}
+        run(email_service.notify_client_dog_birthday(client, with_photo))
+        body_with_photo = captured["body_html"]
+        run(email_service.notify_client_dog_birthday(client, without_photo))
+        body_without_photo = captured["body_html"]
+    finally:
+        email_service._dispatch = orig_dispatch
+        email_service.APP_PUBLIC_URL = orig_url
+
+    hero_src = f"https://sithappens.example{email_service.BIRTHDAY_CARD_IMAGE_PATH}"
+    assert hero_src in body_with_photo
+    assert hero_src in body_without_photo
+    assert "https://example.com/fido.jpg" not in body_with_photo  # never the dog's own photo
+    assert "object-fit" not in body_with_photo  # no CSS crop Outlook would ignore
+
+
+def test_birthday_email_skips_the_image_without_a_configured_public_url():
+    """A relative src means nothing inside an email client — no page origin
+    to resolve against — so an unconfigured APP_PUBLIC_URL must degrade to
+    no image, never a broken icon in every birthday card sent."""
+    captured = {}
+
+    async def capture(*, body_html, **kw):
+        captured["body_html"] = body_html
+        return True
+
+    orig_dispatch = email_service._dispatch
+    orig_url = email_service.APP_PUBLIC_URL
+    email_service._dispatch = capture
+    email_service.APP_PUBLIC_URL = ""
+    try:
+        run(email_service.notify_client_dog_birthday(
+            {"name": "Jamie Owner", "email": "jamie@example.com"}, {"name": "Fido", "breed": "Beagle"}))
+    finally:
+        email_service._dispatch = orig_dispatch
+        email_service.APP_PUBLIC_URL = orig_url
+    assert "<img" not in captured["body_html"]
+
+
+def test_birthday_image_survives_an_admin_customized_intro():
+    """Regression guard: _render() lets an admin override intro_html (and the
+    registry itself ships its own default_intro_html, which already differs
+    from notify_client_dog_birthday's own fallback_intro — see
+    email_templates_registry.py) — so a birthday-card image placed in
+    fallback_intro would silently vanish from every real send the moment
+    either of those took priority. body_html is the one slot _render never
+    swaps out, so it has to still be there through the FULL render pipeline,
+    not just in what notify_client_dog_birthday hands to _dispatch."""
+    email_service.APP_PUBLIC_URL = "https://sithappens.example"
+    try:
+        _, html_with_registry_default = run(email_service._render(
+            slug="client_dog_birthday",
+            ctx={"first_name": "Jamie", "client_name": "Jamie Owner", "dog_name": "Fido", "age": "3"},
+            rows=[("Birthday Pup", "Fido · Beagle"), ("From", "The Sit Happens crew 🐾")],
+            body_html=(
+                f'<div style="margin:4px 0 20px 0;">'
+                f'<img src="https://sithappens.example{email_service.BIRTHDAY_CARD_IMAGE_PATH}" alt="Happy Birthday, Fido!" '
+                f'style="display:block;width:100%;height:auto;border-radius:10px;" />'
+                f"</div>"
+            ),
+            fallback_title="unused", fallback_intro="unused — the registry default wins over this",
+            fallback_subject="unused",
+        ))
+    finally:
+        email_service.APP_PUBLIC_URL = ""
+    # The registry's own copy (not notify_client_dog_birthday's fallback_intro) won.
+    assert "Wishing Fido the happiest birthday" in html_with_registry_default
+    assert "unused" not in html_with_registry_default
+    # ...and the image still made it through anyway, via body_html.
+    assert f"https://sithappens.example{email_service.BIRTHDAY_CARD_IMAGE_PATH}" in html_with_registry_default
 
 
 def test_timeline_counts_profile_photo():
