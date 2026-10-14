@@ -404,7 +404,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Weekly tally tiles */}
       {summary && (
-        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="weekly-summary">
+        <div className="max-w-3xl bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">This Week (Mon–Sun)</p>
@@ -486,7 +486,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
-        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
+        <div className="max-w-3xl bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">Longer-Range View</p>
