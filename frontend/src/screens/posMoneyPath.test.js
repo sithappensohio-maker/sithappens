@@ -55,7 +55,7 @@ beforeAll(() => {
 // One taxable product at a price whose tax does not come out round, so a
 // rounding mistake shows up instead of hiding behind a tidy number.
 const WIPES = { kind: "product", id: "p-wipes", name: "Ear Wipes", effective_price: 12.99, list_price: 12.99,
-                in_stock: true, taxable: true, track_inventory: false, category: "Care" };
+                in_stock: true, taxable: true, track_inventory: false, category: "Care", sku: "SKU-WIPES-001" };
 const TOY = { kind: "product", id: "p-toy", name: "Rope Toy", effective_price: 7.00, list_price: 7.00,
               in_stock: true, taxable: true, track_inventory: false, category: "Care" };
 
@@ -174,6 +174,12 @@ const type = async (id, value) => {
   });
   await settle();
 };
+const pressEnter = async (id) => {
+  const el = q(id);
+  if (!el) throw new Error(`no [data-testid="${id}"]`);
+  await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  await settle();
+};
 const text = () => container.textContent;
 const lastSale = () => posted.filter((p) => p.path === "/pos/sales" || p.path === "/pos/checkout").pop();
 
@@ -225,6 +231,31 @@ test("clearing the cart empties it", async () => {
   await click("pos-product-p-wipes");
   expect(all("pos-cart-line")).toHaveLength(1);
   await click("pos-clear-cart");
+  expect(all("pos-cart-line")).toHaveLength(0);
+});
+
+// -------------------------------------------------------------- the scanner
+
+test("scanning a barcode (an exact SKU + Enter) adds the item without a click", async () => {
+  await mount();
+  await type("pos-product-search", "SKU-WIPES-001");
+  await pressEnter("pos-product-search");
+  expect(all("pos-cart-line")).toHaveLength(1);
+  expect(q("pos-product-search").value).toBe(""); // cleared, ready for the next scan
+});
+
+test("an unrecognized code says so instead of silently doing nothing", async () => {
+  await mount();
+  await type("pos-product-search", "NOT-A-REAL-CODE");
+  await pressEnter("pos-product-search");
+  expect(all("pos-cart-line")).toHaveLength(0);
+  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("NOT-A-REAL-CODE"));
+});
+
+test("typing a partial name and hitting Enter never auto-adds — only an exact code does", async () => {
+  await mount();
+  await type("pos-product-search", "Wipe"); // matches Ear Wipes by name, but isn't its sku
+  await pressEnter("pos-product-search");
   expect(all("pos-cart-line")).toHaveLength(0);
 });
 

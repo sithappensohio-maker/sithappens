@@ -316,6 +316,23 @@ export default function Pos({ onOpenShopManager } = {}) {
     });
   }, [products, activeCategory, productSearch]);
 
+  // Barcode scanner support — a USB/Bluetooth scanner is just a keyboard: it
+  // types the code into whatever's focused, then sends Enter. A cashier
+  // typing a partial name and hitting Enter must never auto-add something —
+  // only an EXACT sku match does, which is what a real scan always produces
+  // (never a substring match the way the live search-as-you-type above is).
+  const productSearchRef = useRef(null);
+  const scanProductBySku = (e) => {
+    if (e.key !== "Enter") return;
+    const code = productSearch.trim();
+    if (!code) return;
+    const match = products.find((p) => p.kind === "product" && (p.sku || "").trim().toLowerCase() === code.toLowerCase());
+    if (!match) { toast.error(`No product found for code "${code}"`); return; }
+    addItem(match);
+    setProductSearch("");
+    productSearchRef.current?.focus(); // stay in the field — the next scan shouldn't need a click first
+  };
+
   // Declared here (ahead of the Client panel section below) because the
   // cart/pricing logic that follows needs to read it — addItem's
   // client-required guard and the live pricing-preview effect both key off
@@ -1997,7 +2014,8 @@ export default function Pos({ onOpenShopManager } = {}) {
           {/* Product panel */}
           <div className="sh-front-desk-panel p-4">
             <div className="sh-front-desk-panel__head"><div><p className="sh-front-desk-panel__eyebrow">Register catalog</p><h3 className="sh-front-desk-panel__title">Products & Services</h3></div></div>
-            <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Search by name, SKU, category…"
+            <input ref={productSearchRef} value={productSearch} onChange={(e) => setProductSearch(e.target.value)} onKeyDown={scanProductBySku}
+                   placeholder="Search by name, SKU, category… or scan a barcode"
                    data-testid="pos-product-search"
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText mb-2" />
             {categoryPills.length > 0 && (

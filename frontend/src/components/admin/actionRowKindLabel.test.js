@@ -28,6 +28,7 @@ const EXPECTED = {
   stuck_checkout: "Missed Checkout", pipeline_ready: "Certificate Ready", new_signup: "New Signup",
   monday_digest: "Monday Digest", waitlist_spot_open: "Waitlist — Spot Opened",
   recurring_renewal_missed: "Weekly Schedule — Days Not Booked", prepaid_sessions_closed: "Prepaid Lessons Closed",
+  low_stock: "Low Stock",
 };
 
 let container; let root;

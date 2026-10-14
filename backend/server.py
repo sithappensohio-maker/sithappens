@@ -29665,6 +29665,35 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     except Exception as e:
         logger.warning("today-brain stuck/report-card checks failed: %s", e)
 
+    # 5h. Products running low on stock (warn). Read live, like every other
+    # collector here (waitlist spots, renewal misses, stuck checkout) — the
+    # candidate set is small (tracked, active products), so there is nothing
+    # to gain from caching a count that would just go stale between loads.
+    try:
+        low_stock_count = 0
+        async for p in db.pos_products.find(
+            {"track_inventory": True, "active": {"$ne": False}, "archived": {"$ne": True}},
+            {"_id": 0, "stock_on_hand": 1, "low_stock_threshold": 1},
+        ):
+            threshold = p.get("low_stock_threshold")
+            if threshold is None:
+                continue
+            if float(p.get("stock_on_hand") or 0) <= float(threshold) + 0.0005:
+                low_stock_count += 1
+        if low_stock_count > 0:
+            items.append({
+                "id": f"low-stock:{low_stock_count}",
+                "kind": "low_stock",
+                "priority": "warn",
+                "title": f"{low_stock_count} product{'s' if low_stock_count != 1 else ''} low on stock",
+                "subtitle": "Check the Low Stock filter in Shop Manager to see which ones",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "shop_manager"},
+                "icon": "fa-box",
+            })
+    except Exception as e:
+        logger.warning("today-brain low-stock check failed: %s", e)
+
     # 6. Unanswered homework questions (warn)
     try:
         unanswered = 0
@@ -29860,7 +29889,7 @@ def _today_brain_signature(item: dict) -> str:
         # ("Name · 2 daycare · 0 training · 1 boarding left").
         nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
         return f"low:{nums or title}"
-    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open", "recurring_renewal_missed"):
+    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open", "recurring_renewal_missed", "low_stock"):
         # Title/subtitle carries the count → encode it as the signature.
         # The business day is part of it too: a dismissal lasts one business
         # day, so an open to-do comes back each morning until it is handled.

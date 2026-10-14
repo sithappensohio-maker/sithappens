@@ -49,6 +49,7 @@ export const ACTION_KIND_LABEL = {
   waitlist_spot_open: "Waitlist — Spot Opened",
   recurring_renewal_missed: "Weekly Schedule — Days Not Booked",
   prepaid_sessions_closed: "Prepaid Lessons Closed",
+  low_stock: "Low Stock",
 };
 
 export default function ActionRow({ item, onOpen, onDismiss, busy }) {
