@@ -301,7 +301,9 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       <Sub id="comms" title="Email automation timing" icon="fa-envelope" color="text-purple-300" {...subProps("comms")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Reminder email — hours before" type="number" value={c.reminder_email_hours_before}
-                 onChange={(v) => set("comms", "reminder_email_hours_before", v)} testId="d2d-rmd-hours" disabled unsupported />
+                 onChange={(v) => set("comms", "reminder_email_hours_before", v)} testId="d2d-rmd-hours" />
+          <Field label="Appointment reminders enabled" type="toggle" value={c.appointment_reminder_enabled}
+                 onChange={(v) => set("comms", "appointment_reminder_enabled", v)} testId="d2d-rmd-enabled" />
           <Field label="Vaccine expiry warn (extra days)" type="number" value={c.vaccine_expiry_warn_days_extended}
                  onChange={(v) => set("comms", "vaccine_expiry_warn_days_extended", v)} testId="d2d-vax-warn" disabled unsupported />
           <Field label='"We miss you" after N inactive days' type="number" value={c.inactive_client_days}
@@ -558,7 +560,7 @@ function OperatorQuickControls({ d2d }) {
       label: "Email Quiet Hours",
       lines: [
         ["Quiet hours", c.quiet_hours_enabled ? `${c.quiet_hours_start || "?"} → ${c.quiet_hours_end || "?"}` : "Off", c.quiet_hours_enabled ? "shPrimary" : "shAccent"],
-        ["Reminder lead", `${c.reminder_email_hours_before ?? "—"} h before`],
+        ["Appointment reminders", c.appointment_reminder_enabled ? `${c.reminder_email_hours_before ?? "—"} h before` : "Off", c.appointment_reminder_enabled ? "shPrimary" : "shAccent"],
         ["Birthday emails", c.birthday_email_enabled ? "On" : "Off"],
       ],
       cta: { label: "Configure email timing", cat: "comms", sub: "_d2d_comms" },

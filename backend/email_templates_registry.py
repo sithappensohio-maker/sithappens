@@ -30,6 +30,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "dog_name", "homework_title", "due_date", "assigned_by"],
     },
     {
+        "slug": "client_appointment_reminder",
+        "name": "Appointment Reminder",
+        "description": "Sent the day before a confirmed training, grooming, photography, or Meet & Greet appointment.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Reminder: {{service_label}} for {{dog_name}} — {{date}}",
+        "default_title": "⏰ See you soon!",
+        "default_intro_html": "Hi {{first_name}} — just a reminder that <strong>{{dog_name}}</strong>'s {{service_label}} is coming up at <strong>{{time}}</strong> on {{date}}.",
+        "default_cta_text": "",
+        "variables": ["first_name", "client_name", "dog_name", "service_label", "date", "time"],
+    },
+    {
         "slug": "client_booking_approved",
         "name": "Booking Approved",
         "description": "Sent to the client when their requested booking is approved.",

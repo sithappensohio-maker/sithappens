@@ -10250,6 +10250,7 @@ def _default_settings() -> dict:
             # ── Communication Lead Times ──────────────────────────────
             "comms": {
                 "reminder_email_hours_before": 24,
+                "appointment_reminder_enabled": True,  # training/grooming/photography/Meet & Greet, not daycare/boarding
                 "vaccine_expiry_warn_days_extended": 30,  # additional reminders (existing top-level vaccine_warning_days)
                 "inactive_client_days": 90,         # send "we miss you" after N days no visits
                 "review_request_days_after_visit": 2,

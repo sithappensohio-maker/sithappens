@@ -210,7 +210,7 @@ export default function Settings({ initialSection = null, onSectionChange = () =
       blurb: "Every email path, template, schedule, and deliverability check.",
       subsections: [
         { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text",
-          desc: "Branding, signature, and per-template subject + body overrides for all 32 emails.",
+          desc: "Branding, signature, and per-template subject + body overrides for all 46 emails.",
           badges: ["Live", "Client-facing"] },
         { id: "automation", label: "Email Automation", icon: "fa-paper-plane",
           desc: "Which automations fire and when — controlled at the global automation level.",

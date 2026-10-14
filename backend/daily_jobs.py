@@ -234,6 +234,76 @@ async def run_vaccine_expiry_job(db) -> dict:
     return {"sent": sent, "skipped": skipped}
 
 
+# Visits booked for a set time — a lesson, a grooming slot, a portrait
+# session — plus Meet & Greets (server.TIME_SLOTTED_SERVICES / the same set
+# email_service._appointment_time already uses, audit #41). Daycare and
+# boarding are deliberately excluded: a daily drop-off or a multi-day stay
+# isn't a single dated appointment someone forgets the way a 2pm lesson is.
+APPOINTMENT_REMINDER_SERVICES = ("training", "grooming", "photography")
+
+
+async def run_appointment_reminder_job(db) -> dict:
+    """Email a client the day before a confirmed, timed appointment —
+    training, grooming, photography, or a Meet & Greet (all of which go
+    through the same booking-approval pipeline, so `status == "approved"`
+    is the one check for "this is really happening").
+
+    Lead time and the on/off switch both come from Settings → Email Timing
+    (comms.reminder_email_hours_before / comms.appointment_reminder_enabled)
+    — reminder_email_hours_before already existed as a setting (and a
+    disabled UI field) with nothing behind it; this is what actually reads
+    it. The job itself only ever runs once a business-day, so the lead time
+    is rounded to the nearest whole day to pick a target date — it can't
+    promise a precise hour-of-day send.
+
+    De-duped by `notification_log` key `appointment_reminder:{booking_id}`,
+    so a booking whose time changes after the reminder already went out
+    does not trigger a second email for the old time."""
+    settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    comms = settings.get("comms") or {}
+    if not comms.get("appointment_reminder_enabled", True):
+        return {"sent": 0, "skipped": 0, "disabled": True}
+    hours_before = float(comms.get("reminder_email_hours_before") or 24)
+    days_ahead = max(1, round(hours_before / 24))
+    target_date = (_today_local() + timedelta(days=days_ahead)).isoformat()
+
+    sent = 0
+    skipped = 0
+    cursor = db.bookings.find({
+        "date": target_date,
+        "status": "approved",
+        "$or": [
+            {"service_type": {"$in": list(APPOINTMENT_REMINDER_SERVICES)}},
+            {"is_meet_greet": True},
+        ],
+    }, {"_id": 0})
+    async for booking in cursor:
+        if not (booking.get("time") or "").strip():
+            continue  # nothing to remind about without a set time
+        key = f"appointment_reminder:{booking.get('id')}"
+        if await _already_notified(db, key):
+            skipped += 1
+            continue
+        client_id = booking.get("client_id")
+        client = await db.clients.find_one(
+            {"id": client_id, "deleted_at": {"$in": [None, ""]}}, {"_id": 0}) if client_id else None
+        if not client or not client.get("email"):
+            skipped += 1
+            continue
+        try:
+            meta = {"job": "appointment_reminder", "booking_id": booking.get("id"), "client_id": client.get("id")}
+            ok = await email_service.notify_client_appointment_reminder(
+                booking, client, delivery_key=key, delivery_meta=meta,
+            )
+            if ok:
+                sent += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            logger.warning("appointment reminder failed for booking=%s: %s", booking.get("id"), e)
+    return {"sent": sent, "skipped": skipped}
+
+
 async def run_pl_monthly_job(db) -> Dict[str, Any]:
     """Generate the previous month's P&L PDF and email it to the admin.
     Idempotent — keyed by `pl:YYYY-MM` in `notification_log` so re-runs are no-ops."""
@@ -889,6 +959,7 @@ async def maybe_run_daily(db, *, min_hour: int | None = None) -> dict | None:
         results = {}
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
+        results["appointment_reminders"] = await run_appointment_reminder_job(db)
         results["hw_step_rollup"] = await run_homework_step_rollup_job(db)
         plan = daily_plan(_today_local())
         if plan["trainer_monday_digest"]:

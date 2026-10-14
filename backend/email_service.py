@@ -2530,6 +2530,52 @@ async def notify_client_booking_approved(booking: dict, client: dict, policy_lin
 
 
 
+async def notify_client_appointment_reminder(
+    booking: dict, client: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None,
+) -> bool:
+    """The day-before nudge for a timed, confirmed appointment — training,
+    grooming, photography, or a Meet & Greet (daily_jobs.run_appointment_
+    reminder_job decides who's due one; this just sends it). Daycare/
+    boarding never reach this — see that job's own docstring for why."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return False
+    svc_label = _booking_label(booking)
+    appt_time = _appointment_time(booking)
+    first_name = (client.get("name") or "there").split(" ")[0]
+    rows = [
+        ("Dog", booking.get("dog_name", "—")),
+        ("Service", svc_label),
+        ("Date", booking.get("date", "")),
+    ]
+    if appt_time:
+        rows.append(("Time", appt_time))
+    intro = (
+        f"Hi {_h(first_name)} — just a reminder that <strong>{_h(booking.get('dog_name', 'your dog'))}</strong>'s "
+        f"{_h(svc_label)} is coming up"
+        + (f" at <strong>{_h(appt_time)}</strong> on {_h(booking.get('date', ''))}." if appt_time else f" on {_h(booking.get('date', ''))}.")
+    )
+    return bool(await _dispatch(
+        slug="client_appointment_reminder",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+            "date": booking.get("date", ""),
+            "time": appt_time,
+        },
+        rows=rows,
+        fallback_title="⏰ See you soon!",
+        fallback_intro=intro,
+        fallback_subject=f"Reminder: {svc_label} for {booking.get('dog_name', 'your dog')} — {booking.get('date', '')}",
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
+    ))
+
+
 async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
     """Booking rejected — approve already emails the client; reject never
     did, so a declined request could sit with no explanation from the
