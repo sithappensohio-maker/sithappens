@@ -903,6 +903,10 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
             "sku": p.get("sku") or "",
             "category": p.get("category") or "",
             "featured": bool(p.get("featured")),
+            # The register needs this to know a Printify item needs a
+            # pickup-or-ship choice at checkout — internal and
+            # shopify_external (excluded above) both leave it "internal".
+            "sales_destination": p.get("sales_destination") or "internal",
             "list_price": list_price,
             "effective_price": effective_price,
             "pricing_source": pricing["pricing_source"],

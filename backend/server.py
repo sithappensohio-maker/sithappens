@@ -44265,6 +44265,28 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
     }
 
 
+def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[str, dict]) -> List[dict]:
+    """Turns priced cart/order line items for Printify-fulfilled products
+    into the shape domains.printify.client.PrintifyLineItem needs — looked
+    up fresh from each product's own stored printify_product_id/variant's
+    printify_variant_id (never trusted from the request), so a listing's
+    Printify mapping can be fixed after the fact without corrupting orders
+    already queued against the old one. Shared by the register (Phase 2)
+    and the client Shop (Phase 4) outbox writers."""
+    out = []
+    for li in printify_lines:
+        product = product_cache[li["product_id"]]
+        variant = next((v for v in (product.get("variants") or []) if v.get("id") == li.get("variant_id")), None)
+        out.append({
+            "product_id": product["id"], "variant_id": li.get("variant_id"),
+            "printify_product_id": product.get("printify_product_id"),
+            "printify_variant_id": (variant or {}).get("printify_variant_id"),
+            "quantity": int(li["qty"]),
+            "name": f"{product.get('name')} — {(variant or {}).get('name', '?')}",
+        })
+    return out
+
+
 def _validate_printify_variants(variants: List[dict]) -> None:
     """A printify product is useless to checkout without at least one size,
     and each size must be mapped to the Printify variant id it actually
@@ -45008,7 +45030,8 @@ async def list_inventory_movements(
 # POS request models now live with the domain that owns them; imported
 # back so `server.PosSaleLineIn` and friends still resolve everywhere.
 from domains.pos.models import (  # noqa: E402
-    PosSaleDiscountIn, PosSaleIn, PosSaleLineIn, PosSalePreviewIn, PosSaleTenderIn)
+    PosSaleDiscountIn, PosSaleIn, PosSaleLineIn, PosSalePreviewIn, PosSaleTenderIn,
+    PrintifyFulfillmentIn, PrintifyShippingAddressIn)
 
 
 # CheckoutIn carries retail lines but is declared thousands of lines earlier,
@@ -45116,6 +45139,20 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         return replay
     product_cache = catalog_caches["products"]
     total = priced["total"]
+
+    # Printify POD — every line whose product is Printify-fulfilled needs a
+    # pickup-or-ship choice before money moves, same as tenders summing to
+    # the total: this is checked against the ACTUAL cart (never trusted from
+    # a client-side guess that the cart has/doesn't have one).
+    printify_lines = [
+        li for li in priced["line_items"]
+        if li["kind"] == "retail" and product_cache.get(li["product_id"], {}).get("sales_destination") == "printify"
+    ]
+    if printify_lines:
+        if not body.printify_fulfillment:
+            raise HTTPException(status_code=400, detail="This cart includes a Printify item — choose pickup or shipping before taking payment.")
+        if body.printify_fulfillment.method == "ship" and not body.printify_fulfillment.shipping_address:
+            raise HTTPException(status_code=400, detail="A shipping address is required to ship a Printify item.")
 
     client_name = ""
     if body.client_id:
@@ -45388,6 +45425,11 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             )
             applied_stock_movements.append((product_id, qty, None))
         for (product_id, variant_id), qty in qty_by_variant.items():
+            if product_cache.get(product_id, {}).get("sales_destination") == "printify":
+                # Printify makes each one on demand — no real stock to
+                # deduct, and no inventory_movements row for it (matches the
+                # stock-check bypass in price_pos_cart's pricing pass).
+                continue
             await _mutate_product_stock(
                 product_id, -qty, "SALE",
                 reason=f"POS Sale #{sale_doc['receipt_number']}",
@@ -45445,6 +45487,30 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         asyncio.create_task(_maybe_auto_email_receipt("pos_sale", sale_id, body.client_id))
     except Exception as exc:
         logger.warning("auto-email receipt spawn failed for pos_sale %s: %s", sale_id, exc)
+
+    # Printify POD — queue production for this sale's Printify line(s),
+    # same best-effort-after-commit discipline as the receipt/drawer tokens
+    # above: the sale is real and paid either way. Submission itself (the
+    # actual Printify API call, with retries) is a separate background
+    # worker reading this queue, not done inline here — see
+    # domains/printify/client.py. For "pickup", the ship-to address is
+    # resolved at submission time (the business's own address), not here.
+    if printify_lines:
+        try:
+            ts_outbox = now_iso()
+            await db.printify_order_outbox.insert_one({
+                "id": str(uuid.uuid4()), "source": "pos_sale", "source_id": sale_id,
+                "external_id": sale_id, "status": "pending",
+                "fulfillment_method": body.printify_fulfillment.method,
+                "shipping_address": body.printify_fulfillment.shipping_address.model_dump()
+                    if body.printify_fulfillment.shipping_address else None,
+                "line_items": _printify_outbox_line_items(printify_lines, product_cache),
+                "printify_order_id": None,
+                "attempts": 0, "last_error": None, "next_attempt_at": ts_outbox,
+                "created_at": ts_outbox, "updated_at": ts_outbox,
+            })
+        except Exception as exc:
+            logger.error("Printify outbox write failed for pos_sale %s: %s", sale_id, exc)
 
     final_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     return {

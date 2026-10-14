@@ -32,6 +32,7 @@ import ShopRefundModal from "../components/ShopRefundModal";
 import ItemThumbnail from "../components/ItemThumbnail";
 import AdminBookingModal from "../components/AdminBookingModal";
 import WalkInModal from "../components/WalkInModal";
+import PrintifyFulfillmentModal from "../components/PrintifyFulfillmentModal";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
@@ -376,7 +377,10 @@ export default function Pos({ onOpenShopManager } = {}) {
         : "Select a client first — training programs are tied to a client's account.");
       return;
     }
-    if (item.kind === "product" && variant) {
+    if (item.kind === "product" && variant && item.sales_destination !== "printify") {
+      // Printify makes each size on demand — never a real stock_on_hand to
+      // check here (same bypass as the register's own pricing/commit, see
+      // backend's price_pos_cart and _create_pos_sale_impl).
       const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id && l.variant_id === variant.id)?.qty || 0;
       if (inCart + 1 > Number(variant.stock_on_hand || 0) + 0.0005) {
         toast.error(`Only ${variant.stock_on_hand} in stock for ${item.name} (${variant.name}).`);
@@ -408,6 +412,9 @@ export default function Pos({ onOpenShopManager } = {}) {
         unit_price: variant ? variant.price : item.effective_price,
         list_price: variant ? variant.price : item.list_price,
         has_price_override: variant ? false : item.has_price_override, qty: 1,
+        // Printify POD — needs a pickup-or-ship choice before checkout; see
+        // the printifyFulfillment gate around completeSale() below.
+        sales_destination: item.kind === "product" ? item.sales_destination : null,
       }];
     });
     setVariantPickerItem(null);
@@ -425,7 +432,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     return copy;
   });
   const removeLine = (i) => setCartLines((lines) => lines.filter((_, idx) => idx !== i));
-  const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); };
+  const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); setPrintifyFulfillment(null); };
 
   const [customOpen, setCustomOpen] = useState(false);
   // Step 4C-1 — a custom line must say what it IS: merchandise (taxable
@@ -706,6 +713,13 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [emailBusy, setEmailBusy] = useState(false);
   const [receiptViewOpen, setReceiptViewOpen] = useState(null); // receipt payload JSON, or null
 
+  // ── Printify POD fulfillment (pickup vs. ship) ───────────────────────────
+  // A cart with a Printify-fulfilled line needs this choice before payment —
+  // the server refuses the sale without it (see _create_pos_sale_impl).
+  const hasPrintifyLine = cartLines.some((l) => l.sales_destination === "printify");
+  const [printifyFulfillment, setPrintifyFulfillment] = useState(null); // {method, shipping_address} | null
+  const [printifyModalOpen, setPrintifyModalOpen] = useState(false);
+
   // ── Stripe Terminal tender (Phase 4) ─────────────────────────────────────
   // null, or { paymentIntentId, phase: "waiting" | "error", error? }. The
   // sale itself only ever trusts the backend's own re-verification of the
@@ -814,8 +828,20 @@ export default function Pos({ onOpenShopManager } = {}) {
 
   const openTender = () => {
     if (!priced || cartLines.length === 0) { toast.error("Add something to the cart first"); return; }
+    if (hasPrintifyLine && !printifyFulfillment) { setPrintifyModalOpen(true); return; }
     setTenders([]); setTenderAmount(String(total)); setCashReceived(""); setTenderNotes(""); setTenderMethod("cash");
     setTerminalCharge(null); // a declined/errored charge from a prior sale must never carry over
+    setTenderOpen(true);
+  };
+
+  // Confirmed from the Printify fulfillment modal — saves the choice, then
+  // falls straight through to the tender panel so the cashier isn't making
+  // two separate taps to get to payment.
+  const confirmPrintifyFulfillment = (choice) => {
+    setPrintifyFulfillment(choice);
+    setPrintifyModalOpen(false);
+    setTenders([]); setTenderAmount(String(total)); setCashReceived(""); setTenderNotes(""); setTenderMethod("cash");
+    setTerminalCharge(null);
     setTenderOpen(true);
   };
 
@@ -861,6 +887,7 @@ export default function Pos({ onOpenShopManager } = {}) {
         discount,
         tenders,
         idempotency_key: saleIdemKey,
+        printify_fulfillment: hasPrintifyLine ? printifyFulfillment : null,
       });
       setSaleResult(data);
       setTenderOpen(false);
@@ -2325,6 +2352,16 @@ export default function Pos({ onOpenShopManager } = {}) {
               <div className="flex justify-between items-baseline text-shText font-black"><span className="text-[15px]">Total</span><span className="text-[24px]">{money(total)}</span></div>
             </div>
 
+            {hasPrintifyLine && printifyFulfillment && (
+              <div className="mt-2 flex items-center justify-between text-[12px]" data-testid="pos-printify-fulfillment-summary">
+                <span className="text-shTextMuted">
+                  <i className={`fas ${printifyFulfillment.method === "pickup" ? "fa-store" : "fa-truck"} mr-1.5`}/>
+                  {printifyFulfillment.method === "pickup" ? "Pick up here" : `Ship to ${printifyFulfillment.shipping_address?.first_name || "customer"}`}
+                </span>
+                <button onClick={() => setPrintifyModalOpen(true)} className="text-shSecondary font-black uppercase tracking-widest">Change</button>
+              </div>
+            )}
+
             <button onClick={openTender} disabled={cartLines.length === 0 || !priced} data-testid="pos-checkout-button"
                     className="sh-front-desk-checkout mt-4 w-full min-h-[54px] bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader font-black uppercase tracking-widest text-[15px] rounded-xl shadow-[0_0_24px_rgba(140,198,63,0.45)] hover:brightness-110 transition disabled:opacity-40 disabled:shadow-none">
               Checkout{cartLines.length > 0 && priced ? ` · ${money(total)}` : ""}
@@ -2405,6 +2442,13 @@ export default function Pos({ onOpenShopManager } = {}) {
             </button>
           </div>
         </div>
+      )}
+      {printifyModalOpen && (
+        <PrintifyFulfillmentModal
+          onClose={() => setPrintifyModalOpen(false)}
+          onConfirm={confirmPrintifyFulfillment}
+          initial={printifyFulfillment}
+        />
       )}
       {walkInOpen && (
         <WalkInModal

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class PosSaleLineIn(BaseModel):
@@ -77,6 +77,31 @@ class PosSaleTenderIn(BaseModel):
     provider_ref: Optional[str] = None
 
 
+class PrintifyShippingAddressIn(BaseModel):
+    """Where Printify ships the finished item — required on a sale whose
+    chosen fulfillment is "ship" (see PrintifyFulfillmentIn). Never used for
+    "pickup"; Printify ships that to the business's own address instead."""
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str = Field(min_length=1, max_length=80)
+    email: EmailStr
+    phone: str = Field(default="", max_length=40)
+    address1: str = Field(min_length=1, max_length=200)
+    address2: str = Field(default="", max_length=200)
+    city: str = Field(min_length=1, max_length=100)
+    region: str = Field(min_length=1, max_length=100)  # state
+    zip: str = Field(min_length=1, max_length=20)
+    country: str = Field(default="US", max_length=2)
+
+
+class PrintifyFulfillmentIn(BaseModel):
+    """The customer's pickup-or-ship choice for a cart containing a
+    Printify-fulfilled line — required on the sale commit body whenever one
+    is present (checked server-side against the actual cart, never trusted
+    from the client alone; see _create_pos_sale_impl)."""
+    method: Literal["pickup", "ship"]
+    shipping_address: Optional[PrintifyShippingAddressIn] = None
+
+
 class PosSalePreviewIn(BaseModel):
     lines: List[PosSaleLineIn] = Field(min_length=1)
     discount: Optional[PosSaleDiscountIn] = None
@@ -92,3 +117,8 @@ class PosSaleIn(PosSalePreviewIn):
     tenders: List[PosSaleTenderIn] = Field(min_length=1)
     workstation_id: Optional[str] = Field(default=None, max_length=100)
     idempotency_key: str = Field(min_length=8, max_length=128)
+    # Required when the cart contains a Printify-fulfilled line (checked
+    # server-side against each line's actual product in
+    # _create_pos_sale_impl, never trusted from a client-side guess);
+    # ignored otherwise.
+    printify_fulfillment: Optional[PrintifyFulfillmentIn] = None

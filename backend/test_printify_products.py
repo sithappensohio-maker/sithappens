@@ -11,6 +11,9 @@ it defensively at cart-pricing time.
 
 Disposable tag TEST_PRINTIFY_PRODUCTS.
 """
+import uuid
+from unittest.mock import patch
+
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
 from fastapi import HTTPException
@@ -18,6 +21,41 @@ from _test_loop import run
 
 TAG = "TEST_PRINTIFY_PRODUCTS"
 ADMIN = {"id": f"{TAG}-admin", "role": "admin", "name": f"{TAG} admin", "email": "printify@test"}
+
+
+async def _noop(*args, **kwargs):
+    return None
+
+
+class _OpenRegisterDay:
+    """Same helper as test_pos_product_variants.py — opens (and only
+    cleans up a day it itself opened) the cash-drawer day a register sale
+    requires."""
+    def __init__(self):
+        self.date = None
+        self.marker = None
+        self.created = False
+
+    def __enter__(self):
+        self.date = server.business_today().isoformat()
+        self.marker = f"{TAG}-register-{uuid.uuid4()}"
+        before = run(server.db.cash_drawer_sessions.find_one_and_update(
+            {"date": self.date},
+            {"$setOnInsert": {
+                "date": self.date, "opening_cash": 0.0, "notes": f"{TAG} disposable test register day",
+                "suggested_opening_cash": None, "suggested_opening_from_date": None,
+                "suggested_opening_from_closeout_id": None, "opening_override_reason": "", "opening_was_overridden": False,
+                "opened_at": server.now_iso(), "opened_by": self.marker, "opened_by_name": f"{TAG} fixture",
+            }},
+            upsert=True, projection={"_id": 0},
+        ))
+        self.created = before is None
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.created:
+            run(server.db.cash_drawer_sessions.delete_one({"date": self.date, "opened_by": self.marker}))
+        return False
 
 
 def _printify_body(**overrides):
@@ -188,3 +226,164 @@ def test_client_shop_checkout_refuses_it_defensively():
             assert "register" in e.detail
     finally:
         _cleanup([p["id"]])
+
+
+def test_a_full_register_sale_of_a_printify_variant_commits_with_no_inventory_movement():
+    """A real end-to-end register checkout, not just the pricing preview —
+    the pricing-time stock check and the commit-time stock MUTATION are two
+    separate code paths (price_pos_cart vs. _create_pos_sale_impl's own
+    qty_by_variant loop), and only patching the first would still leave a
+    printify sale failing here with "insufficient stock" at the register."""
+    p = _create()
+    sale_id = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        body = server.PosSaleIn(
+            client_id=None,
+            lines=[server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id, qty=1)],
+            tenders=[server.PosSaleTenderIn(method="cash", amount=40.0, tendered_amount=40.0)],
+            idempotency_key=f"test-{uuid.uuid4()}",
+            printify_fulfillment=server.PrintifyFulfillmentIn(method="pickup"),
+        )
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            result = run(server.create_pos_sale(body, ADMIN))
+        sale_id = result["pos_sale_id"]
+        assert result["sale"]["line_items"][0]["variant_id"] == variant_id
+
+        # Variant stock_on_hand is untouched (still 0 — never went negative)
+        # and no inventory_movements row was written for it.
+        refreshed = run(server.db.pos_products.find_one({"id": p["id"]}, {"_id": 0}))
+        variant_after = next(v for v in refreshed["variants"] if v["id"] == variant_id)
+        assert variant_after["stock_on_hand"] == 0.0
+        movements = run(server.db.inventory_movements.find(
+            {"product_id": p["id"], "variant_id": variant_id}, {"_id": 0}).to_list(10))
+        assert movements == []
+    finally:
+        if sale_id:
+            run(server.db.pos_sales.delete_one({"id": sale_id}))
+            run(server.db.printify_order_outbox.delete_many({"source_id": sale_id}))
+        _cleanup([p["id"]])
+
+
+# ───────────────────── Phase 2 — pickup/ship at the register ─────────────────────
+
+SHIP_ADDRESS = {
+    "first_name": "Jordan", "last_name": "Rivers", "email": "jordan@example.com", "phone": "555-0100",
+    "address1": "1 Main St", "address2": "", "city": "Columbus", "region": "OH", "zip": "43215", "country": "US",
+}
+
+
+def _sale_body(product_id, variant_id, fulfillment=None, qty=1):
+    return server.PosSaleIn(
+        client_id=None,
+        lines=[server.PosSaleLineIn(kind="retail", product_id=product_id, variant_id=variant_id, qty=qty)],
+        tenders=[server.PosSaleTenderIn(method="cash", amount=40.0 * qty, tendered_amount=40.0 * qty)],
+        idempotency_key=f"test-{uuid.uuid4()}",
+        printify_fulfillment=fulfillment,
+    )
+
+
+def _cleanup_outbox(sale_ids):
+    run(server.db.printify_order_outbox.delete_many({"source_id": {"$in": sale_ids}}))
+
+
+def test_register_sale_refuses_a_printify_item_with_no_fulfillment_choice():
+    p = _create()
+    try:
+        variant_id = p["variants"][0]["id"]
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            try:
+                run(server.create_pos_sale(_sale_body(p["id"], variant_id), ADMIN))
+                assert False, "should have been refused"
+            except HTTPException as e:
+                assert e.status_code == 400
+                assert "pickup or shipping" in e.detail
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_sale_refuses_ship_with_no_address():
+    p = _create()
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.PrintifyFulfillmentIn(method="ship")
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            try:
+                run(server.create_pos_sale(_sale_body(p["id"], variant_id, fulfillment), ADMIN))
+                assert False, "should have been refused"
+            except HTTPException as e:
+                assert e.status_code == 400
+                assert "shipping address" in e.detail
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_sale_with_pickup_queues_an_outbox_row_with_no_address():
+    p = _create()
+    sale_id = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.PrintifyFulfillmentIn(method="pickup")
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            result = run(server.create_pos_sale(_sale_body(p["id"], variant_id, fulfillment), ADMIN))
+        sale_id = result["pos_sale_id"]
+        row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
+        assert row is not None
+        assert row["status"] == "pending"
+        assert row["fulfillment_method"] == "pickup"
+        assert row["shipping_address"] is None
+        assert row["printify_order_id"] is None
+        assert row["attempts"] == 0
+        assert len(row["line_items"]) == 1
+        li = row["line_items"][0]
+        assert li["printify_product_id"] == "pf-prod-1"
+        assert li["printify_variant_id"] == "pf-var-s"
+        assert li["quantity"] == 1
+    finally:
+        if sale_id:
+            run(server.db.pos_sales.delete_one({"id": sale_id}))
+            _cleanup_outbox([sale_id])
+        _cleanup([p["id"]])
+
+
+def test_register_sale_with_ship_queues_an_outbox_row_with_the_address():
+    p = _create()
+    sale_id = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.PrintifyFulfillmentIn(
+            method="ship", shipping_address=server.PrintifyShippingAddressIn(**SHIP_ADDRESS))
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            result = run(server.create_pos_sale(_sale_body(p["id"], variant_id, fulfillment), ADMIN))
+        sale_id = result["pos_sale_id"]
+        row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
+        assert row["fulfillment_method"] == "ship"
+        assert row["shipping_address"]["city"] == "Columbus"
+        assert row["shipping_address"]["email"] == "jordan@example.com"
+    finally:
+        if sale_id:
+            run(server.db.pos_sales.delete_one({"id": sale_id}))
+            _cleanup_outbox([sale_id])
+        _cleanup([p["id"]])
+
+
+def test_register_sale_with_no_printify_items_never_requires_fulfillment_or_queues_anything():
+    internal = run(server.create_pos_product(server.PosProductCreateIn(
+        name=f"{TAG} Plain Item", price=10.0, track_inventory=False), ADMIN))
+    sale_id = None
+    try:
+        body = server.PosSaleIn(
+            client_id=None,
+            lines=[server.PosSaleLineIn(kind="retail", product_id=internal["id"], qty=1)],
+            tenders=[server.PosSaleTenderIn(method="cash", amount=10.0, tendered_amount=10.0)],
+            idempotency_key=f"test-{uuid.uuid4()}",
+        )
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            result = run(server.create_pos_sale(body, ADMIN))
+        sale_id = result["pos_sale_id"]
+        row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
+        assert row is None
+    finally:
+        if sale_id:
+            run(server.db.pos_sales.delete_one({"id": sale_id}))
+        _cleanup([internal["id"]])
