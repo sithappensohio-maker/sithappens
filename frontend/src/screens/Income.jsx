@@ -427,31 +427,60 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} transaction${summary.completed_count===1?"":"s"}`} color="text-shPrimary" icon="fa-circle-check" big data-testid="tile-completed" />
-            <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shSecondary" icon="fa-dollar-sign" />
-            <StatTile label="Unpaid" value={fmt(summary.unpaid_total)}
-                      sub={summary.ar_outstanding_total > 0
-                        ? `outstanding · excl. ${fmt(summary.ar_outstanding_total)} on client tabs (${summary.ar_outstanding_count})`
-                        : "outstanding"}
-                      color="text-shAccent" icon="fa-hourglass-half" />
-            <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-shTextMuted" icon="fa-calendar" />
-          </div>
-          {summary.by_service?.length > 0 && (
-            <div className="mt-4">
-              <p className="text-[14px] font-black uppercase tracking-widest text-shTextMuted mb-2">Breakdown by service</p>
-              <div className="flex flex-wrap gap-2">
-                {summary.by_service.map(b => (
-                  <span key={b.name} className="bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-1.5 text-[14px]">
-                    <span className="text-shTextMuted">{b.name}</span>
-                    <span className="text-shTextMuted mx-1">·</span>
-                    <span className="text-shText font-black">{fmt(b.total)}</span>
-                    <span className="text-shTextMuted ml-1">({b.count})</span>
-                  </span>
-                ))}
-              </div>
+          <div className="divide-y divide-shBorder/60">
+            <div className="flex items-baseline justify-between py-2.5" data-testid="tile-completed">
+              <span className="text-[15px] text-shText">Completed</span>
+              <span className="flex items-baseline gap-3">
+                <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{summary.completed_count} transaction{summary.completed_count===1?"":"s"}</span>
+                <span className="text-[17px] font-black text-shPrimary whitespace-nowrap">{fmt(summary.completed_total)}</span>
+              </span>
             </div>
-          )}
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shTextMuted">Paid</span>
+              <span className="text-[17px] font-black text-shSecondary">{fmt(summary.paid_total)}</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2.5 gap-3">
+              <div>
+                <p className="text-[15px] text-shAccent">Unpaid</p>
+                {summary.ar_outstanding_total > 0 && (
+                  <p className="text-[12px] text-shTextMuted">excl. {fmt(summary.ar_outstanding_total)} on {summary.ar_outstanding_count} client tab{summary.ar_outstanding_count===1?"":"s"}</p>
+                )}
+              </div>
+              <span className="text-[17px] font-black text-shAccent whitespace-nowrap">{fmt(summary.unpaid_total)}</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shTextMuted">Booked (upcoming)</span>
+              <span className="flex items-baseline gap-3">
+                <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{summary.booked_count} session{summary.booked_count===1?"":"s"}</span>
+                <span className="text-[17px] font-black text-shTextMuted whitespace-nowrap">{fmt(summary.booked_total)}</span>
+              </span>
+            </div>
+          </div>
+          {summary.by_service?.length > 0 && (() => {
+            const active = summary.by_service.filter(b => Number(b.total) !== 0 || Number(b.count) !== 0);
+            const inactive = summary.by_service.filter(b => !(Number(b.total) !== 0 || Number(b.count) !== 0));
+            return (
+              <div className="mt-4">
+                <div className="grid grid-cols-[1fr_64px_96px] gap-2 text-[12px] font-black uppercase tracking-widest text-shTextMuted pb-1.5">
+                  <span>Service</span><span className="text-right">Count</span><span className="text-right">Amount</span>
+                </div>
+                <div className="divide-y divide-shBorder/60">
+                  {active.map(b => (
+                    <div key={b.name} className="grid grid-cols-[1fr_64px_96px] gap-2 py-2">
+                      <span className="text-[14px] font-black text-shText">{b.name}</span>
+                      <span className="text-[14px] text-shTextMuted text-right">{b.count}</span>
+                      <span className="text-[14px] font-black text-shText text-right">{fmt(b.total)}</span>
+                    </div>
+                  ))}
+                  {inactive.length > 0 && (
+                    <div className="py-2 text-[13px] text-shTextMuted italic">
+                      &mdash; {inactive.length} service{inactive.length===1?"":"s"}, no activity this week &mdash;
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -481,18 +510,36 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
                      className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" />
             </div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <div className="divide-y divide-shBorder/60 mb-4">
             {/* RH1 — this is BUSINESS revenue: collected Ohio sales tax is a
                 pass-through liability and is reported separately, never here. */}
-            <StatTile label="Business Revenue" value={fmt(rangeSummary.completed_total)}
-                      sub={Number(rangeSummary.sales_tax_collected || 0) > 0
-                        ? `Services · Training · Retail · Packs — excludes ${fmt(rangeSummary.sales_tax_collected)} sales tax collected for Ohio`
-                        : "Services · Training · Retail · Packs"}
-                      color="text-shPrimary" icon="fa-circle-check" big />
-            <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
-            <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shAccent" icon="fa-user-clock" />
-            <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shSecondary" : "text-red-400"} icon="fa-scale-balanced" big />
-            <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-shTextMuted" icon="fa-chart-line" />
+            <div className="flex items-baseline justify-between py-2.5 gap-3">
+              <div>
+                <p className="text-[15px] text-shText">Business Revenue</p>
+                <p className="text-[12px] text-shTextMuted">
+                  {Number(rangeSummary.sales_tax_collected || 0) > 0
+                    ? `Services · Training · Retail · Packs — excludes ${fmt(rangeSummary.sales_tax_collected)} sales tax collected for Ohio`
+                    : "Services · Training · Retail · Packs"}
+                </p>
+              </div>
+              <span className="text-[17px] font-black text-shPrimary whitespace-nowrap">{fmt(rangeSummary.completed_total)}</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shTextMuted">Expenses <span className="text-[12px]">&middot; {rangeSummary.expense_count || 0} item{rangeSummary.expense_count===1?"":"s"}</span></span>
+              <span className="text-[17px] font-black text-red-300 whitespace-nowrap">({fmt(rangeSummary.expenses_total || 0)})</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shTextMuted">Labor <span className="text-[12px]">&middot; {rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"}</span></span>
+              <span className="text-[17px] font-black text-shAccent whitespace-nowrap">({fmt(rangeSummary.labor_total || 0)})</span>
+            </div>
+            <div className="flex items-baseline justify-between py-3 border-t-2 border-shBorder mt-1">
+              <span className="text-[16px] font-black uppercase tracking-widest text-shText">Net (after labor)</span>
+              <span className={`text-[24px] font-black whitespace-nowrap ${(rangeSummary.net_total ?? 0) >= 0 ? "text-shSecondary" : "text-red-400"}`}>{fmt(rangeSummary.net_total ?? rangeSummary.completed_total)}</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2">
+              <span className="text-[13px] text-shTextMuted">Avg / day (active-day average)</span>
+              <span className="text-[14px] font-black text-shTextMuted whitespace-nowrap">{fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))}</span>
+            </div>
           </div>
           {/* Sprint 110cz — removed Credits Redeemed range-view chip; the
               all-in-one Income tile + breakdown shows the full picture now. */}
@@ -845,15 +892,6 @@ function DailyBarChart({ points }) {
         <span>{points.length} days w/ revenue</span>
         <span>{points[points.length - 1]?.date}</span>
       </div>
-    </div>
-  );
-}
-
-function StatTile({ label, value, sub, color, icon, big = false }) {  return (
-    <div className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 overflow-hidden sh-theme-dashboard-overlay ${big ? "md:col-span-1" : ""}`}>
-      <p className="text-[13px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
-      <p className={`${big ? "text-[24px]" : "text-[18px]"} font-black ${color} mt-1`}>{value}</p>
-      {sub && <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">{sub}</p>}
     </div>
   );
 }
