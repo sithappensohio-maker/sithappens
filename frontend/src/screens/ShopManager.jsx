@@ -124,6 +124,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [deleteTarget, setDeleteTarget] = useState(null); // product only, mirrors ManageProductsPanel's safe-delete flow
   const [hasHistory, setHasHistory] = useState(false);
   const [forbidden, setForbidden] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -276,6 +278,26 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       .finally(() => setHistoryLoading(false));
   };
 
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const token = localStorage.getItem("sh_token") || "";
+      const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+      const r = await fetch(`${API_ROOT}/api/pos/products/export.csv`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) { toast.error(`CSV download failed (${r.status})`); return; }
+      const blob = await r.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = "sit-happens-products.csv";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(obj), 5000);
+    } catch {
+      toast.error("CSV download failed");
+    }
+    setExporting(false);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
@@ -299,11 +321,23 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
             {label}
           </button>
         ))}
+        <button onClick={exportCsv} disabled={exporting} data-testid="sm-export-csv"
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest text-shText disabled:opacity-40">
+          {exporting ? "Exporting…" : "Export CSV"}
+        </button>
+        <button onClick={() => setImportOpen(true)} data-testid="sm-import-csv"
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest text-shText">
+          Import CSV
+        </button>
         <button onClick={onAddShopItem} data-testid="sm-add-item"
                 className="bg-shPrimary text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest">
           + Add Shop Item
         </button>
       </div>
+
+      {importOpen && (
+        <CsvImportModal onClose={() => setImportOpen(false)} onApplied={load} />
+      )}
 
       {forbidden ? (
         <div className="text-center text-shTextMuted py-10 text-sm" data-testid="sm-items-forbidden">
@@ -580,6 +614,133 @@ function TypePickerModal({ onClose, onPick }) {
         </div>
         <div className="flex justify-end pt-1">
           <button onClick={onClose} className="text-shTextMuted font-black uppercase text-sm tracking-widest">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+ * CSV IMPORT — bulk-edit the flat product catalog from a spreadsheet.
+ *
+ * Preview-then-commit: the same file is posted twice (commit=false, then
+ * commit=true) so the admin sees exactly what every row will do — create,
+ * update, or skip with a reason — before anything is actually written.
+ * ========================================================================== */
+function CsvImportModal({ onClose, onApplied }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null); // {committed, rows, summary}
+  const [result, setResult] = useState(null); // same shape, after commit=true
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const runPreview = async () => {
+    if (!file) return;
+    setBusy(true); setErr(""); setPreview(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/pos/products/import.csv", fd, { params: { commit: false } });
+      setPreview(data);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || "Could not read that file");
+    }
+    setBusy(false);
+  };
+
+  const applyImport = async () => {
+    if (!file) return;
+    setBusy(true); setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/pos/products/import.csv", fd, { params: { commit: true } });
+      setResult(data);
+      toast.success(`Import applied — ${data.summary.ok} of ${data.summary.total} rows`);
+      onApplied();
+    } catch (e) {
+      setErr(e?.response?.data?.detail || "Could not apply the import");
+    }
+    setBusy(false);
+  };
+
+  const rows = (result || preview)?.rows || [];
+  const summary = (result || preview)?.summary;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} data-testid="csv-import-modal"
+           className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+        <p className="text-shText text-lg font-black uppercase tracking-widest">Import Products from CSV</p>
+        <p className="text-shTextMuted text-[12px]">
+          Columns: <code className="text-shText">id, name, sku, price, cost, track_inventory, stock_on_hand, low_stock_threshold, active, taxable</code>.
+          A row matches an existing product by id first, else by sku — anything else creates a new one. A blank cell on
+          a matched row leaves that field exactly as it is. Products with options (variants) and Shopify-linked
+          listings aren't included — edit those from the Items table directly.
+        </p>
+
+        {!result && (
+          <div className="flex items-center gap-3">
+            <label className="bg-[var(--sh-card-base)] border border-shBorder rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest text-shText cursor-pointer">
+              {file ? file.name : "Choose CSV File"}
+              <input type="file" accept=".csv,text/csv" className="hidden" data-testid="csv-import-file-input"
+                     onChange={(e) => { setFile(e.target.files?.[0] || null); setPreview(null); setErr(""); }} />
+            </label>
+            <button onClick={runPreview} disabled={!file || busy} data-testid="csv-import-preview-btn"
+                    className="bg-shPrimary text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
+              {busy ? "Reading…" : "Preview"}
+            </button>
+          </div>
+        )}
+
+        {err && <p className="text-shDanger text-sm" role="alert">{err}</p>}
+
+        {summary && (
+          <>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm" data-testid="csv-import-summary">
+              <span className="text-shText"><span className="font-black text-shPrimary">{summary.ok}</span> will {result ? "be" : "be"} {result ? "applied" : "apply"}</span>
+              <span className="text-shText"><span className="font-black text-shOrange">{summary.skipped}</span> skipped</span>
+              <span className="text-shTextMuted">{summary.total} rows total</span>
+            </div>
+            <div className="overflow-x-auto border border-shBorder rounded-lg">
+              <table className="w-full text-[12px]" data-testid="csv-import-rows">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-widest text-shTextMuted border-b border-shBorder">
+                    <th className="py-1.5 px-2">Row</th>
+                    <th className="py-1.5 px-2">Action</th>
+                    <th className="py-1.5 px-2">Product</th>
+                    <th className="py-1.5 px-2">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.row} className="border-t border-shBorder">
+                      <td className="py-1 px-2 text-shTextMuted tabular-nums">{r.row}</td>
+                      <td className="py-1 px-2">
+                        <span className={r.action === "skip" ? "text-shDanger" : r.action === "create" ? "text-shPrimary" : "text-shText"}>
+                          {r.action}
+                        </span>
+                      </td>
+                      <td className="py-1 px-2 text-shText">{r.name || "—"}</td>
+                      <td className="py-1 px-2 text-shTextMuted">{r.error || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="text-shTextMuted font-black uppercase text-sm tracking-widest">
+            {result ? "Close" : "Cancel"}
+          </button>
+          {preview && !result && (
+            <button onClick={applyImport} disabled={busy || summary.ok === 0} data-testid="csv-import-apply-btn"
+                    className="bg-shPrimary text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
+              {busy ? "Applying…" : `Apply ${summary.ok} Change${summary.ok === 1 ? "" : "s"}`}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -22,6 +22,8 @@ ROUTES = [
     ('POST', '/pos/products/{product_id}/adjust-stock', 'adjust_pos_product_stock', None),
     ('POST', '/pos/products/{product_id}/variants/{variant_id}/adjust-stock', 'adjust_pos_product_variant_stock', None),
     ('GET', '/pos/products/{product_id}/movements', 'list_inventory_movements', None),
+    ('GET', '/pos/products/export.csv', 'export_pos_products_csv', None),
+    ('POST', '/pos/products/import.csv', 'import_pos_products_csv', None),
     ('POST', '/pos/checkout/preview', 'preview_pos_sale', None),
     ('POST', '/pos/sales/preview', 'preview_pos_sale', None),
     ('POST', '/pos/checkout', 'create_pos_sale', None),

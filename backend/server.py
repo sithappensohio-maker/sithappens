@@ -44356,6 +44356,226 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
     return {**existing, **patch}
 
 
+# ─────────────────────────────────────── Bulk CSV import/export (flat catalog)
+#
+# Simple, flat products only — a product with options (variants) carries its
+# stock/SKU on each option instead of itself, which doesn't fit one CSV row
+# cleanly, so those (and Shopify-linked listings, which Shopify itself owns
+# pricing/stock for) are excluded from both the export and the import match.
+# Manage either kind from Shop Manager directly.
+_PRODUCT_CSV_COLUMNS = ["id", "name", "sku", "price", "cost", "track_inventory", "stock_on_hand", "low_stock_threshold", "active", "taxable"]
+_CSV_BOOL_TRUE = {"true", "1", "yes", "y"}
+_CSV_BOOL_FALSE = {"false", "0", "no", "n"}
+
+
+def _parse_csv_bool(raw: str) -> Optional[bool]:
+    s = (raw or "").strip().lower()
+    if s in _CSV_BOOL_TRUE:
+        return True
+    if s in _CSV_BOOL_FALSE:
+        return False
+    return None  # blank or unrecognized -> "leave unchanged", not an error
+
+
+async def export_pos_products_csv(user: dict = Depends(require_admin_and_permission("pricing"))):
+    rows = [_PRODUCT_CSV_COLUMNS]
+    async for p in db.pos_products.find(
+        {"sales_destination": {"$ne": "shopify_external"}, "archived": {"$ne": True}, "variants": {"$in": [None, []]}},
+        {"_id": 0},
+    ).sort("name", 1):
+        rows.append([
+            p["id"], p.get("name") or "", p.get("sku") or "",
+            f"{float(p.get('price') or 0):.2f}",
+            "" if p.get("cost") is None else f"{float(p['cost']):.2f}",
+            "true" if p.get("track_inventory") else "false",
+            f"{float(p.get('stock_on_hand') or 0):.3f}" if p.get("track_inventory") else "",
+            "" if p.get("low_stock_threshold") is None else f"{float(p['low_stock_threshold']):.3f}",
+            "true" if p.get("active", True) else "false",
+            "true" if p.get("taxable", True) else "false",
+        ])
+    return _csv_response(rows, "sit-happens-products.csv")
+
+
+async def import_pos_products_csv(
+    file: UploadFile = File(...),
+    commit: bool = False,
+    user: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """Preview-then-commit bulk edit for the flat product catalog.
+
+    `commit=false` (the default) parses and validates every row but writes
+    nothing — the frontend shows this preview and asks the admin to confirm
+    before re-posting the SAME file with `commit=true` to actually apply it.
+    Nothing is cached server-side between the two calls, so there's no
+    stale-preview risk, only the cost of parsing the file twice.
+
+    A row matches an existing product by `id` first, else by `sku` (a row
+    with neither creates a new product). Every CSV-controlled column is
+    edit-only: a blank cell on a matched row leaves that field exactly as it
+    already is, never clears it — so a file with just `id` and `price`
+    columns safely bulk-reprices without touching anything else. Category,
+    images, the client Shop/Shopify fields, and variants are never touched
+    here; edit those from Shop Manager.
+
+    stock_on_hand never writes directly, the same rule update_pos_product
+    itself already follows — a changed value becomes a tracked
+    MANUAL_ADJUSTMENT through the normal stock-adjust path, so the audit
+    trail (inventory_movements) stays intact and accurate.
+    """
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="That file isn't valid UTF-8 text. Export the CSV from this screen and edit that file directly.")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="The file has no header row.")
+    headers = {(h or "").strip().lower(): h for h in reader.fieldnames}
+    if not ({"id", "sku", "name"} & headers.keys()):
+        raise HTTPException(status_code=400, detail="The file needs at least an 'id', 'sku', or 'name' column.")
+
+    def col(raw_row: dict, key: str) -> str:
+        h = headers.get(key)
+        return (raw_row.get(h) or "").strip() if h else ""
+
+    results: List[Dict[str, Any]] = []
+    matched_ids: set = set()
+    for i, raw_row in enumerate(reader, start=2):  # the header is row 1
+        if not any((v or "").strip() for v in raw_row.values() if v is not None):
+            continue  # fully blank row
+
+        def skip(name: str, pid: Optional[str], error: str):
+            results.append({"row": i, "action": "skip", "name": name, "id": pid, "error": error})
+
+        row_id, sku = col(raw_row, "id"), col(raw_row, "sku")
+        existing = None
+        if row_id:
+            existing = await db.pos_products.find_one({"id": row_id}, {"_id": 0})
+            if not existing:
+                skip(col(raw_row, "name"), row_id, "No product with this id.")
+                continue
+        elif sku:
+            existing = await db.pos_products.find_one(
+                {"sku": sku, "sales_destination": {"$ne": "shopify_external"}}, {"_id": 0})
+
+        if existing:
+            if existing.get("variants"):
+                skip(existing.get("name"), existing["id"], "This product has options (variants) — edit it from Shop Manager instead.")
+                continue
+            if existing.get("sales_destination") == "shopify_external":
+                skip(existing.get("name"), existing["id"], "Shopify-linked listings aren't edited here.")
+                continue
+            if existing["id"] in matched_ids:
+                skip(existing.get("name"), existing["id"], "Another row in this file already matched the same product.")
+                continue
+            matched_ids.add(existing["id"])
+
+        name = col(raw_row, "name")
+        if not name and not existing:
+            skip("", None, "A new product needs a name.")
+            continue
+
+        price_raw = col(raw_row, "price")
+        price = existing.get("price") if existing else None
+        if price_raw:
+            try:
+                price = round(float(price_raw), 2)
+                assert price >= 0
+            except (ValueError, AssertionError):
+                skip(name or (existing or {}).get("name", ""), existing["id"] if existing else None, f"'{price_raw}' isn't a valid price.")
+                continue
+        elif not existing:
+            skip(name, None, "A new product needs a price.")
+            continue
+
+        cost_raw = col(raw_row, "cost")
+        cost = (existing or {}).get("cost")
+        if cost_raw:
+            try:
+                cost = round(float(cost_raw), 2)
+                assert cost >= 0
+            except (ValueError, AssertionError):
+                skip(name or (existing or {}).get("name", ""), existing["id"] if existing else None, f"'{cost_raw}' isn't a valid cost.")
+                continue
+
+        threshold_raw = col(raw_row, "low_stock_threshold")
+        threshold = (existing or {}).get("low_stock_threshold")
+        if threshold_raw:
+            try:
+                threshold = round(float(threshold_raw), 3)
+                assert threshold >= 0
+            except (ValueError, AssertionError):
+                skip(name or (existing or {}).get("name", ""), existing["id"] if existing else None, f"'{threshold_raw}' isn't a valid low-stock threshold.")
+                continue
+
+        track_inventory = _parse_csv_bool(col(raw_row, "track_inventory"))
+        if track_inventory is None:
+            track_inventory = (existing or {}).get("track_inventory", False)
+        active = _parse_csv_bool(col(raw_row, "active"))
+        if active is None:
+            active = (existing or {}).get("active", True)
+        taxable = _parse_csv_bool(col(raw_row, "taxable"))
+        if taxable is None:
+            taxable = (existing or {}).get("taxable", True)
+
+        stock_raw = col(raw_row, "stock_on_hand")
+        stock_delta = None
+        if stock_raw:
+            if not track_inventory:
+                skip(name or (existing or {}).get("name", ""), existing["id"] if existing else None,
+                     "A stock count was given, but this product doesn't track inventory.")
+                continue
+            try:
+                target_stock = round(float(stock_raw), 3)
+                assert target_stock >= 0
+            except (ValueError, AssertionError):
+                skip(name or (existing or {}).get("name", ""), existing["id"] if existing else None, f"'{stock_raw}' isn't a valid stock count.")
+                continue
+            current_stock = float((existing or {}).get("stock_on_hand") or 0) if existing else 0.0
+            delta = round(target_stock - current_stock, 3)
+            if not existing or delta != 0:
+                stock_delta = target_stock if not existing else delta
+
+        action = "update" if existing else "create"
+        result = {"row": i, "action": action, "name": name or (existing or {}).get("name", ""),
+                   "id": existing["id"] if existing else None, "error": None}
+
+        if commit:
+            try:
+                if existing:
+                    body = PosProductIn(**{
+                        **{k: v for k, v in existing.items() if k in PosProductIn.model_fields},
+                        "name": name or existing["name"], "sku": sku or existing.get("sku"),
+                        "price": price, "cost": cost, "track_inventory": track_inventory,
+                        "low_stock_threshold": threshold, "active": active, "taxable": taxable,
+                    })
+                    await update_pos_product(existing["id"], body, user=user)
+                    if stock_delta:
+                        await adjust_pos_product_stock(existing["id"], InventoryAdjustIn(
+                            quantity_delta=stock_delta, reason="Bulk CSV import", source="MANUAL_ADJUSTMENT"), user=user)
+                else:
+                    created = await create_pos_product(PosProductCreateIn(
+                        name=name, sku=sku or None, price=price, cost=cost,
+                        track_inventory=track_inventory, low_stock_threshold=threshold,
+                        active=active, taxable=taxable, starting_stock=stock_delta or 0,
+                    ), user=user)
+                    result["id"] = created["id"]
+                    matched_ids.add(created["id"])
+            except HTTPException as e:
+                result = {"row": i, "action": "skip", "name": result["name"], "id": result["id"], "error": e.detail}
+        results.append(result)
+
+    return {
+        "committed": commit,
+        "rows": results,
+        "summary": {
+            "ok": sum(1 for r in results if r["action"] != "skip"),
+            "skipped": sum(1 for r in results if r["action"] == "skip"),
+            "total": len(results),
+        },
+    }
+
+
 async def duplicate_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Copies a listing (name, category, pricing/Shopify-link fields, etc.)
     into a brand-new product row with its own id and zero history. Never

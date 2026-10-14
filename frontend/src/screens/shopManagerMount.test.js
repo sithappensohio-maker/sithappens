@@ -143,6 +143,91 @@ describe("the Shop Manager survives being rendered", () => {
   });
 });
 
+describe("CSV import", () => {
+  const pickFile = async (text = "name,price\nNew Treats,10.00\n") => {
+    const input = byTestId("csv-import-file-input");
+    const file = new File([text], "products.csv", { type: "text/csv" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+  };
+
+  const openModal = async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-import-csv").click(); });
+  };
+
+  test("the Import CSV button opens the modal", async () => {
+    await openModal();
+    noReferenceErrors();
+    expect(byTestId("csv-import-modal")).toBeTruthy();
+  });
+
+  test("choosing a file and previewing posts commit=false and shows the row results", async () => {
+    api.post.mockResolvedValue({ data: {
+      committed: false,
+      rows: [{ row: 2, action: "create", name: "New Treats", id: null, error: null }],
+      summary: { ok: 1, skipped: 0, total: 1 },
+    } });
+    await openModal();
+    await pickFile();
+    await act(async () => { byTestId("csv-import-preview-btn").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    noReferenceErrors();
+    expect(api.post).toHaveBeenCalledWith(
+      "/pos/products/import.csv", expect.any(FormData), { params: { commit: false } });
+    expect(byTestId("csv-import-rows").textContent).toContain("New Treats");
+    expect(byTestId("csv-import-summary").textContent).toContain("1");
+  });
+
+  test("a skipped row shows its reason instead of a silent drop", async () => {
+    api.post.mockResolvedValue({ data: {
+      committed: false,
+      rows: [{ row: 2, action: "skip", name: "Bad Row", id: null, error: "'nope' isn't a valid price." }],
+      summary: { ok: 0, skipped: 1, total: 1 },
+    } });
+    await openModal();
+    await pickFile();
+    await act(async () => { byTestId("csv-import-preview-btn").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(byTestId("csv-import-rows").textContent).toContain("isn't a valid price");
+    // Nothing to apply — the Apply button must not offer to commit a no-op.
+    expect(byTestId("csv-import-apply-btn").disabled).toBe(true);
+  });
+
+  test("applying the import posts commit=true and refreshes the items list", async () => {
+    api.post.mockResolvedValueOnce({ data: {
+      committed: false,
+      rows: [{ row: 2, action: "create", name: "New Treats", id: null, error: null }],
+      summary: { ok: 1, skipped: 0, total: 1 },
+    } }).mockResolvedValueOnce({ data: {
+      committed: true,
+      rows: [{ row: 2, action: "create", name: "New Treats", id: "new-id", error: null }],
+      summary: { ok: 1, skipped: 0, total: 1 },
+    } });
+    api.get.mockClear();
+    await openModal();
+    await pickFile();
+    await act(async () => { byTestId("csv-import-preview-btn").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("csv-import-apply-btn").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    noReferenceErrors();
+    expect(api.post).toHaveBeenLastCalledWith(
+      "/pos/products/import.csv", expect.any(FormData), { params: { commit: true } });
+    // onApplied re-triggers the Items load, same as any other mutation here.
+    expect(api.get).toHaveBeenCalledWith("/shop-manager/items", expect.anything());
+  });
+
+  test("a read failure says so instead of a blank preview", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "That file isn't valid UTF-8 text." } } });
+    await openModal();
+    await pickFile();
+    await act(async () => { byTestId("csv-import-preview-btn").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[role="alert"]').textContent).toContain("UTF-8");
+  });
+});
+
 describe("the analytics dashboard", () => {
   const show = async () => {
     await mount(<ShopAnalyticsDashboard />);
