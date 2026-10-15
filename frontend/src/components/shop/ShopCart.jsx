@@ -262,6 +262,7 @@ export default function CartPanel({
   lines, subtotal, onQtyChange, onRemove, onCheckout, busy, previewMode,
   onClose, guestMode, onSignIn,
   appliedDiscount, onApplyDiscountCode, onRemoveDiscountCode, discountBusy,
+  loyaltyDiscount,
 }) {
   const panelRef = useRef(null);
   const returnFocusRef = useRef(null);
@@ -287,14 +288,25 @@ export default function CartPanel({
   const discountableSubtotal = lines
     .filter((l) => l.item?.kind !== "gift_card")
     .reduce((sum, l) => sum + (l.item?.price || 0) * l.quantity, 0);
-  const discountEstimate = appliedDiscount
+  const codeEstimate = appliedDiscount
     ? (appliedDiscount.kind === "percent"
         ? Math.round(discountableSubtotal * (appliedDiscount.value / 100) * 100) / 100
         : Math.min(appliedDiscount.value, discountableSubtotal))
     : 0;
-  const discountLabel = appliedDiscount
-    ? (appliedDiscount.kind === "percent" ? `${appliedDiscount.value}% off` : `${money(appliedDiscount.value)} off`)
-    : null;
+  // A loyal client's automatic discount (see domains.shop.loyalty_discount)
+  // never stacks with a code — whichever is larger is the one that will
+  // actually be charged, a tie favors loyalty. Mirrors _price_shop_cart
+  // exactly so this estimate never disagrees with the real checkout.
+  const loyaltyEstimate = loyaltyDiscount?.eligible
+    ? Math.round(discountableSubtotal * (loyaltyDiscount.pct / 100) * 100) / 100
+    : 0;
+  const loyaltyWins = loyaltyEstimate > 0 && loyaltyEstimate >= codeEstimate;
+  const discountEstimate = loyaltyWins ? loyaltyEstimate : codeEstimate;
+  const discountLabel = loyaltyWins
+    ? `Loyalty · ${loyaltyDiscount.pct}% off`
+    : appliedDiscount
+      ? (appliedDiscount.kind === "percent" ? `${appliedDiscount.value}% off` : `${money(appliedDiscount.value)} off`)
+      : null;
 
   return createPortal(
     <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center sm:justify-center z-50"
@@ -345,8 +357,17 @@ export default function CartPanel({
           <div className="shrink-0 px-5 pt-4 pb-5 border-t border-shBorder space-y-3"
                style={{ background: "var(--sh-card-base)" }}>
             {!guestMode && !previewMode && onApplyDiscountCode && (
-              <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
-                                  onRemove={onRemoveDiscountCode} busy={discountBusy} />
+              <>
+                {!appliedDiscount && loyaltyDiscount?.eligible && (
+                  <p className="flex items-center gap-1.5 text-[12px] font-bold text-shSecondary"
+                     data-testid="cart-loyalty-note">
+                    <i className="fas fa-star" aria-hidden="true" />
+                    {loyaltyDiscount.pct}% loyalty discount already applied — thanks for being a regular!
+                  </p>
+                )}
+                <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
+                                    onRemove={onRemoveDiscountCode} busy={discountBusy} />
+              </>
             )}
 
             <CartSummary subtotal={subtotal} discountLabel={discountLabel} discountEstimate={discountEstimate} />

@@ -349,7 +349,11 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
           <Field label="Streak target — boarding (visits)" type="number" value={l.streak_target_boarding}
                  onChange={(v) => set("loyalty", "streak_target_boarding", v)} testId="d2d-streak-b" disabled unsupported />
           <Field label="Bronze tier (visits)" type="number" value={l.loyalty_tier_bronze_visits}
-                 onChange={(v) => set("loyalty", "loyalty_tier_bronze_visits", v)} testId="d2d-bronze" disabled unsupported />
+                 onChange={(v) => set("loyalty", "loyalty_tier_bronze_visits", v)} testId="d2d-bronze"
+                 hint="At or past this many lifetime visits, a client gets the Shop discount below automatically." />
+          <Field label="Bronze tier Shop discount (%)" type="number" value={l.loyalty_tier_bronze_shop_discount_pct}
+                 onChange={(v) => set("loyalty", "loyalty_tier_bronze_shop_discount_pct", v)} testId="d2d-bronze-shop-pct"
+                 hint="Applied automatically, shown on the Shop page — never stacked with a discount code. 0 disables it." />
           <Field label="Silver tier (visits)" type="number" value={l.loyalty_tier_silver_visits}
                  onChange={(v) => set("loyalty", "loyalty_tier_silver_visits", v)} testId="d2d-silver" disabled unsupported />
           <Field label="Gold tier (visits)" type="number" value={l.loyalty_tier_gold_visits}

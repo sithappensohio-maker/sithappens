@@ -113,6 +113,7 @@ from domains.shop import abandon as shop_abandon
 from domains.shop import income as shop_income
 from domains.printify import client as printify_client
 from domains.shop import discount_codes as shop_discount_codes
+from domains.shop import loyalty_discount as shop_loyalty_discount
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
@@ -10286,6 +10287,13 @@ def _default_settings() -> dict:
                 "loyalty_tier_silver_visits": 25,
                 "loyalty_tier_gold_visits": 50,
                 "loyalty_tier_platinum_visits": 100,
+                # Reuses the Bronze visit threshold above rather than a
+                # parallel one — once a client's lifetime visit count
+                # reaches it, every Shop checkout gets this percent off
+                # automatically, no code to enter (owner request
+                # 2026-10-15: "regular clients with at least 10 visits
+                # auto get the 10 percent in the shop"). 0 disables it.
+                "loyalty_tier_bronze_shop_discount_pct": 10,
             },
             # ── Vaccines & Waiver ─────────────────────────────────────
             "compliance": {
@@ -42837,7 +42845,11 @@ async def _price_shop_cart(
     `discount_code`, when given, is validated (existence, active, not
     expired, client-eligibility, usage ceilings) and applied here — see
     domains.shop.discount_codes — so a preview and the real checkout can
-    never compute two different totals for the same code.
+    never compute two different totals for the same code. A signed-in
+    client may also qualify for the automatic loyalty discount
+    (domains.shop.loyalty_discount) just by having enough lifetime visits
+    — whichever of the two is larger is the one actually applied, they
+    never stack.
 
     This is a pre-commit PRICING check only — real stock enforcement happens
     atomically at reservation time (_reserve_shop_inventory_line), exactly
@@ -43006,19 +43018,44 @@ async def _price_shop_cart(
             raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product.get('name')}.")
 
     subtotal = round(sum(l["line_subtotal"] for l in lines), 2)
+    cart_settings = await get_settings()
 
-    # Discount code — resolved and applied here, the one place a Shop
-    # charge is actually computed, never duplicated between a preview and
-    # the real checkout. Gift-card lines are never discounted (money, not
-    # a purchase, same rule as tax); see domains.shop.discount_codes.
+    # Discount — resolved and applied here, the one place a Shop charge is
+    # actually computed, never duplicated between a preview and the real
+    # checkout. A cart gets whichever is larger: a client-entered code, or
+    # the automatic loyalty discount regular clients qualify for just by
+    # being signed in (domains.shop.loyalty_discount) — they never stack,
+    # see that module's docstring for why. Gift-card lines are never
+    # discounted either way (money, not a purchase, same rule as tax).
+    discountable_now = round(sum(l["line_subtotal"] for l in lines if l["kind"] != "gift_card"), 2)
+
     discount_doc = None
-    discount_amount = 0.0
+    code_amount = 0.0
     if discount_code:
         discount_doc = await shop_discount_codes.validate_code(
             db, discount_code, client_id=client_id, is_guest=is_guest)
-        discountable_now = round(sum(l["line_subtotal"] for l in lines if l["kind"] != "gift_card"), 2)
-        discount_amount = shop_discount_codes.compute_discount_amount(
+        code_amount = shop_discount_codes.compute_discount_amount(
             discount_doc["kind"], discount_doc["value"], discountable_now)
+
+    loyalty_discount = None
+    loyalty_amount = 0.0
+    if not is_guest and client_id:
+        loyalty_discount = await shop_loyalty_discount.eligible_discount(
+            db, client_id, settings=cart_settings)
+        if loyalty_discount:
+            loyalty_amount = shop_discount_codes.compute_discount_amount(
+                "percent", loyalty_discount["pct"], discountable_now)
+
+    if loyalty_amount > 0 and loyalty_amount >= code_amount:
+        discount_amount = loyalty_amount
+        discount_source = "loyalty"
+        discount_doc = None  # a code that lost isn't the one applied — never counted as used (see _apply_shop_payment)
+    elif code_amount > 0:
+        discount_amount = code_amount
+        discount_source = "code"
+    else:
+        discount_amount = 0.0
+        discount_source = None
     shop_discount_codes.apply_to_lines(lines, discount_amount)
 
     # Step 4C-1 — was `kind == "product"` alone, which ignored a product's
@@ -43034,8 +43071,7 @@ async def _price_shop_cart(
     tax_rate_pct = 0.0
     if taxable_base > 0:
         try:
-            settings_tx = await get_settings()
-            tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+            tx_cfg = (cart_settings or {}).get("sales_tax") or {}
             # Same rule as the Register: goods are taxed whenever tax is on.
             rate = sales_tax_policy.merchandise_tax_rate(tx_cfg)
             if rate > 0:
@@ -43061,10 +43097,12 @@ async def _price_shop_cart(
         "lines": lines, "subtotal": subtotal, "tax_amount": tax_amount,
         "tax_rate_pct": tax_rate_pct, "total": total,
         "discount_amount": discount_amount,
+        "discount_source": discount_source,  # "code" | "loyalty" | None
         "discount_code": discount_doc["code"] if discount_doc else None,
         "discount_code_id": discount_doc["id"] if discount_doc else None,
         "discount_kind": discount_doc["kind"] if discount_doc else None,
         "discount_value": discount_doc["value"] if discount_doc else None,
+        "loyalty_discount_pct": loyalty_discount["pct"] if (loyalty_discount and discount_source == "loyalty") else None,
     }
 
 
@@ -44086,6 +44124,22 @@ async def validate_shop_discount_code(body: ShopDiscountCodeApplyIn, user: dict 
     client_id = user.get("client_id") if not is_guest else None
     doc = await shop_discount_codes.validate_code(db, body.code, client_id=client_id, is_guest=is_guest)
     return {"code": doc["code"], "kind": doc["kind"], "value": doc["value"]}
+
+
+@api.get("/shop/loyalty-discount")
+async def get_shop_loyalty_discount(user: dict = Depends(get_current_user)):
+    """Whether this client already qualifies for the automatic Shop
+    loyalty discount — same eligibility _price_shop_cart itself checks,
+    surfaced here so the Shop page can show it before the cart is ever
+    opened. A guest or staff token (no client_id) is always ineligible."""
+    client_id = user.get("client_id") if user.get("role") == "client" else None
+    if not client_id:
+        return {"eligible": False}
+    settings = await get_settings()
+    discount = await shop_loyalty_discount.eligible_discount(db, client_id, settings=settings)
+    if not discount:
+        return {"eligible": False}
+    return {"eligible": True, **discount}
 
 
 class ShopOrderFulfillmentActionIn(BaseModel):

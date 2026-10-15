@@ -862,6 +862,18 @@ export default function PortalShop({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersOpen]);
 
+  // ── Loyalty discount — a regular client (lifetime visits at or past the
+  // configured threshold) gets a Shop discount automatically, no code to
+  // enter (owner request 2026-10-15: "...make it visible to them"). A
+  // guest or the admin preview never has visit history to check.
+  const [loyaltyDiscount, setLoyaltyDiscount] = useState(null); // {eligible, pct, visits, min_visits} | null
+  useEffect(() => {
+    if (mode !== "authenticated") { setLoyaltyDiscount(null); return; }
+    api.get("/shop/loyalty-discount")
+      .then(({ data }) => setLoyaltyDiscount(data?.eligible ? data : null))
+      .catch(() => setLoyaltyDiscount(null));
+  }, [mode]);
+
   // ── Discount code — validated here (eligibility only; the real amount is
   // always computed fresh server-side at checkout, never duplicated
   // client-side) so the cart can show "applied" before the customer pays.
@@ -1029,6 +1041,17 @@ export default function PortalShop({
         <div className="mb-4 border border-shSecondary/40 bg-shSecondary/10 rounded-lg p-3 text-center" data-testid="shop-preview-banner">
           <p className="text-shSecondary text-[11px] font-black uppercase tracking-widest">
             <i className="fas fa-eye mr-1.5" />Preview Only — no real orders will be created
+          </p>
+        </div>
+      )}
+
+      {isRealClient && loyaltyDiscount?.eligible && (
+        <div className="mb-4 border border-shSecondary/40 bg-shSecondary/10 rounded-lg p-3 flex items-center gap-2.5"
+             data-testid="shop-loyalty-banner">
+          <i className="fas fa-star text-shSecondary" aria-hidden="true" />
+          <p className="text-shText text-[12.5px] font-bold">
+            You&apos;ve unlocked <span className="text-shSecondary">{loyaltyDiscount.pct}% off</span> every Shop
+            order — our thanks for {loyaltyDiscount.visits}+ visits. It&apos;s applied automatically at checkout.
           </p>
         </div>
       )}
@@ -1392,6 +1415,7 @@ export default function PortalShop({
           onApplyDiscountCode={applyDiscountCode}
           onRemoveDiscountCode={removeDiscountCode}
           discountBusy={discountBusy}
+          loyaltyDiscount={loyaltyDiscount}
         />
       )}
 

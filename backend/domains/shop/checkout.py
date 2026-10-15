@@ -256,7 +256,9 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
             "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
             "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
             "discount_amount": priced.get("discount_amount") or 0.0,
+            "discount_source": priced.get("discount_source"),  # "code" | "loyalty" | None
             "discount_code": priced.get("discount_code"), "discount_code_id": priced.get("discount_code_id"),
+            "loyalty_discount_pct": priced.get("loyalty_discount_pct"),
             "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
             "shop_last_applied_attempt_id": None,
             "admin_unseen": True,
