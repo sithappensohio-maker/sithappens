@@ -862,6 +862,26 @@ export default function PortalShop({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ordersOpen]);
 
+  // ── Discount code — validated here (eligibility only; the real amount is
+  // always computed fresh server-side at checkout, never duplicated
+  // client-side) so the cart can show "applied" before the customer pays.
+  const [appliedDiscount, setAppliedDiscount] = useState(null); // {code, kind, value} | null
+  const [discountBusy, setDiscountBusy] = useState(false);
+  const applyDiscountCode = async (code) => {
+    const trimmed = (code || "").trim();
+    if (!trimmed) return;
+    setDiscountBusy(true);
+    try {
+      const { data } = await api.post("/shop/discount-codes/validate", { code: trimmed });
+      setAppliedDiscount(data);
+      toast.success(`Code applied — ${data.kind === "percent" ? `${data.value}% off` : `${money(data.value)} off`}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "That code isn't valid");
+    }
+    setDiscountBusy(false);
+  };
+  const removeDiscountCode = () => setAppliedDiscount(null);
+
   const submitCheckout = async () => {
     if (cart.length === 0) return;
     if (mode === "guest") {
@@ -896,6 +916,7 @@ export default function PortalShop({
           gift_message: c.gift?.gift_message || null,
         })),
         idempotency_key: idemKeyRef.current,
+        discount_code: appliedDiscount?.code || null,
       });
       window.location.href = data.url; // plain navigation — no Stripe SDK involved
     } catch (e) {
@@ -1367,6 +1388,10 @@ export default function PortalShop({
           guestMode={mode === "guest"}
           onSignIn={() => onRequireAccount?.(null, null)}
           onClose={() => setCartOpen(false)}
+          appliedDiscount={appliedDiscount}
+          onApplyDiscountCode={applyDiscountCode}
+          onRemoveDiscountCode={removeDiscountCode}
+          discountBusy={discountBusy}
         />
       )}
 

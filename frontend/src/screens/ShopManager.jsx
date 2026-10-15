@@ -1442,6 +1442,147 @@ function OnlineOrdersTab() {
 // section, leaving no admin surface to upload one.
 const SHOP_SETTINGS_SECTION_KEYS = ["merch", "prepaid_visits", "training", "online_school"];
 
+const BLANK_DISCOUNT_CODE_FORM = {
+  code: "", kind: "percent", value: "10", clients_only: true,
+  max_uses_total: "", max_uses_per_client: "", expires_at: "",
+};
+
+function DiscountCodesTab() {
+  const [codes, setCodes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState(BLANK_DISCOUNT_CODE_FORM);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.get("/admin/shop-discount-codes")
+      .then(({ data }) => setCodes(data.codes || []))
+      .catch(() => toast.error("Could not load discount codes"))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const createCode = async () => {
+    if (!form.code.trim()) { toast.error("Enter a code"); return; }
+    if (!(Number(form.value) > 0)) { toast.error("Enter a value greater than 0"); return; }
+    setSaving(true);
+    try {
+      await api.post("/admin/shop-discount-codes", {
+        code: form.code.trim(), kind: form.kind, value: Number(form.value),
+        clients_only: form.clients_only,
+        max_uses_total: form.max_uses_total !== "" ? Number(form.max_uses_total) : null,
+        max_uses_per_client: form.max_uses_per_client !== "" ? Number(form.max_uses_per_client) : null,
+        expires_at: form.expires_at || null,
+      });
+      toast.success("Discount code created");
+      setForm(BLANK_DISCOUNT_CODE_FORM);
+      load();
+    } catch (e) {
+      toast.error(formatErr(e?.response?.data?.detail) || "Could not create the code");
+    }
+    setSaving(false);
+  };
+
+  const toggleActive = async (c) => {
+    try {
+      await api.put(`/admin/shop-discount-codes/${c.id}`, { active: !c.active });
+      load();
+    } catch (e) {
+      toast.error(formatErr(e?.response?.data?.detail) || "Could not update the code");
+    }
+  };
+
+  return (
+    <div className="space-y-5 max-w-3xl" data-testid="sm-discount-codes">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">New Code</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Code</label>
+            <input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
+                   placeholder="e.g. WELCOME10" data-testid="sm-discount-code-input"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Type</label>
+              <select value={form.kind} onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
+                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                <option value="percent">% off</option>
+                <option value="fixed">$ off</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Value</label>
+              <input type="number" value={form.value} onChange={(e) => setForm((f) => ({ ...f, value: e.target.value }))}
+                     data-testid="sm-discount-value-input"
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Max total uses (optional)</label>
+            <input type="number" value={form.max_uses_total} onChange={(e) => setForm((f) => ({ ...f, max_uses_total: e.target.value }))}
+                   placeholder="Unlimited" className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Max uses per client (optional)</label>
+            <input type="number" value={form.max_uses_per_client} onChange={(e) => setForm((f) => ({ ...f, max_uses_per_client: e.target.value }))}
+                   placeholder="Unlimited" className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Expires (optional)</label>
+            <input type="date" value={form.expires_at ? form.expires_at.slice(0, 10) : ""}
+                   onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value ? `${e.target.value}T23:59:59Z` : "" }))}
+                   style={{ colorScheme: "dark" }}
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div className="flex items-center gap-2 self-end pb-2">
+            <input type="checkbox" id="discount-clients-only" checked={form.clients_only}
+                   onChange={(e) => setForm((f) => ({ ...f, clients_only: e.target.checked }))} />
+            <label htmlFor="discount-clients-only" className="text-shText text-sm">Existing clients only</label>
+          </div>
+        </div>
+        <button onClick={createCode} disabled={saving} data-testid="sm-discount-create"
+                className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+          {saving ? "Creating…" : "Create Code"}
+        </button>
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-3">Codes</p>
+        {loading ? (
+          <div className="text-center text-shTextMuted py-6 text-sm">Loading…</div>
+        ) : codes.length === 0 ? (
+          <div className="text-center text-shTextMuted py-6 text-sm">No discount codes yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {codes.map((c) => (
+              <div key={c.id} data-testid={`sm-discount-row-${c.code}`}
+                   className="flex items-center justify-between bg-[var(--sh-card-base)] border border-shBorder/60 rounded-lg px-3 py-2.5">
+                <div>
+                  <span className="text-shText font-black text-sm">{c.code}</span>
+                  <span className="text-shTextMuted text-[12px] ml-2">
+                    {c.kind === "percent" ? `${c.value}% off` : `$${c.value.toFixed(2)} off`}
+                    {c.clients_only && " · clients only"}
+                    {c.max_uses_total != null && ` · ${c.uses_total}/${c.max_uses_total} used`}
+                    {c.max_uses_total == null && c.uses_total > 0 && ` · ${c.uses_total} used`}
+                    {c.max_uses_per_client != null && ` · max ${c.max_uses_per_client}/client`}
+                    {c.expires_at && ` · expires ${String(c.expires_at).slice(0, 10)}`}
+                  </span>
+                </div>
+                <button onClick={() => toggleActive(c)} data-testid={`sm-discount-toggle-${c.code}`}
+                        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${c.active ? "bg-shPrimary/20 text-shPrimary" : "bg-[var(--sh-card-base)] text-shTextMuted border border-shBorder"}`}>
+                  {c.active ? "Active" : "Off"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ShopSettingsTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2004,6 +2145,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           { key: "register_sales", label: "Register Sales", icon: "fa-cash-register", testid: "sm-tab-register_sales", accent: "cyan" },
           { key: "categories", label: "Categories & Layout", icon: "fa-layer-group", testid: "sm-tab-categories", accent: "cyan" },
           { key: "shop_settings", label: "Shop Settings", icon: "fa-sliders", testid: "sm-tab-shop_settings", accent: "cyan" },
+          { key: "discounts", label: "Discount Codes", icon: "fa-tag", testid: "sm-tab-discounts", accent: "cyan" },
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
           { key: "preview", label: "Client Preview", icon: "fa-mobile-screen", testid: "sm-tab-preview", accent: "cyan" },
         ]}
@@ -2014,6 +2156,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       {tab === "register_sales" && <RegisterSalesDashboard key={`register-sales-${refreshKey}`} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
       {tab === "shop_settings" && <ShopSettingsTab key={`shop-settings-${refreshKey}`} />}
+      {tab === "discounts" && <DiscountCodesTab key={`discounts-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
       {tab === "preview" && <ClientPreviewTab key={`prev-${refreshKey}`} />}
 

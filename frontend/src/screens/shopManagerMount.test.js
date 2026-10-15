@@ -480,3 +480,48 @@ describe("Mark Ready tells staff what happened to the customer's email", () => {
     noReferenceErrors();
   });
 });
+
+describe("Discount Codes tab", () => {
+  const CODE = { id: "dc-1", code: "WELCOME10", kind: "percent", value: 10, active: true,
+                 clients_only: true, max_uses_total: null, max_uses_per_client: null,
+                 uses_total: 0, expires_at: null, created_at: "2026-10-01T12:00:00Z" };
+
+  test("it renders the list and can create and toggle a code", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) =>
+      url.includes("/admin/shop-discount-codes") ? Promise.resolve({ data: { codes: [CODE] } }) : base(url));
+    api.post.mockReset();
+    api.post.mockImplementation((url, body) => {
+      if (url === "/admin/shop-discount-codes") return Promise.resolve({ data: { ...CODE, ...body, id: "dc-2" } });
+      return Promise.resolve({ data: {} });
+    });
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ...CODE, active: false } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-discounts").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    noReferenceErrors();
+    expect(text()).toContain("WELCOME10");
+    expect(text()).toContain("10% off");
+
+    // Create a second code.
+    const setInput = (id, value) => {
+      const el = byTestId(id);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setInput("sm-discount-code-input", "SPRING15"); });
+    await act(async () => { setInput("sm-discount-value-input", "15"); });
+    await act(async () => { byTestId("sm-discount-create").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/shop-discount-codes", expect.objectContaining({ code: "SPRING15", value: 15 }));
+
+    // Toggle the existing one off.
+    await act(async () => { byTestId("sm-discount-toggle-WELCOME10").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.put).toHaveBeenCalledWith("/admin/shop-discount-codes/dc-1", { active: false });
+    noReferenceErrors();
+  });
+});

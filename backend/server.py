@@ -112,6 +112,7 @@ from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
 from domains.shop import income as shop_income
 from domains.printify import client as printify_client
+from domains.shop import discount_codes as shop_discount_codes
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
@@ -42818,7 +42819,10 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             raise HTTPException(status_code=422, detail="Please finish your account setup before completing this purchase.")
 
 
-async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str] = None) -> dict:
+async def _price_shop_cart(
+    items: List[ShopCartItemIn], client_id: Optional[str] = None, *,
+    discount_code: Optional[str] = None, is_guest: bool = False,
+) -> dict:
     """Prices a Shop cart entirely server-side — never trusts a client-
     supplied price. Only `product` lines are physical/taxable; credit_pack
     and training_program lines are never taxed (confirmed: no tax
@@ -42829,6 +42833,11 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
     line's own subtotal, with the LAST taxable line absorbing the rounding
     remainder — guarantees the per-line sum always exactly equals the
     order-level tax total, by construction.
+
+    `discount_code`, when given, is validated (existence, active, not
+    expired, client-eligibility, usage ceilings) and applied here — see
+    domains.shop.discount_codes — so a preview and the real checkout can
+    never compute two different totals for the same code.
 
     This is a pre-commit PRICING check only — real stock enforcement happens
     atomically at reservation time (_reserve_shop_inventory_line), exactly
@@ -42997,14 +43006,33 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product.get('name')}.")
 
     subtotal = round(sum(l["line_subtotal"] for l in lines), 2)
+
+    # Discount code — resolved and applied here, the one place a Shop
+    # charge is actually computed, never duplicated between a preview and
+    # the real checkout. Gift-card lines are never discounted (money, not
+    # a purchase, same rule as tax); see domains.shop.discount_codes.
+    discount_doc = None
+    discount_amount = 0.0
+    if discount_code:
+        discount_doc = await shop_discount_codes.validate_code(
+            db, discount_code, client_id=client_id, is_guest=is_guest)
+        discountable_now = round(sum(l["line_subtotal"] for l in lines if l["kind"] != "gift_card"), 2)
+        discount_amount = shop_discount_codes.compute_discount_amount(
+            discount_doc["kind"], discount_doc["value"], discountable_now)
+    shop_discount_codes.apply_to_lines(lines, discount_amount)
+
     # Step 4C-1 — was `kind == "product"` alone, which ignored a product's
     # own taxable=false override online (the POS path honored it).
     taxable_lines = [l for l in lines if l.get("taxable")]
     taxable_subtotal = round(sum(l["line_subtotal"] for l in taxable_lines), 2)
+    # The discounted base tax is actually computed on — each taxable line's
+    # own allocated_discount, not a cart-wide ratio (apply_to_lines already
+    # did the proportional/remainder allocation, so this is exact).
+    taxable_base = round(sum(l["line_subtotal"] - l.get("allocated_discount", 0) for l in taxable_lines), 2)
 
     tax_amount = 0.0
     tax_rate_pct = 0.0
-    if taxable_subtotal > 0:
+    if taxable_base > 0:
         try:
             settings_tx = await get_settings()
             tx_cfg = (settings_tx or {}).get("sales_tax") or {}
@@ -43012,7 +43040,7 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             rate = sales_tax_policy.merchandise_tax_rate(tx_cfg)
             if rate > 0:
                 tax_rate_pct = rate
-                tax_amount = sales_tax_policy.tax_on(taxable_subtotal, rate)
+                tax_amount = sales_tax_policy.tax_on(taxable_base, rate)
         except Exception as exc:
             logger.warning("Shop cart tax calc failed: %s", exc)
 
@@ -43025,12 +43053,18 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
                 line_tax = round(tax_amount * (line["line_subtotal"] / taxable_subtotal), 2)
                 allocated_so_far = round(allocated_so_far + line_tax, 2)
             line["allocated_tax"] = line_tax
-            line["line_total"] = round(line["line_subtotal"] + line_tax, 2)
+    for line in lines:
+        line["line_total"] = round(line["line_subtotal"] - line.get("allocated_discount", 0) + line.get("allocated_tax", 0), 2)
 
-    total = round(subtotal + tax_amount, 2)
+    total = round(subtotal - discount_amount + tax_amount, 2)
     return {
         "lines": lines, "subtotal": subtotal, "tax_amount": tax_amount,
         "tax_rate_pct": tax_rate_pct, "total": total,
+        "discount_amount": discount_amount,
+        "discount_code": discount_doc["code"] if discount_doc else None,
+        "discount_code_id": discount_doc["id"] if discount_doc else None,
+        "discount_kind": discount_doc["kind"] if discount_doc else None,
+        "discount_value": discount_doc["value"] if discount_doc else None,
     }
 
 
@@ -43588,6 +43622,17 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 await _apply_shop_reward_progress(order)
             except Exception as exc:
                 logger.warning("shop reward progress failed for order %s: %s", order_id, exc)
+            # Discount code — counted as used only now that the order is
+            # actually paid, never at checkout-start (see
+            # domains.shop.discount_codes' module docstring for why).
+            if order.get("discount_code_id"):
+                try:
+                    await shop_discount_codes.record_redemption(
+                        db, code_id=order["discount_code_id"], code=order.get("discount_code") or "",
+                        client_id=order.get("client_id"), order_id=order_id,
+                    )
+                except Exception as exc:
+                    logger.warning("discount code redemption recording failed for order %s: %s", order_id, exc)
 
     # ── Step B1 — canonical Payment row, reusing the EXISTING check-before-
     # insert idempotency helper. invoice_id=None, shop_order_id set. ──
@@ -43895,6 +43940,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
         buyer=shop_checkout.client_buyer(client),
         items=body.items,
         idempotency_key=body.idempotency_key,
+        discount_code=body.discount_code,
     )
 
 
@@ -44002,6 +44048,44 @@ async def mark_shop_orders_seen(body: ShopOrdersMarkSeenIn, user: dict = Depends
         {"$set": {"admin_unseen": False}},
     )
     return {"marked": result.modified_count}
+
+
+# ── Shop discount codes ──────────────────────────────────────────────────
+
+@api.post("/admin/shop-discount-codes")
+async def create_shop_discount_code(body: shop_discount_codes.ShopDiscountCodeIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    return await shop_discount_codes.create_code(db, body, actor_id=user.get("id"), actor_name=user.get("name") or user.get("email"))
+
+
+@api.get("/admin/shop-discount-codes")
+async def list_shop_discount_codes(user: dict = Depends(require_admin_and_permission("pricing"))):
+    return {"codes": await shop_discount_codes.list_codes(db)}
+
+
+class ShopDiscountCodeActiveIn(BaseModel):
+    active: bool
+
+
+@api.put("/admin/shop-discount-codes/{code_id}")
+async def update_shop_discount_code_active(code_id: str, body: ShopDiscountCodeActiveIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    return await shop_discount_codes.set_active(db, code_id, body.active)
+
+
+class ShopDiscountCodeApplyIn(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+
+
+@api.post("/shop/discount-codes/validate")
+async def validate_shop_discount_code(body: ShopDiscountCodeApplyIn, user: dict = Depends(get_current_user)):
+    """Eligibility-only preview for the cart's "have a code?" field — the
+    REAL discount is always computed fresh at actual checkout
+    (_price_shop_cart), never duplicated here. Every code today is
+    clients_only (see domains.shop.discount_codes), so a non-client caller
+    is told to sign in rather than silently refused."""
+    is_guest = user.get("role") != "client"
+    client_id = user.get("client_id") if not is_guest else None
+    doc = await shop_discount_codes.validate_code(db, body.code, client_id=client_id, is_guest=is_guest)
+    return {"code": doc["code"], "kind": doc["kind"], "value": doc["value"]}
 
 
 class ShopOrderFulfillmentActionIn(BaseModel):

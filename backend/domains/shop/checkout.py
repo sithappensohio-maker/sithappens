@@ -166,7 +166,7 @@ def _restart(status_code: int, msg: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error_code": RESTART_CODE, "msg": msg})
 
 
-async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
+async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount_code: Optional[str] = None) -> dict:
     """Price, reserve, and start paying for a cart. Returns
     {url, order_id, guest_token?}.
 
@@ -174,6 +174,12 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
     idempotency key BEFORE anything is priced, so a retried request resumes
     the same order, the same reservation and the same Stripe session rather
     than charging twice.
+
+    `discount_code` is re-validated and re-priced here on every call
+    (never trusted from a resumed claim) — but only actually APPLIED the
+    first time this idempotency key creates the order; a resumed/retried
+    claim reuses the order's already-frozen lines/total exactly as before,
+    same as every other price input.
     """
     db = _s("db")
     now_iso = _s("now_iso")
@@ -217,7 +223,10 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
 
     order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
-        priced = await _s("_price_shop_cart")(normalized_items, client_id=buyer.client_id)
+        priced = await _s("_price_shop_cart")(
+            normalized_items, client_id=buyer.client_id,
+            discount_code=discount_code, is_guest=buyer.is_guest,
+        )
         if priced["total"] <= 0.005:
             raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
 
@@ -246,6 +255,8 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
             "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
             "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
             "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
+            "discount_amount": priced.get("discount_amount") or 0.0,
+            "discount_code": priced.get("discount_code"), "discount_code_id": priced.get("discount_code_id"),
             "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
             "shop_last_applied_attempt_id": None,
             "admin_unseen": True,
@@ -325,13 +336,34 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
             stripe_customer_id = customer["id"]
             await db.clients.update_one({"id": buyer.client_id}, {"$set": {"stripe_customer_id": stripe_customer_id}})
 
-        line_items = [{
-            "price_data": {
-                "currency": "usd", "product_data": {"name": l["name"]},
-                "unit_amount": _s("_stripe_amount_cents")(l["unit_price"]),
-            },
-            "quantity": l["quantity"],
-        } for l in order["lines"]]
+        stripe_amount_cents = _s("_stripe_amount_cents")
+        line_items = []
+        for l in order["lines"]:
+            if l.get("allocated_discount"):
+                # A per-line discount doesn't divide evenly back into
+                # unit_amount × quantity in general, so Stripe sees this ONE
+                # line at its own net (post-discount) amount instead — the
+                # per-unit price shown elsewhere (cart, receipt) is
+                # unaffected; this only changes how Stripe's own hosted page
+                # itemizes a discounted line. Every undiscounted line (the
+                # vast majority of checkouts — no code used) is untouched.
+                net_amount = round(l["line_subtotal"] - l["allocated_discount"], 2)
+                line_items.append({
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {"name": f"{l['name']} (x{l['quantity']})" if l["quantity"] > 1 else l["name"]},
+                        "unit_amount": stripe_amount_cents(net_amount),
+                    },
+                    "quantity": 1,
+                })
+            else:
+                line_items.append({
+                    "price_data": {
+                        "currency": "usd", "product_data": {"name": l["name"]},
+                        "unit_amount": stripe_amount_cents(l["unit_price"]),
+                    },
+                    "quantity": l["quantity"],
+                })
         if order.get("tax_amount"):
             line_items.append({
                 "price_data": {

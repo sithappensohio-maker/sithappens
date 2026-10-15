@@ -45,6 +45,10 @@ class ShopCartItemIn(BaseModel):
 class ShopCheckoutIn(BaseModel):
     items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
     idempotency_key: str = Field(min_length=8, max_length=128)
+    # Validated server-side against the actual buyer/cart in
+    # domains.shop.checkout.create_checkout — never trusted as proof the
+    # discount applies just because it's present here.
+    discount_code: Optional[str] = Field(default=None, max_length=40)
 
 
 def _gift_identity(item) -> Tuple[Optional[str], Optional[str], Optional[str]]:

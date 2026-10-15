@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { guestItemCta, isInternalPhysical, stockCeiling } from "../../lib/shopPolish";
 import { money, Price, ProductImage, QuantityStepper } from "./ShopPrimitives";
 
@@ -135,14 +135,24 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
  * Tax is only ever shown when the server has told us what it is. Before
  * checkout it has not, so this says so rather than guessing.
  */
-export function CartSummary({ subtotal, tax, total, note }) {
+export function CartSummary({ subtotal, tax, total, note, discountLabel, discountEstimate }) {
   const showTax = tax != null;
+  const showDiscount = discountLabel && discountEstimate > 0;
+  // An estimate only — shown so the discount feels real before checkout,
+  // but the server (never this) decides the actual amount charged.
+  const displayed = showTax ? total : subtotal - (showDiscount ? discountEstimate : 0);
   return (
     <div className="space-y-2" data-testid="shop-cart-summary">
       <div className="flex items-center justify-between text-[13px]">
         <span className="text-shTextMuted">Subtotal</span>
         <span className="text-shText font-bold tabular-nums" data-testid="cart-subtotal">{money(subtotal)}</span>
       </div>
+      {showDiscount && (
+        <div className="flex items-center justify-between text-[13px]" data-testid="cart-discount">
+          <span className="text-shSecondary">Discount ({discountLabel})</span>
+          <span className="text-shSecondary font-bold tabular-nums">−{money(discountEstimate)}</span>
+        </div>
+      )}
       {showTax && (
         <div className="flex items-center justify-between text-[13px]">
           <span className="text-shTextMuted">Sales tax</span>
@@ -152,7 +162,7 @@ export function CartSummary({ subtotal, tax, total, note }) {
       <div className="flex items-center justify-between pt-2 border-t border-shBorder">
         <span className="text-shText font-black text-[15px]">Total</span>
         <span className="text-shPrimary font-black text-[20px] tabular-nums" data-testid="cart-total">
-          {money(showTax ? total : subtotal)}
+          {money(displayed)}
         </span>
       </div>
       <p className="text-[11.5px] text-shTextMuted leading-relaxed pt-1">
@@ -162,6 +172,46 @@ export function CartSummary({ subtotal, tax, total, note }) {
       </p>
       {note}
     </div>
+  );
+}
+
+/**
+ * "Have a code?" — a code is validated for eligibility here (does it
+ * exist, is it active, does this account qualify) but the actual discount
+ * amount shown is an ESTIMATE computed client-side from the applied code's
+ * kind/value; the real one is always computed fresh server-side at
+ * checkout (see _price_shop_cart), never trusted from this estimate.
+ */
+export function DiscountCodeField({ applied, onApply, onRemove, busy }) {
+  const [value, setValue] = useState("");
+  if (applied) {
+    return (
+      <div className="flex items-center justify-between rounded-lg border border-shSecondary/40 bg-shSecondary/10 px-3 py-2"
+           data-testid="cart-discount-applied">
+        <span className="text-[12.5px] font-bold text-shSecondary">
+          <i className="fas fa-tag mr-1.5" aria-hidden="true" />
+          {applied.code} applied
+        </span>
+        <button type="button" onClick={onRemove} data-testid="cart-discount-remove"
+                className="text-[11.5px] text-shTextMuted hover:text-shDanger underline">
+          Remove
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form className="flex gap-2" data-testid="cart-discount-form"
+          onSubmit={(e) => { e.preventDefault(); onApply(value); }}>
+      <input value={value} onChange={(e) => setValue(e.target.value)}
+             placeholder="Have a code?" data-testid="cart-discount-input"
+             className="flex-1 min-w-0 rounded-lg border border-shBorder bg-transparent px-3 py-2 text-[13px] text-shText
+                        placeholder:text-shTextMuted focus-visible:outline focus-visible:outline-2 focus-visible:outline-shPrimary" />
+      <button type="submit" disabled={!value.trim() || busy} data-testid="cart-discount-apply"
+              className="shrink-0 px-3.5 py-2 rounded-lg border border-shBorder text-[12px] font-bold text-shText
+                         hover:border-shPrimary/60 transition disabled:opacity-40">
+        {busy ? "…" : "Apply"}
+      </button>
+    </form>
   );
 }
 
@@ -211,6 +261,7 @@ export function AccountRequiredNotice({ blockedLines, onSignIn }) {
 export default function CartPanel({
   lines, subtotal, onQtyChange, onRemove, onCheckout, busy, previewMode,
   onClose, guestMode, onSignIn,
+  appliedDiscount, onApplyDiscountCode, onRemoveDiscountCode, discountBusy,
 }) {
   const panelRef = useRef(null);
   const returnFocusRef = useRef(null);
@@ -229,6 +280,21 @@ export default function CartPanel({
   const blocked = guestMode ? guestBlockers(lines) : [];
   const blockedKeys = new Set(blocked.map((l) => `${l.kind}:${l.ref_id}`));
   const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0);
+
+  // Every code today is clients_only — gift cards never count (money, not
+  // a purchase, same rule the server applies). Estimate only; see
+  // CartSummary's own note on this.
+  const discountableSubtotal = lines
+    .filter((l) => l.item?.kind !== "gift_card")
+    .reduce((sum, l) => sum + (l.item?.price || 0) * l.quantity, 0);
+  const discountEstimate = appliedDiscount
+    ? (appliedDiscount.kind === "percent"
+        ? Math.round(discountableSubtotal * (appliedDiscount.value / 100) * 100) / 100
+        : Math.min(appliedDiscount.value, discountableSubtotal))
+    : 0;
+  const discountLabel = appliedDiscount
+    ? (appliedDiscount.kind === "percent" ? `${appliedDiscount.value}% off` : `${money(appliedDiscount.value)} off`)
+    : null;
 
   return createPortal(
     <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center sm:justify-center z-50"
@@ -278,7 +344,12 @@ export default function CartPanel({
         {lines.length > 0 && (
           <div className="shrink-0 px-5 pt-4 pb-5 border-t border-shBorder space-y-3"
                style={{ background: "var(--sh-card-base)" }}>
-            <CartSummary subtotal={subtotal} />
+            {!guestMode && !previewMode && onApplyDiscountCode && (
+              <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
+                                  onRemove={onRemoveDiscountCode} busy={discountBusy} />
+            )}
+
+            <CartSummary subtotal={subtotal} discountLabel={discountLabel} discountEstimate={discountEstimate} />
 
             {blocked.length > 0 && (
               <AccountRequiredNotice blockedLines={blocked} onSignIn={onSignIn} />
