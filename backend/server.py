@@ -10272,6 +10272,15 @@ def _default_settings() -> dict:
                 "referral_reward_type": "credit",   # "credit" | "dollar_off" | "percent_off" | "free_session"
                 "referral_reward_amount": 1,        # interpreted based on _type
                 "referral_reward_service": "daycare",  # which credit pool gets the +1
+                # Shop purchases build up toward a free credit rather than
+                # granting one per order (owner: a whole credit per order
+                # "gives away too much") — every order's eligible total
+                # (everything except gift cards, which are money, not a
+                # purchase) adds to a running balance on the client; once it
+                # crosses this threshold a credit is granted and the
+                # remainder carries forward. 0 disables Shop rewards.
+                "shop_reward_threshold_usd": 75.0,
+                "shop_reward_service": "daycare",   # which credit pool a crossed threshold grants
                 "loyalty_tier_bronze_visits": 10,
                 "loyalty_tier_silver_visits": 25,
                 "loyalty_tier_gold_visits": 50,
@@ -43450,6 +43459,54 @@ async def _queue_new_shop_order_notification(order: dict) -> None:
     await queue_admin_new_shop_order(order, client)
 
 
+async def _apply_shop_reward_progress(order: dict) -> None:
+    """Shop purchases build up toward a free service credit instead of
+    handing one out per order (owner request 2026-10-15: a whole credit per
+    order "gives away too much" — should accumulate). Every paid order's
+    eligible total — everything except gift_card lines, which are money,
+    not a purchase, same rule _price_shop_cart already applies for tax —
+    adds to a running balance kept on the client doc; once it crosses the
+    configured threshold, a credit is granted (via the SAME mechanism a
+    referral bonus already uses) and the remainder carries forward to the
+    next one. A guest order has no client/credit balance to build progress
+    on, so it's skipped entirely — never an error, just a no-op.
+
+    Called from the ONE place a Shop order transitions to paid (see
+    _apply_shop_payment's Step A), which already guarantees this runs
+    exactly once per order — never double-counted by a webhook replay or a
+    Retry Fulfillment call against an order already marked paid."""
+    if order.get("is_guest_order") or not order.get("client_id"):
+        return
+    settings = await get_settings()
+    if (settings.get("feature_visibility") or {}).get("rewards", True) is False:
+        return
+    loyalty = settings.get("loyalty") or {}
+    threshold = round(float(loyalty.get("shop_reward_threshold_usd", 75.0) or 0), 2)
+    if threshold <= 0:
+        return
+    eligible = round(sum(
+        float(line.get("line_total") or 0) for line in (order.get("lines") or []) if line.get("kind") != "gift_card"
+    ), 2)
+    if eligible <= 0:
+        return
+    client = await db.clients.find_one({"id": order["client_id"]}, {"_id": 0})
+    if not client:
+        return
+    progress = round(float(client.get("shop_reward_progress") or 0) + eligible, 2)
+    credits = 0
+    while progress >= threshold and credits < 50:  # _grant_client_reward_credit's own ceiling
+        progress = round(progress - threshold, 2)
+        credits += 1
+    await db.clients.update_one({"id": client["id"]}, {"$set": {"shop_reward_progress": progress}})
+    if credits > 0:
+        service = loyalty.get("shop_reward_service", "daycare")
+        await _grant_client_reward_credit(
+            client, service=service, amount=credits,
+            reason=f"Shop purchases — ${threshold:.0f} toward a free {_reward_service_label(service)} credit",
+            source="shop_reward", source_id=order["id"],
+        )
+
+
 async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None) -> dict:
     """The ONE local-application sequence for a Stripe-confirmed Shop order
     payment. Safe to call any number of times for the SAME attempt — every
@@ -43523,6 +43580,14 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                     db, order, business_date=business_date)
             except Exception as exc:
                 logger.warning("shop analytics order_completed failed for %s: %s", order_id, exc)
+            # Shop rewards — spend builds up toward a free service credit
+            # rather than granting one per order (owner request 2026-10-15:
+            # a whole credit per order "gives away too much"). Same "fires
+            # exactly once per order" guarantee as the analytics call above.
+            try:
+                await _apply_shop_reward_progress(order)
+            except Exception as exc:
+                logger.warning("shop reward progress failed for order %s: %s", order_id, exc)
 
     # ── Step B1 — canonical Payment row, reusing the EXISTING check-before-
     # insert idempotency helper. invoice_id=None, shop_order_id set. ──
