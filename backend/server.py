@@ -41920,10 +41920,17 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     # EVERY audience (authenticated client and guest alike) from this one
     # place, rather than three separate re-implementations. Additive: when
     # unset, every section defaults to visible (today's behavior).
-    _shop_page_sections = ((await get_settings()).get("shop_page") or {}).get("sections") or {}
+    _catalog_settings = await get_settings()
+    _shop_page_sections = (_catalog_settings.get("shop_page") or {}).get("sections") or {}
     _section_visible = {
         sec: bool((_shop_page_sections.get(sec) or {}).get("visible", True)) for sec in SHOP_SECTIONS
     }
+    # Feature Flags "Online School" — distinct from the "training" Shop-
+    # Appearance section above (which also covers ordinary in-person
+    # training classes and must stay on for those). Off means an
+    # online_school-fulfillment program is hidden here too, same as it
+    # already is from the portal nav and public site (Sprint 110di-17).
+    _online_school_visible = (_catalog_settings.get("feature_visibility") or {}).get("online_school", True) is not False
 
     items = []
 
@@ -42079,6 +42086,8 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     ).sort([("name", 1), ("id", 1)]).to_list(length=None) if _section_visible["training"] else []
     for prog in programs:
         if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
+            continue
+        if prog.get("purchase_fulfillment") == "online_school" and not _online_school_visible:
             continue
         fmt = prog.get("format") or {}
         items.append({
