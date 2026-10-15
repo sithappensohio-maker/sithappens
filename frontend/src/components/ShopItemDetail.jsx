@@ -4,7 +4,8 @@ import { toast } from "sonner";
 import { isFreeClaimable, freePriceLabel, freeCourseCta, rememberFreeClaimIntent } from "../lib/freeCourseClaim";
 import { useDocumentMeta, publicOrigin } from "../lib/useDocumentMeta";
 import { itemMetaFor } from "../lib/shopSeo";
-import { Price, priceProps, useShopImage } from "./shop/ShopPrimitives";
+import { Price, priceProps, useShopImage, RatingStars } from "./shop/ShopPrimitives";
+import ShopReviews from "./shop/ShopReviews";
 import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
@@ -410,6 +411,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             <h1 className={`${isOnlineSchoolProgram ? "sh-display text-3xl sm:text-4xl leading-none" : "text-2xl font-bold"} text-shText flex-1 min-w-0`}>{item.name}</h1>
             {favoriteSlot?.(item, { size: "md" })}
           </div>
+          {item.kind === "product" && <RatingStars item={item} className="mt-1.5" />}
 
           <div className="mt-3">
             <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} />
@@ -718,6 +720,8 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           </div>
         </div>
       </div>
+
+      {item.kind === "product" && mode !== "preview" && <ShopReviews productId={item.id} mode={mode} />}
 
       {discoverySlot}
     </div>

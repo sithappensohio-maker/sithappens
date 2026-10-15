@@ -525,3 +525,29 @@ describe("Discount Codes tab", () => {
     noReferenceErrors();
   });
 });
+
+describe("Reviews tab", () => {
+  const REVIEW = { id: "rv-1", product_id: "p1", product_name: "Rope Leash", client_name: "Sam Client",
+                   rating: 2, text: "Not what I expected", status: "pending", created_at: "2026-10-10T12:00:00Z" };
+
+  test("it renders pending reviews and can approve or reject one", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) =>
+      url.includes("/admin/shop-reviews") ? Promise.resolve({ data: { reviews: [REVIEW] } }) : base(url));
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ...REVIEW, status: "published" } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-reviews").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    noReferenceErrors();
+    expect(text()).toContain("Rope Leash");
+    expect(text()).toContain("Sam Client");
+    expect(text()).toContain("Not what I expected");
+
+    await act(async () => { byTestId("sm-review-approve-rv-1").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.put).toHaveBeenCalledWith("/admin/shop-reviews/rv-1", { status: "published" });
+    noReferenceErrors();
+  });
+});

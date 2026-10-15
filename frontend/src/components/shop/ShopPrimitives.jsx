@@ -101,6 +101,26 @@ export function Badges({ item, className = "", bestSellerIds }) {
   );
 }
 
+/** A product's star rating, from real published reviews only — renders
+ *  nothing at all for an item with none yet, same "silent when there is
+ *  nothing to say" rule Availability/Badges already follow below. */
+export function RatingStars({ item, size = "sm", className = "" }) {
+  const count = item?.rating_count;
+  const avg = item?.rating_avg;
+  if (!count || avg == null) return null;
+  const full = Math.round(avg);
+  return (
+    <div className={`inline-flex items-center gap-1.5 ${className}`} data-testid="shop-rating-stars">
+      <span className="inline-flex gap-0.5 text-shAccent" aria-hidden="true">
+        {Array.from({ length: 5 }, (_, i) => (
+          <i key={i} className={`${i < full ? "fas" : "far"} fa-star ${size === "lg" ? "text-[15px]" : "text-[11px]"}`} />
+        ))}
+      </span>
+      <span className="text-[11px] text-shTextMuted tabular-nums">{avg.toFixed(1)} ({count})</span>
+    </div>
+  );
+}
+
 /** Stock, in words a customer uses. Silent when there is nothing worth
  *  saying — "In stock" on every card is noise, not information. */
 export function Availability({ item, className = "" }) {

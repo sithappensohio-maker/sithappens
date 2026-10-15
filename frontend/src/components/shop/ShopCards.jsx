@@ -1,7 +1,7 @@
 import { guestItemCta, creditPackDisplayInfo, singularUnit } from "../../lib/shopPolish";
 import { isFreeClaimable } from "../../lib/freeCourseClaim";
 import { packValue } from "../../lib/shopDepartments";
-import { Price, Badges, Availability, ProductImage, CardShell, money, priceProps } from "./ShopPrimitives";
+import { Price, Badges, Availability, ProductImage, CardShell, RatingStars, money, priceProps } from "./ShopPrimitives";
 
 /**
  * Four cards, because we sell four different kinds of thing.
@@ -111,6 +111,7 @@ export function MerchCard(props) {
       <Badges item={item} bestSellerIds={props.bestSellerIds} className="absolute top-2 left-2 z-[5]" />
       <div className="pt-3 flex flex-col gap-1 flex-1">
         <p className="text-[14px] font-bold text-shText leading-snug line-clamp-2">{item.name}</p>
+        <RatingStars item={item} />
         <div className="flex items-center justify-between gap-2 mt-auto pt-1">
           {isFreeClaimable(item) ? (
             <p className="text-shPrimary font-black text-[18px]"

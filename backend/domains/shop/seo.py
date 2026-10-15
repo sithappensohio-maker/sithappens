@@ -143,11 +143,13 @@ def structured_data(item: dict, settings: dict, base: str) -> Dict[str, Any]:
     a block of daycare visits and an in-person programme are `Service`. A
     gift card is a Product with a fixed price, which is what it is.
 
-    Deliberately absent, and it must stay absent: aggregateRating,
-    reviewCount, brand, manufacturer, sku when there is none, shipping rates,
-    and any return policy. Nothing here is configured anywhere in this app,
-    and inventing structured data is how a shop gets its rich results
-    removed — quite apart from it being a lie.
+    aggregateRating/reviewCount are included for a product with at least
+    one real, admin-approved review (domains.shop.reviews) — never
+    invented when there are none. Still deliberately absent, and it must
+    stay absent: brand, manufacturer, sku when there is none, shipping
+    rates, and any return policy. None of those are configured anywhere
+    in this app, and inventing structured data is how a shop gets its
+    rich results removed — quite apart from it being a lie.
     """
     kind = item.get("kind")
     name = _text(item.get("name"))
@@ -188,6 +190,12 @@ def structured_data(item: dict, settings: dict, base: str) -> Dict[str, Any]:
             "priceCurrency": "USD",
             "availability": availability_for(item),
             "url": canonical,
+        }
+    if item.get("rating_count"):
+        data["aggregateRating"] = {
+            "@type": "AggregateRating",
+            "ratingValue": f"{float(item['rating_avg']):.1f}",
+            "reviewCount": int(item["rating_count"]),
         }
     return data
 

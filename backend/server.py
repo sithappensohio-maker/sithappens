@@ -114,6 +114,7 @@ from domains.shop import income as shop_income
 from domains.printify import client as printify_client
 from domains.shop import discount_codes as shop_discount_codes
 from domains.shop import loyalty_discount as shop_loyalty_discount
+from domains.shop import reviews as shop_reviews
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
@@ -41961,6 +41962,14 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
         {"show_online": True, "active": True, "archived": {"$ne": True}, "sales_destination": {"$ne": "printify"}},
         {"_id": 0},
     ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None) if _section_visible["merch"] else []
+    # One aggregation for every product on the shelf rather than one query
+    # per card — see domains.shop.reviews.rating_summaries.
+    _product_ratings = await shop_reviews.rating_summaries(db, [p["id"] for p in products])
+
+    def _rating_fields(product_id: str) -> dict:
+        r = _product_ratings.get(product_id)
+        return {"rating_avg": r["rating_avg"] if r else None, "rating_count": r["rating_count"] if r else 0}
+
     for p in products:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
             continue
@@ -42003,6 +42012,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "requires_approval": bool(p.get("requires_approval", False)),
                 "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
                 **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
+                **_rating_fields(p["id"]),
             })
             continue
         track = bool(p.get("track_inventory"))
@@ -42054,6 +42064,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "requires_approval": bool(p.get("requires_approval", False)),
             "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
             **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
+            **_rating_fields(p["id"]),
         })
 
     packs = await db.credit_packs.find(
@@ -42361,7 +42372,7 @@ _PUBLIC_FIELDS_COMMON = {
 _PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each", "shopify_price"}
 # sales_destination/shopify_product_url are NEVER price-gated — View Options
 # must keep working even when pricing is hidden.
-_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
+_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url", "rating_avg", "rating_count"}
 # display_quantity/display_unit/display_dog_count/credits_per_display_unit
 # describe QUANTITY, not price (same precedent as raw `qty` below, already
 # unconditionally public) — safe to show even when pricing is hidden.
@@ -44140,6 +44151,50 @@ async def get_shop_loyalty_discount(user: dict = Depends(get_current_user)):
     if not discount:
         return {"eligible": False}
     return {"eligible": True, **discount}
+
+
+# ── Shop product reviews ────────────────────────────────────────────────
+
+@api.get("/public/shop/products/{product_id}/reviews")
+async def public_shop_product_reviews(product_id: str):
+    """Published reviews + aggregate rating for a product — shown on the
+    product page to signed-in clients and guests alike, since the content
+    itself doesn't depend on who's looking."""
+    return await shop_reviews.published_reviews_and_aggregate(db, product_id)
+
+
+@api.get("/shop/products/{product_id}/reviews")
+async def shop_product_reviews(product_id: str, user: dict = Depends(get_current_user)):
+    """Same published list + aggregate as the public route, plus — for a
+    signed-in client — their own review (if any) and whether they're
+    eligible to write one, so the product page can show the right form
+    state without a second round trip."""
+    out = await shop_reviews.published_reviews_and_aggregate(db, product_id)
+    client_id = user.get("client_id") if user.get("role") == "client" else None
+    out["my_review"] = await shop_reviews.my_review(db, product_id, client_id)
+    out["can_review"] = (not out["my_review"]) and await shop_reviews.has_purchased(db, client_id, product_id)
+    return out
+
+
+@api.post("/shop/products/{product_id}/reviews")
+async def submit_shop_product_review(product_id: str, body: shop_reviews.ShopReviewIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client account required")
+    client = await db.clients.find_one({"id": user["client_id"]}, {"_id": 0, "id": 1, "name": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return await shop_reviews.submit_review(db, product_id, client, body)
+
+
+@api.get("/admin/shop-reviews")
+async def list_shop_reviews(status: Optional[str] = "pending", _: dict = Depends(require_admin_and_permission("pricing"))):
+    return {"reviews": await shop_reviews.list_for_moderation(db, status or None)}
+
+
+@api.put("/admin/shop-reviews/{review_id}")
+async def moderate_shop_review(review_id: str, body: shop_reviews.ShopReviewModerateIn,
+                                user: dict = Depends(require_admin_and_permission("pricing"))):
+    return await shop_reviews.moderate(db, review_id, status=body.status, actor_name=user.get("name") or user.get("email") or "Staff")
 
 
 class ShopOrderFulfillmentActionIn(BaseModel):

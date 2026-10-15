@@ -1583,6 +1583,98 @@ function DiscountCodesTab() {
   );
 }
 
+const REVIEW_STATUS_FILTERS = [
+  { value: "pending", label: "Pending" },
+  { value: "published", label: "Published" },
+  { value: "rejected", label: "Rejected" },
+];
+
+function ReviewStars({ rating }) {
+  return (
+    <span className="inline-flex gap-0.5 text-shAccent" aria-hidden="true">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <i key={n} className={`${n <= rating ? "fas" : "far"} fa-star text-[12px]`} />
+      ))}
+    </span>
+  );
+}
+
+function ReviewsTab() {
+  const [status, setStatus] = useState("pending");
+  const [reviews, setReviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    api.get("/admin/shop-reviews", { params: { status } })
+      .then(({ data }) => setReviews(data.reviews || []))
+      .catch(() => toast.error("Could not load reviews"))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const moderate = async (r, next) => {
+    try {
+      await api.put(`/admin/shop-reviews/${r.id}`, { status: next });
+      toast.success(next === "published" ? "Review published" : "Review rejected");
+      load();
+    } catch (e) {
+      toast.error(formatErr(e?.response?.data?.detail) || "Could not update the review");
+    }
+  };
+
+  return (
+    <div className="space-y-4 max-w-3xl" data-testid="sm-reviews">
+      <div className="flex gap-2">
+        {REVIEW_STATUS_FILTERS.map((f) => (
+          <button key={f.value} onClick={() => setStatus(f.value)} data-testid={`sm-reviews-filter-${f.value}`}
+                  className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${status === f.value
+                    ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted border border-shBorder"}`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
+        {loading ? (
+          <div className="text-center text-shTextMuted py-6 text-sm">Loading…</div>
+        ) : reviews.length === 0 ? (
+          <div className="text-center text-shTextMuted py-6 text-sm" data-testid="sm-reviews-empty">No {status} reviews.</div>
+        ) : (
+          <div className="space-y-3">
+            {reviews.map((r) => (
+              <div key={r.id} data-testid={`sm-review-row-${r.id}`} className="border border-shBorder/60 rounded-lg p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-shText font-black text-sm">{r.product_name}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <ReviewStars rating={r.rating} />
+                      <span className="text-shTextMuted text-[12px]">{r.client_name}</span>
+                    </div>
+                    {r.text && <p className="text-shText text-[13px] mt-2">{r.text}</p>}
+                  </div>
+                  {status === "pending" && (
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => moderate(r, "published")} data-testid={`sm-review-approve-${r.id}`}
+                              className="px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
+                        Approve
+                      </button>
+                      <button onClick={() => moderate(r, "rejected")} data-testid={`sm-review-reject-${r.id}`}
+                              className="px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted">
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ShopSettingsTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2146,6 +2238,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           { key: "categories", label: "Categories & Layout", icon: "fa-layer-group", testid: "sm-tab-categories", accent: "cyan" },
           { key: "shop_settings", label: "Shop Settings", icon: "fa-sliders", testid: "sm-tab-shop_settings", accent: "cyan" },
           { key: "discounts", label: "Discount Codes", icon: "fa-tag", testid: "sm-tab-discounts", accent: "cyan" },
+          { key: "reviews", label: "Reviews", icon: "fa-star", testid: "sm-tab-reviews", accent: "cyan" },
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
           { key: "preview", label: "Client Preview", icon: "fa-mobile-screen", testid: "sm-tab-preview", accent: "cyan" },
         ]}
@@ -2157,6 +2250,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
       {tab === "shop_settings" && <ShopSettingsTab key={`shop-settings-${refreshKey}`} />}
       {tab === "discounts" && <DiscountCodesTab key={`discounts-${refreshKey}`} />}
+      {tab === "reviews" && <ReviewsTab key={`reviews-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
       {tab === "preview" && <ClientPreviewTab key={`prev-${refreshKey}`} />}
 
