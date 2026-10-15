@@ -481,6 +481,37 @@ describe("Mark Ready tells staff what happened to the customer's email", () => {
   });
 });
 
+describe("Mark Shipped (shipping, Shop gap-list item 5)", () => {
+  test("shows the ship-to address, takes a tracking number, and tells staff it's shipped", async () => {
+    const ORDER = { id: "so-2", status: "paid", fulfillment_status: "fulfilled",
+                    pickup_status: "not_applicable", shipping_status: "preparing",
+                    shipping_address: { address1: "1 Main St", city: "Dayton", region: "OH", zip: "45402" },
+                    client_name: "Dana", total: 58, created_at: "2026-10-01T12:00:00Z",
+                    lines: [{ kind: "product", name: "Dog Bed", quantity: 1 }] };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => (url.includes("/admin/shop-orders") ? Promise.resolve({ data: { orders: [ORDER] } }) : base(url)));
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { ...ORDER, shipping_status: "shipped", tracking_number: "1Z999" } });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(text()).toContain("1 Main St");
+    expect(text()).toContain("Dayton");
+
+    const setInput = (id, value) => {
+      const el = byTestId(id);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setInput("sm-order-tracking-input-so-2", "1Z999"); });
+    await act(async () => { byTestId("sm-order-mark-shipped-so-2").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/shop-orders/so-2/mark-shipped", { tracking_number: "1Z999" });
+    noReferenceErrors();
+  });
+});
+
 describe("Discount Codes tab", () => {
   const CODE = { id: "dc-1", code: "WELCOME10", kind: "percent", value: 10, active: true,
                  clients_only: true, max_uses_total: null, max_uses_per_client: null,

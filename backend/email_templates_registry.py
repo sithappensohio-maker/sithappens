@@ -550,6 +550,17 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "order_number", "items", "total"],
     },
     {
+        "slug": "client_shop_order_shipped",
+        "name": "Shop Order Shipped",
+        "description": "Sent to the customer when staff press Mark Shipped on a self-fulfilled, FedEx-shipped Shop order.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Your order has shipped — Order #{{order_number}}",
+        "default_title": "📦 Your order is on its way",
+        "default_intro_html": "Hi {{first_name}}, your order <strong>#{{order_number}}</strong> has shipped via FedEx.",
+        "variables": ["first_name", "client_name", "order_number", "items", "tracking_number"],
+    },
+    {
         "slug": "event_photos_ready",
         "name": "Event Photos Ready",
         "description": "Sent to a customer when their edited event photos are ready, with the download link.",

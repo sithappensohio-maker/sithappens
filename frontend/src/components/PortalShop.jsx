@@ -11,7 +11,7 @@ import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
 import GuestCheckoutPanel from "./GuestCheckoutPanel";
 import ShopLanding from "./shop/ShopLanding";
-import CartPanel from "./shop/ShopCart";
+import CartPanel, { cartShippable } from "./shop/ShopCart";
 import {
   DepartmentNav, ShopSearch, SortSelect, FilterControls, ProductGrid,
 } from "./shop/ShopBrowse";
@@ -894,6 +894,18 @@ export default function PortalShop({
   };
   const removeDiscountCode = () => setAppliedDiscount(null);
 
+  // ── Shipping — clients only (V1), all-or-nothing across the cart's
+  // physical lines (see ShopCart's cartShippable, mirroring
+  // domains.shop.shipping.cart_shippable). null means pickup, exactly as
+  // every cart worked before this existed. Cleared the moment the cart
+  // itself stops being shippable (an item removed, a non-shippable one
+  // added) so a stale address can never ride along on an unrelated cart.
+  const [shippingAddress, setShippingAddress] = useState(null);
+  useEffect(() => {
+    if (!cartShippable(cartLines)) setShippingAddress(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartLines]);
+
   const submitCheckout = async () => {
     if (cart.length === 0) return;
     if (mode === "guest") {
@@ -929,6 +941,7 @@ export default function PortalShop({
         })),
         idempotency_key: idemKeyRef.current,
         discount_code: appliedDiscount?.code || null,
+        shipping_address: shippingAddress,
       });
       window.location.href = data.url; // plain navigation — no Stripe SDK involved
     } catch (e) {
@@ -1416,6 +1429,8 @@ export default function PortalShop({
           onRemoveDiscountCode={removeDiscountCode}
           discountBusy={discountBusy}
           loyaltyDiscount={loyaltyDiscount}
+          shippingAddress={shippingAddress}
+          onShippingAddressChange={setShippingAddress}
         />
       )}
 

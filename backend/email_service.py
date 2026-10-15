@@ -3228,6 +3228,35 @@ async def send_shop_cart_recovery(to_email: str, order: dict, *, client_name: st
     )
 
 
+async def send_shop_order_shipped(to_email: str, order: dict, *, client_name: str, tracking_number: str | None = None) -> bool:
+    """A self-fulfilled Shop order (domains.shop.shipping) has shipped —
+    sent once, by whoever presses Mark Shipped. Durable via the outbox so
+    Quiet Hours hold it rather than lose it, same as send_shop_order_ready."""
+    oid = order.get("id") or ""
+    ref = oid[:8].upper()
+    lines = order.get("lines") or []
+    items = ", ".join(f"{int(l.get('quantity') or 1)}× {l.get('name') or 'Item'}" for l in lines)
+    first = (client_name or "").split(" ")[0] or "there"
+    rows = [("Order #", ref), ("Items", items)]
+    if tracking_number:
+        rows.append(("Tracking number", tracking_number))
+    return await _dispatch(
+        slug="client_shop_order_shipped",
+        to_email=to_email,
+        ctx={"first_name": first, "order_number": ref, "items": items, "tracking_number": tracking_number or ""},
+        rows=rows,
+        cta_url=None,
+        show_install=False,
+        fallback_subject="Your order has shipped — Order #{{order_number}}",
+        fallback_title="📦 Your order is on its way",
+        fallback_intro="Hi {{first_name}}, your order <strong>#{{order_number}}</strong> has shipped via FedEx.",
+        outbox_key=f"shop_order_shipped:{oid}",
+        on_success={"type": "notification_log", "key": f"shop_order_shipped:{oid}",
+                    "meta": {"kind": "shop_order_shipped", "order_id": oid}},
+        queue_on_failure=True,
+    )
+
+
 def _event_when(event: dict) -> tuple:
     """('Saturday, October 24, 2026', '2:00 PM – 5:00 PM') in the business timezone."""
     try:

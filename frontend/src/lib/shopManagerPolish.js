@@ -144,6 +144,12 @@ export function orderComputedStatus(o) {
   const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
   if (o.fulfillment_status === "needs_attention") return "needs_attention";
   if (hasPhysical) {
+    // A shipped order (domains.shop.shipping) never carries a pickup_status
+    // of "preparing" — it's "not_applicable" (nothing to pick up) — so this
+    // branches on shipping_address FIRST, or a shipping order would fall
+    // through to the generic "processing" bucket and silently drop out of
+    // the Open filter below.
+    if (o.shipping_address) return o.shipping_status === "shipped" ? "shipped" : "preparing_to_ship";
     if (o.pickup_status === "picked_up") return "picked_up";
     if (o.pickup_status === "ready_for_pickup") return "ready_for_pickup";
     if (o.pickup_status === "preparing") return "preparing";
@@ -154,8 +160,8 @@ export function orderComputedStatus(o) {
 
 export function filterOrdersByView(orders, filter) {
   if (filter === "new") return orders.filter((o) => o.admin_unseen === true);
-  if (filter === "open") return orders.filter((o) => ["preparing", "ready_for_pickup", "needs_attention"].includes(orderComputedStatus(o)));
-  if (filter === "completed") return orders.filter((o) => ["picked_up", "completed"].includes(orderComputedStatus(o)));
+  if (filter === "open") return orders.filter((o) => ["preparing", "preparing_to_ship", "ready_for_pickup", "needs_attention"].includes(orderComputedStatus(o)));
+  if (filter === "completed") return orders.filter((o) => ["picked_up", "shipped", "completed"].includes(orderComputedStatus(o)));
   if (filter !== "all") return orders.filter((o) => orderComputedStatus(o) === filter);
   return orders;
 }

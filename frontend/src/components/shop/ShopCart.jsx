@@ -253,6 +253,74 @@ export function AccountRequiredNotice({ blockedLines, onSignIn }) {
   );
 }
 
+const BLANK_SHIPPING_ADDRESS = { address1: "", address2: "", city: "", region: "", zip: "" };
+
+/**
+ * Every physical line must itself be shippable — mirrors
+ * domains.shop.shipping.cart_shippable exactly (all-or-nothing; a cart
+ * with nothing physical is never shippable either). Exported so a
+ * parent can reset its own shipping-address state the moment a cart
+ * change — adding a pickup-only item, say — makes the choice invalid,
+ * not just so CartPanel can decide whether to show it.
+ */
+export function cartShippable(lines) {
+  const physical = (lines || []).filter((l) => l.item?.kind === "product");
+  return physical.length > 0 && physical.every((l) => l.item?.shippable);
+}
+
+export function shippingAddressComplete(address) {
+  return !!(address && address.address1.trim() && address.city.trim() && address.region.trim() && address.zip.trim());
+}
+
+/**
+ * Pickup vs ship — rendered only when every physical line in the cart
+ * can actually be shipped (domains.shop.shipping's all-or-nothing rule;
+ * CartPanel below computes that). The real shipping cost is never
+ * estimated here — same "calculated at checkout" treatment this app
+ * already gives sales tax (see CartSummary's own note) — it comes from a
+ * real FedEx rate quote once checkout actually prices the cart.
+ */
+function ShippingChoice({ address, onChange }) {
+  const shipping = address != null;
+  const setField = (field, value) => onChange({ ...(address || BLANK_SHIPPING_ADDRESS), [field]: value });
+  const fieldCls = "w-full rounded-lg border border-shBorder bg-transparent px-3 py-2 text-[13px] text-shText "
+    + "placeholder:text-shTextMuted focus-visible:outline focus-visible:outline-2 focus-visible:outline-shPrimary";
+
+  return (
+    <div className="space-y-2" data-testid="shop-shipping-choice">
+      <div className="flex gap-2">
+        <button type="button" onClick={() => onChange(null)} data-testid="shop-shipping-pickup"
+                className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest border transition
+                           ${!shipping ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50"}`}>
+          Pick up in store
+        </button>
+        <button type="button" onClick={() => onChange(address || BLANK_SHIPPING_ADDRESS)} data-testid="shop-shipping-ship"
+                className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest border transition
+                           ${shipping ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50"}`}>
+          Ship to me
+        </button>
+      </div>
+      {shipping && (
+        <div className="space-y-2" data-testid="shop-shipping-address-form">
+          <input value={address.address1} onChange={(e) => setField("address1", e.target.value)}
+                 placeholder="Street address" data-testid="shop-shipping-address1" className={fieldCls} />
+          <input value={address.address2} onChange={(e) => setField("address2", e.target.value)}
+                 placeholder="Apt / suite (optional)" data-testid="shop-shipping-address2" className={fieldCls} />
+          <div className="grid grid-cols-3 gap-2">
+            <input value={address.city} onChange={(e) => setField("city", e.target.value)}
+                   placeholder="City" data-testid="shop-shipping-city" className={`col-span-1 ${fieldCls}`} />
+            <input value={address.region} onChange={(e) => setField("region", e.target.value.toUpperCase())}
+                   placeholder="State" maxLength={2} data-testid="shop-shipping-region" className={fieldCls} />
+            <input value={address.zip} onChange={(e) => setField("zip", e.target.value)}
+                   placeholder="ZIP" data-testid="shop-shipping-zip" className={fieldCls} />
+          </div>
+          <p className="text-[11px] text-shTextMuted">Shipping cost (FedEx Ground) is calculated at checkout.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The cart itself. A dialog, with the focus handling a dialog owes you:
  * Escape closes it, focus moves in on open and back to whatever opened it
@@ -263,6 +331,7 @@ export default function CartPanel({
   onClose, guestMode, onSignIn,
   appliedDiscount, onApplyDiscountCode, onRemoveDiscountCode, discountBusy,
   loyaltyDiscount,
+  shippingAddress, onShippingAddressChange,
 }) {
   const panelRef = useRef(null);
   const returnFocusRef = useRef(null);
@@ -280,7 +349,10 @@ export default function CartPanel({
 
   const blocked = guestMode ? guestBlockers(lines) : [];
   const blockedKeys = new Set(blocked.map((l) => `${l.kind}:${l.ref_id}`));
-  const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0);
+  // Shipping V1 is clients only (not guest checkout or preview).
+  const canShip = !guestMode && !previewMode && cartShippable(lines);
+  const shippingIncomplete = shippingAddress != null && !shippingAddressComplete(shippingAddress);
+  const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0) && !shippingIncomplete;
 
   // Every code today is clients_only — gift cards never count (money, not
   // a purchase, same rule the server applies). Estimate only; see
@@ -368,6 +440,10 @@ export default function CartPanel({
                 <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
                                     onRemove={onRemoveDiscountCode} busy={discountBusy} />
               </>
+            )}
+
+            {canShip && onShippingAddressChange && (
+              <ShippingChoice address={shippingAddress} onChange={onShippingAddressChange} />
             )}
 
             <CartSummary subtotal={subtotal} discountLabel={discountLabel} discountEstimate={discountEstimate} />

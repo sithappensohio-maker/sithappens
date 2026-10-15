@@ -230,6 +230,28 @@ test("filterOrdersByView Completed matches Picked Up (physical) or fulfilled (no
   expect(filterOrdersByView(orders, "completed").map((o) => o.id).sort()).toEqual(["fulfilled-nonphysical", "picked"]);
 });
 
+test("orderComputedStatus branches on shipping_address before pickup_status", () => {
+  const shipped = paidOrder({
+    pickup_status: "not_applicable", shipping_status: "preparing",
+    shipping_address: { city: "Dayton" }, lines: [{ kind: "product", name: "x", quantity: 1 }],
+  });
+  expect(orderComputedStatus(shipped)).toBe("preparing_to_ship");
+  expect(orderComputedStatus({ ...shipped, shipping_status: "shipped" })).toBe("shipped");
+});
+
+test("a shipping order appears under Open while preparing and Completed once shipped", () => {
+  const preparing = paidOrder({
+    id: "ship-prep", pickup_status: "not_applicable", shipping_status: "preparing",
+    shipping_address: { city: "Dayton" }, lines: [{ kind: "product", name: "x", quantity: 1 }],
+  });
+  const shipped = paidOrder({
+    id: "ship-done", pickup_status: "not_applicable", shipping_status: "shipped",
+    shipping_address: { city: "Dayton" }, lines: [{ kind: "product", name: "x", quantity: 1 }],
+  });
+  expect(filterOrdersByView([preparing, shipped], "open").map((o) => o.id)).toEqual(["ship-prep"]);
+  expect(filterOrdersByView([preparing, shipped], "completed").map((o) => o.id)).toEqual(["ship-done"]);
+});
+
 test("searchOrders finds orders by client name, short order reference, and item name", () => {
   const orders = [
     paidOrder({ id: "order-abc12345", client_name: "Jane Doe", lines: [{ kind: "product", name: "Leash", quantity: 1 }] }),

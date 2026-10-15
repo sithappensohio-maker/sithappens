@@ -166,7 +166,8 @@ def _restart(status_code: int, msg: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error_code": RESTART_CODE, "msg": msg})
 
 
-async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount_code: Optional[str] = None) -> dict:
+async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount_code: Optional[str] = None,
+                           shipping_address=None) -> dict:
     """Price, reserve, and start paying for a cart. Returns
     {url, order_id, guest_token?}.
 
@@ -226,6 +227,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
         priced = await _s("_price_shop_cart")(
             normalized_items, client_id=buyer.client_id,
             discount_code=discount_code, is_guest=buyer.is_guest,
+            shipping_address=shipping_address,
         )
         if priced["total"] <= 0.005:
             raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
@@ -253,12 +255,15 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
             "client_phone": buyer.phone,
             "guest_token_hash": guest_token_hash,
             "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
+            "shipping_status": None, "tracking_number": None, "shipped_at": None,
             "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
             "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
             "discount_amount": priced.get("discount_amount") or 0.0,
             "discount_source": priced.get("discount_source"),  # "code" | "loyalty" | None
             "discount_code": priced.get("discount_code"), "discount_code_id": priced.get("discount_code_id"),
             "loyalty_discount_pct": priced.get("loyalty_discount_pct"),
+            "shipping_amount": priced.get("shipping_amount") or 0.0,
+            "shipping_address": priced.get("shipping_address"),
             "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
             "shop_last_applied_attempt_id": None,
             "admin_unseen": True,
@@ -371,6 +376,14 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
                 "price_data": {
                     "currency": "usd", "product_data": {"name": "Sales tax"},
                     "unit_amount": _s("_stripe_amount_cents")(order["tax_amount"]),
+                },
+                "quantity": 1,
+            })
+        if order.get("shipping_amount"):
+            line_items.append({
+                "price_data": {
+                    "currency": "usd", "product_data": {"name": "Shipping (FedEx Ground)"},
+                    "unit_amount": _s("_stripe_amount_cents")(order["shipping_amount"]),
                 },
                 "quantity": 1,
             })

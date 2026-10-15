@@ -68,6 +68,7 @@ const BLANK_PRODUCT_FORM = {
   taxable: true, tax_exempt_reason: "",
   publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
   requires_approval: false, requires_completed_onboarding: false,
+  shippable: false, shipping_weight_lbs: "",
 };
 
 const BLANK_PACK_FORM = {
@@ -1257,7 +1258,13 @@ const ORDER_FILTERS = [
 const ORDER_STATUS_LABEL = {
   needs_attention: "Needs Attention", picked_up: "Picked Up", ready_for_pickup: "Ready for Pickup",
   preparing: "Preparing", processing: "Processing", completed: "Completed",
+  preparing_to_ship: "Preparing to Ship", shipped: "Shipped",
 };
+
+function shipAddressLine(a) {
+  if (!a) return "";
+  return [a.address1, a.address2, [a.city, a.region, a.zip].filter(Boolean).join(", ")].filter(Boolean).join(", ");
+}
 
 function OnlineOrdersTab() {
   const [orders, setOrders] = useState([]);
@@ -1266,6 +1273,7 @@ function OnlineOrdersTab() {
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [forbidden, setForbidden] = useState(false);
+  const [trackingDrafts, setTrackingDrafts] = useState({});
 
   const load = () => {
     setLoading(true);
@@ -1309,6 +1317,18 @@ function OnlineOrdersTab() {
       if (note.level === "success") toast.success(note.message); else toast(note.message);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not update this order");
+    }
+    setBusyId(null);
+  };
+
+  const markShipped = async (orderId) => {
+    setBusyId(orderId);
+    try {
+      await api.post(`/admin/shop-orders/${orderId}/mark-shipped`, { tracking_number: trackingDrafts[orderId]?.trim() || null });
+      load();
+      toast.success("Marked shipped — the customer has been emailed.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not mark this order shipped");
     }
     setBusyId(null);
   };
@@ -1387,16 +1407,22 @@ function OnlineOrdersTab() {
                             <i className="fas fa-triangle-exclamation mr-1.5"/><span className="font-black">{l.name}</span>: {l.fulfillment_error}
                           </div>
                         ))}
+                        {o.shipping_address && (
+                          <p className="text-[11px] text-shTextMuted mt-1" data-testid={`sm-order-ship-address-${o.id}`}>
+                            <i className="fas fa-truck-fast mr-1.5"/>Ship to: {shipAddressLine(o.shipping_address)}
+                            {o.tracking_number ? ` · Tracking: ${o.tracking_number}` : ""}
+                          </p>
+                        )}
                       </div>
                     </div>
                   <div className="text-right shrink-0">
                     <p className={`text-[11px] font-black uppercase tracking-widest ${
-                      status === "needs_attention" ? "text-shOrange" : ["picked_up", "completed"].includes(status) ? "text-shPrimary" : "text-shTextMuted"
+                      status === "needs_attention" ? "text-shOrange" : ["picked_up", "completed", "shipped"].includes(status) ? "text-shPrimary" : "text-shTextMuted"
                     }`}>
                       {ORDER_STATUS_LABEL[status]}
                     </p>
                     <p className="text-[10px] text-shTextMuted mt-1">
-                      Payment: Paid{hasPhysical ? ` · Pickup: ${ORDER_STATUS_LABEL[status]}` : ""}
+                      Payment: Paid{hasPhysical ? ` · ${o.shipping_address ? "Shipping" : "Pickup"}: ${ORDER_STATUS_LABEL[status]}` : ""}
                     </p>
                   </div>
                 </div>
@@ -1418,6 +1444,18 @@ function OnlineOrdersTab() {
                             className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                       Mark Picked Up
                     </button>
+                  )}
+                  {o.shipping_status === "preparing" && (
+                    <div className="flex items-center gap-2" data-testid={`sm-order-shipping-${o.id}`}>
+                      <input value={trackingDrafts[o.id] || ""} maxLength={60}
+                             onChange={(e) => setTrackingDrafts((d) => ({ ...d, [o.id]: e.target.value }))}
+                             placeholder="Tracking # (optional)" data-testid={`sm-order-tracking-input-${o.id}`}
+                             className="bg-black/20 border border-shBorder/60 rounded px-2 py-1.5 text-[11px] text-shText w-40" />
+                      <button onClick={() => markShipped(o.id)} disabled={busy} data-testid={`sm-order-mark-shipped-${o.id}`}
+                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                        Mark Shipped
+                      </button>
+                    </div>
                   )}
                   </div>
                 </div>
@@ -2035,6 +2073,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         requires_approval: !!raw.requires_approval, requires_completed_onboarding: !!raw.requires_completed_onboarding,
         // Absent means taxable — the same default the pricing engine uses.
         taxable: raw.taxable !== false, tax_exempt_reason: raw.tax_exempt_reason || "",
+        shippable: !!raw.shippable,
+        shipping_weight_lbs: raw.shipping_weight_lbs != null ? String(raw.shipping_weight_lbs) : "",
       });
     } else if (item.kind === "credit_pack") {
       const { data } = await api.get("/credit-packs", { params: { include_inactive: true } });
@@ -2068,6 +2108,9 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       toast.error("Every size needs its Printify variant ID"); return;
     }
     if (productForm.variants.some((v) => !v.name.trim())) { toast.error("Every option needs a name."); return; }
+    if (productForm.shippable && !(Number(productForm.shipping_weight_lbs) > 0)) {
+      toast.error("Enter a shipping weight for this product"); return;
+    }
     const body = {
       name: productForm.name.trim(), sku: isShopify ? null : (productForm.sku.trim() || null),
       category: isShopify ? "" : productForm.category.trim(), description: productForm.description.trim() || null,
@@ -2094,6 +2137,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       requires_completed_onboarding: !isShopify && productForm.publicly_visible && productForm.requires_completed_onboarding,
       taxable: productForm.taxable,
       tax_exempt_reason: productForm.taxable ? null : (productForm.tax_exempt_reason || "").trim() || null,
+      shippable: !isShopify && !isPrintify && productForm.shippable,
+      shipping_weight_lbs: (!isShopify && !isPrintify && productForm.shippable) ? Number(productForm.shipping_weight_lbs) : null,
     };
     setProductSaving(true);
     try {

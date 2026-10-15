@@ -18,6 +18,8 @@ from typing import Dict, List, Literal, Optional, Tuple
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from domains.shop.shipping import ShopShippingAddressIn
+
 
 class ShopCartItemIn(BaseModel):
     kind: Literal["product", "credit_pack", "training_program", "gift_card"]
@@ -49,6 +51,10 @@ class ShopCheckoutIn(BaseModel):
     # domains.shop.checkout.create_checkout — never trusted as proof the
     # discount applies just because it's present here.
     discount_code: Optional[str] = Field(default=None, max_length=40)
+    # Its presence IS the pickup-vs-ship choice (domains.shop.shipping) —
+    # omitted or null means pickup, exactly as every cart worked before
+    # this field existed.
+    shipping_address: Optional[ShopShippingAddressIn] = None
 
 
 def _gift_identity(item) -> Tuple[Optional[str], Optional[str], Optional[str]]:

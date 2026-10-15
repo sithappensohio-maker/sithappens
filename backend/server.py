@@ -115,6 +115,7 @@ from domains.printify import client as printify_client
 from domains.shop import discount_codes as shop_discount_codes
 from domains.shop import loyalty_discount as shop_loyalty_discount
 from domains.shop import reviews as shop_reviews
+from domains.shop import shipping as shop_shipping
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.backup import deletion_log   # hard deletes leave a record a merge restore reads (audit #8 follow-up)
@@ -42063,6 +42064,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "requires_dog": bool(p.get("requires_dog", False)),
             "requires_approval": bool(p.get("requires_approval", False)),
             "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
+            "shippable": bool(p.get("shippable", False)),
             **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
             **_rating_fields(p["id"]),
         })
@@ -42372,7 +42374,7 @@ _PUBLIC_FIELDS_COMMON = {
 _PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each", "shopify_price"}
 # sales_destination/shopify_product_url are NEVER price-gated — View Options
 # must keep working even when pricing is hidden.
-_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url", "rating_avg", "rating_count"}
+_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url", "rating_avg", "rating_count", "shippable"}
 # display_quantity/display_unit/display_dog_count/credits_per_display_unit
 # describe QUANTITY, not price (same precedent as raw `qty` below, already
 # unconditionally public) — safe to show even when pricing is hidden.
@@ -42712,6 +42714,9 @@ SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "cance
 # Missing field or None (never-initialized/legacy order) is deliberately NOT
 # in this set, so a $nin query against it naturally covers both.
 SHOP_PICKUP_INITIALIZED_STATES = ("preparing", "ready_for_pickup", "picked_up", "not_applicable")
+# Same contract as SHOP_PICKUP_INITIALIZED_STATES above, for a shipped order's
+# own, separate state machine (domains.shop.shipping) — "preparing" -> "shipped".
+SHOP_SHIPPING_INITIALIZED_STATES = ("preparing", "shipped", "not_applicable")
 
 
 # The Shop cart lives with the Shop; imported back so every existing
@@ -42841,6 +42846,7 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
 async def _price_shop_cart(
     items: List[ShopCartItemIn], client_id: Optional[str] = None, *,
     discount_code: Optional[str] = None, is_guest: bool = False,
+    shipping_address: Optional[shop_shipping.ShopShippingAddressIn] = None,
 ) -> dict:
     """Prices a Shop cart entirely server-side — never trusts a client-
     supplied price. Only `product` lines are physical/taxable; credit_pack
@@ -43005,6 +43011,11 @@ async def _price_shop_cart(
                 "has_price_override": has_override,
                 "pricing_tier_id": product_pricing.get("tier_id"),
                 "pricing_tier_name": product_pricing.get("tier_name"),
+                # Frozen for domains.shop.shipping — a later edit to a
+                # product's Shippable flag or weight must never reach back
+                # and change what an already-priced cart can ship as.
+                "shippable": bool(product.get("shippable", False)),
+                "shipping_weight_lbs": product.get("shipping_weight_lbs"),
             })
         lines.append(line)
 
@@ -43103,9 +43114,22 @@ async def _price_shop_cart(
     for line in lines:
         line["line_total"] = round(line["line_subtotal"] - line.get("allocated_discount", 0) + line.get("allocated_tax", 0), 2)
 
-    total = round(subtotal - discount_amount + tax_amount, 2)
+    # Shipping — a real FedEx Ground quote for the whole cart, never taxed
+    # (a service charge, not merchandise, same rule tax already gives a
+    # credit pack or training program line). Presence of `shipping_address`
+    # is the signal; its absence is the existing, completely unchanged
+    # pickup-only behavior. See domains.shop.shipping for the all-or-
+    # nothing eligibility rule and why this fails closed rather than ever
+    # charging $0 or guessing a rate.
+    shipping_amount = 0.0
+    if shipping_address is not None:
+        shipping_amount = await shop_shipping.quote_for_cart(lines, shipping_address)
+
+    total = round(subtotal - discount_amount + tax_amount + shipping_amount, 2)
     return {
         "lines": lines, "subtotal": subtotal, "tax_amount": tax_amount,
+        "shipping_amount": shipping_amount,
+        "shipping_address": shipping_address.model_dump() if shipping_address else None,
         "tax_rate_pct": tax_rate_pct, "total": total,
         "discount_amount": discount_amount,
         "discount_source": discount_source,  # "code" | "loyalty" | None
@@ -43766,19 +43790,26 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     if order_fulfillment == "needs_attention":   # the owner hears about it, not only the first email (audit #73)
         await email_service.queue_admin_shop_order_needs_attention({**fresh_order, "lines": fresh_lines})
 
-    # ── Step B5 — initialize pickup_status exactly once. Physical orders
-    # start "preparing" (staff then walks it through ready_for_pickup ->
-    # picked_up); an order with no kind=="product" line needs no pickup at
-    # all. The filter's $nin excludes every already-initialized state AND
-    # (by Mongo's null-equivalence for a missing/None field) the
-    # never-initialized case — so a webhook/payment replay can never
-    # regress an order that staff has already progressed to
-    # ready_for_pickup/picked_up back to "preparing". ──
+    # ── Step B5 — initialize pickup_status (or shipping_status, for an
+    # order with a shipping address — see domains.shop.shipping) exactly
+    # once. Physical orders start "preparing" in whichever one actually
+    # applies; the other stays "not_applicable", and an order with no
+    # kind=="product" line needs neither. The filter's $nin excludes every
+    # already-initialized state AND (by Mongo's null-equivalence for a
+    # missing/None field) the never-initialized case — so a webhook/
+    # payment replay can never regress an order staff have already
+    # progressed back to "preparing". ──
     has_physical_product = any(l.get("kind") == "product" for l in fresh_lines)
-    initial_pickup_status = "preparing" if has_physical_product else "not_applicable"
+    is_shipped_order = has_physical_product and bool(fresh_order.get("shipping_address"))
+    initial_pickup_status = "preparing" if (has_physical_product and not is_shipped_order) else "not_applicable"
+    initial_shipping_status = "preparing" if is_shipped_order else "not_applicable"
     await db.shop_orders.update_one(
         {"id": order_id, "pickup_status": {"$nin": list(SHOP_PICKUP_INITIALIZED_STATES)}},
         {"$set": {"pickup_status": initial_pickup_status, "updated_at": now_iso()}},
+    )
+    await db.shop_orders.update_one(
+        {"id": order_id, "shipping_status": {"$nin": list(SHOP_SHIPPING_INITIALIZED_STATES)}},
+        {"$set": {"shipping_status": initial_shipping_status, "updated_at": now_iso()}},
     )
 
     # ── Every Step B write independently confirmed complete — mark applied,
@@ -43990,6 +44021,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
         items=body.items,
         idempotency_key=body.idempotency_key,
         discount_code=body.discount_code,
+        shipping_address=body.shipping_address,
     )
 
 
@@ -44252,6 +44284,41 @@ async def update_shop_order_fulfillment(order_id: str, body: ShopOrderFulfillmen
     return result
 
 
+class ShopOrderMarkShippedIn(BaseModel):
+    tracking_number: Optional[str] = Field(default=None, max_length=60)
+
+
+@api.post("/admin/shop-orders/{order_id}/mark-shipped")
+async def mark_shop_order_shipped(order_id: str, body: ShopOrderMarkShippedIn, user: dict = Depends(require_employee_or_admin)):
+    """One-way: preparing -> shipped (domains.shop.shipping's own state
+    machine, separate from pickup_status — an order ships OR gets picked
+    up, never both). The customer is emailed once, only by the request
+    that actually wins the transition, same "fires once" guarantee as
+    mark_ready above."""
+    _require_take_payments(user)
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") != "paid":
+        raise HTTPException(status_code=400, detail="This order has not been paid yet.")
+    if order.get("shipping_status") == "not_applicable":
+        raise HTTPException(status_code=400, detail="This order has nothing to ship.")
+    if order.get("shipping_status") == "shipped":
+        return order  # identical action already applied — idempotent no-op
+    ts = now_iso()
+    result = await db.shop_orders.find_one_and_update(
+        {"id": order_id, "shipping_status": "preparing"},
+        {"$set": {"shipping_status": "shipped", "shipped_at": ts,
+                  "tracking_number": (body.tracking_number or "").strip() or None, "updated_at": ts}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
+        raise HTTPException(status_code=400, detail="This order's shipping status must be 'preparing' before it can be marked shipped.")
+    result["shipped_email"] = await shop_shipping.email_shipped(db, result)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Front Desk POS — retail product catalog
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44390,6 +44457,16 @@ class PosProductIn(BaseModel):
     requires_dog: bool = False
     requires_approval: bool = False
     requires_completed_onboarding: bool = False
+    # Self-fulfilled shipping (owner request 2026-10-15, Shop gap-list item
+    # 5) — off by default for every existing and new product, so the admin
+    # explicitly opts each one in rather than every physical item suddenly
+    # becoming shippable. shipping_weight_lbs is required once shippable is
+    # true (enforced in create/update_pos_product, not here, so the error
+    # names which rule was broken) — domains.shop.shipping needs a real
+    # weight to get a FedEx rate, never a guessed one. Printify items ship
+    # through Printify already and never use this.
+    shippable: bool = False
+    shipping_weight_lbs: Optional[float] = Field(default=None, gt=0)
     # Curated "pairs well with" / "you may also like" references. A list of
     # {rel, kind, ref_id} and nothing more — never a copied name, price or
     # picture, which belong to the item being pointed at and are read from
@@ -44616,6 +44693,8 @@ def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: Lis
 
 
 async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    if body.shippable and not body.shipping_weight_lbs:
+        raise HTTPException(status_code=400, detail="Enter a shipping weight for this product.")
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="merch")
     destination_fields = _resolve_pos_product_destination_fields(body)
     is_shopify = destination_fields["sales_destination"] == "shopify_external"
@@ -44652,6 +44731,8 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         # only ever being the absence of a field.
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
+        "shippable": body.shippable,
+        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2) if body.shippable else None,
         **destination_fields,
         # Shopify-linked listings never carry variants either — Shopify owns
         # inventory/options entirely for those (see _resolve_pos_product_
@@ -44677,6 +44758,8 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
     existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
+    if body.shippable and not body.shipping_weight_lbs:
+        raise HTTPException(status_code=400, detail="Enter a shipping weight for this product.")
     await _validate_category_subcategory_pair(
         body.category_id, body.subcategory_id,
         existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
@@ -44708,6 +44791,8 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         # only ever being the absence of a field.
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
+        "shippable": body.shippable,
+        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2) if body.shippable else None,
         **_product_image_fields(body),
         **_resolve_pos_product_destination_fields(body),
         # Omitted means "leave them alone"; an explicit [] means "clear

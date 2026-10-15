@@ -583,6 +583,31 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         )}
       </div>
 
+      {/* Self-fulfilled shipping (owner request 2026-10-15) — off by
+          default; the admin opts each product in individually. Never for
+          a Shopify-linked or Printify listing, which already ship through
+          their own path. */}
+      {!isShopify && !isPrintify && (
+        <div className="border-t border-shBorder pt-3 mt-1 space-y-2">
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="product-shippable" checked={form.shippable}
+                   onChange={(e) => setForm((f) => ({ ...f, shippable: e.target.checked }))}
+                   data-testid="product-shippable" />
+            <label htmlFor="product-shippable" className="text-shText text-sm">Can be shipped (FedEx)</label>
+          </div>
+          {form.shippable && (
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Shipping weight (lbs)</label>
+              <input type="number" min="0" step="0.1" value={form.shipping_weight_lbs}
+                     onChange={(e) => setForm((f) => ({ ...f, shipping_weight_lbs: e.target.value }))}
+                     data-testid="product-shipping-weight"
+                     className="mt-1 w-32 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+              <p className="text-[11px] text-shTextMuted mt-1">Used to get a real FedEx Ground rate at checkout.</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Shop Organization — purely organizational, independent of online
           visibility. An item can be categorized whether or not it's
           shown in the client Shop. */}
