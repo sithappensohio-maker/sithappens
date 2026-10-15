@@ -38769,11 +38769,20 @@ async def get_stripe_terminal_charge_status(payment_intent_id: str, user: dict =
     _require_take_payments(user)
     _require_stripe_terminal_enabled()
     try:
-        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        # .to_dict() — same convention every other Stripe object read in
+        # this file already uses (Session.retrieve, BalanceTransaction,
+        # Charge) before calling .get() on it. This one spot skipped it and
+        # called .get() on the raw SDK object instead; stripe-python 15's
+        # StripeObject has no real dict .get() (the name "get" isn't a
+        # field either, so it falls through to __getattr__'s own key
+        # lookup and raises) — crashed on every single poll, confirmed in
+        # production 2026-10-15 the first time a real reader was ever
+        # connected and this path actually ran.
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id).to_dict()
     except stripe.error.StripeError as exc:
         raise HTTPException(status_code=400, detail=exc.user_message or "Could not check the card payment.")
     last_error = (intent.get("last_payment_error") or {}).get("message") if intent.get("last_payment_error") else None
-    return {"payment_intent_id": intent.id, "status": intent.status, "last_payment_error": last_error}
+    return {"payment_intent_id": intent["id"], "status": intent["status"], "last_payment_error": last_error}
 
 
 @api.post("/pos/terminal/charges/{payment_intent_id}/cancel")

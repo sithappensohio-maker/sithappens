@@ -30,11 +30,22 @@ FAKE_USER = {"id": "test-user", "name": "QA Tester", "email": "qa@test", "role":
 
 
 class _Obj(dict):
+    """A dict subclass, same as every other Stripe fake in this session's
+    tests — but the REAL stripe-python SDK object is NOT dict-like (no
+    working .get()); production found that the hard way (audit, 2026-10-15:
+    get_stripe_terminal_charge_status crashed on every single poll against
+    a real PaymentIntent, undetected here because this fake's .get() just
+    used real dict.get()). .to_dict() mirrors the one real-SDK method the
+    fixed endpoint now relies on instead, so a regression back to calling
+    .get() directly on the retrieved object would be caught here too."""
     def __getattr__(self, item):
         try:
             return self[item]
         except KeyError as e:
             raise AttributeError(item) from e
+
+    def to_dict(self):
+        return dict(self)
 
 
 class _StripeError(Exception):
@@ -371,6 +382,22 @@ def test_poll_status_reflects_the_live_payment_intent():
     with _terminal_enabled(), patch.object(server, "stripe", fake):
         result = run(server.get_stripe_terminal_charge_status(pi_id, FAKE_USER))
     assert result == {"payment_intent_id": pi_id, "status": "succeeded", "last_payment_error": None}
+
+
+def test_poll_status_surfaces_a_decline_reason_from_last_payment_error():
+    """The one branch production actually crashed on, 2026-10-15: a real
+    PaymentIntent's last_payment_error (when present) is itself a nested
+    Stripe object, not a plain dict — pulling .message out of it must use
+    the same safe (post-.to_dict()) access as the top-level status."""
+    pi_id = f"pi_{uuid.uuid4().hex[:10]}"
+    fake = _FakeStripe({pi_id: {
+        "id": pi_id, "status": "requires_payment_method", "amount_received": 0,
+        "last_payment_error": {"message": "Your card was declined."},
+    }})
+    with _terminal_enabled(), patch.object(server, "stripe", fake):
+        result = run(server.get_stripe_terminal_charge_status(pi_id, FAKE_USER))
+    assert result == {"payment_intent_id": pi_id, "status": "requires_payment_method",
+                       "last_payment_error": "Your card was declined."}
 
 
 def test_cancel_charge_clears_the_reader_and_cancels_the_intent():
