@@ -38,8 +38,10 @@ live (same pattern as domains.bookings.late_day).
 """
 from __future__ import annotations
 from domains.backup import deletion_log
+from domains.shop import pickup as shop_pickup
 
 import asyncio
+import email_service
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -55,6 +57,17 @@ SWEEP_LIMIT = 50
 STRIPE_SWEEP_LIMIT = 10
 # Attempts that can never be paid.
 DEAD_ATTEMPT_STATUSES = ("failed", "expired", "canceled")
+
+# Cart recovery email (owner request 2026-10-15, "abandoned-cart recovery
+# email" — item 3 of the Shop gap list). Fires once per order, inside
+# Stripe's own ~30-minute checkout-page expiry (STRIPE_CHECKOUT_EXPIRES_
+# SECONDS in server.py), with a link straight back to that still-open
+# page — never after it's gone dead, and never during Quiet Hours (see
+# _send_cart_recovery_emails: a skip, not a defer, since a recovery link
+# delivered hours later would already be expired).
+RECOVERY_EMAIL_MIN_AGE_MINUTES = 10
+RECOVERY_EMAIL_MAX_AGE_MINUTES = 15
+RECOVERY_EMAIL_LIMIT = 20
 
 
 def configure(*, server_globals: dict) -> None:
@@ -478,9 +491,59 @@ def register_abandon_routes(*, api, server_globals: dict) -> None:
         return await cancel_checkout(order)
 
 
+async def _send_cart_recovery_emails(now: datetime, limit: int = RECOVERY_EMAIL_LIMIT) -> int:
+    """One nudge per order, roughly RECOVERY_EMAIL_MIN_AGE_MINUTES into an
+    unfinished checkout — early enough that its Stripe page (recorded on
+    the order's active attempt) is still open, so the email's link
+    actually works. Outside that narrow age window there's either still
+    time left (not due yet) or the page is gone (too late, nothing to
+    recover) — see email_service.send_shop_cart_recovery for why this is
+    never retried or deferred.
+
+    `abandoned_email_sent_at` is claimed FIRST, atomically, and for good —
+    whether or not a live attempt is actually found afterward. The sweep
+    runs every tick (TICK_SECONDS), well inside this 5-minute-wide window,
+    so without that claim the SAME order would match several ticks in a
+    row and get emailed several times."""
+    db = _g("db")
+    now_s = _iso(now)
+    window_start = _iso(now - timedelta(minutes=RECOVERY_EMAIL_MAX_AGE_MINUTES))
+    window_end = _iso(now - timedelta(minutes=RECOVERY_EMAIL_MIN_AGE_MINUTES))
+    due = await db.shop_orders.find(
+        {"status": "pending_payment", "created_at": {"$gte": window_start, "$lt": window_end},
+         "stripe_active_attempt_id": {"$ne": None}, "abandoned_email_sent_at": {"$exists": False}},
+        {"_id": 0}).to_list(limit)
+    if not due or await email_service._is_in_quiet_hours():
+        return 0
+    sent = 0
+    for order in due:
+        claimed = await db.shop_orders.find_one_and_update(
+            {"id": order["id"], "abandoned_email_sent_at": {"$exists": False}},
+            {"$set": {"abandoned_email_sent_at": now_s}})
+        if claimed is None:
+            continue  # another tick already claimed this order
+        attempt = await db.shop_payment_attempts.find_one(
+            {"id": order["stripe_active_attempt_id"], "status": "pending",
+             "stripe_checkout_session_url": {"$ne": None}, "expires_at": {"$gt": now_s}},
+            {"_id": 0})
+        if not attempt:
+            continue  # no live link any more — the rest of the sweep settles this order
+        to, name = await shop_pickup.recipient(db, order)
+        if not to:
+            continue
+        try:
+            if await email_service.send_shop_cart_recovery(
+                    to, order, client_name=name, checkout_url=attempt["stripe_checkout_session_url"]):
+                sent += 1
+        except Exception as exc:
+            _g("logger").warning("cart recovery email failed for order %s: %s", order["id"], exc)
+    return sent
+
+
 async def sweep(*, now: Optional[datetime] = None, limit: int = SWEEP_LIMIT,
                 stripe_limit: int = STRIPE_SWEEP_LIMIT) -> Dict[str, int]:
-    """Scheduler job: settle abandoned checkouts and repair stranded holds.
+    """Scheduler job: nudge unfinished checkouts, settle abandoned ones, and
+    repair stranded holds.
 
     Cheap when there is nothing to do; asks Stripe about any one attempt at
     most every RECHECK_MINUTES and about at most `stripe_limit` attempts per
@@ -490,7 +553,11 @@ async def sweep(*, now: Optional[datetime] = None, limit: int = SWEEP_LIMIT,
     now_s = _iso(now)
     stale_s = _iso(now - timedelta(minutes=UNSTARTED_STALE_MINUTES))
     recheck_s = _iso(now - timedelta(minutes=RECHECK_MINUTES))
-    out = {"settled": 0, "released_unstarted": 0, "repaired_holds": 0, "errors": 0}
+    out = {"settled": 0, "released_unstarted": 0, "repaired_holds": 0, "errors": 0, "cart_recovery_emails": 0}
+
+    # 0. Nudge checkouts that were started but never finished, while their
+    #    Stripe page is still open.
+    out["cart_recovery_emails"] = await _send_cart_recovery_emails(now, limit)
 
     # 1. Checkouts past their Stripe page's expiry — ask Stripe.
     due = await db.shop_payment_attempts.find(

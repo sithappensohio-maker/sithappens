@@ -3188,6 +3188,46 @@ async def send_shop_order_ready(to_email: str, order: dict, *, client_name: str,
     )
 
 
+async def send_shop_cart_recovery(to_email: str, order: dict, *, client_name: str, checkout_url: str) -> bool:
+    """A Shop checkout was started and never finished — nudge once, while
+    the checkout page is still open (domains.shop.abandon's sweep only
+    calls this with time left before Stripe's own ~30-minute page expiry),
+    with a direct link straight back to it rather than a dead one or a
+    "go re-shop" message.
+
+    Deliberately NOT durable the way most automated emails are: the sweep
+    already skips calling this during Quiet Hours (see abandon.py) rather
+    than letting it queue, and this passes queue_on_failure=False for the
+    same reason — a transient send failure here should just mean no nudge
+    this time, never a retry hours later that delivers a checkout link
+    Stripe has long since expired."""
+    oid = order.get("id") or ""
+    ref = oid[:8].upper()
+    lines = order.get("lines") or []
+    items = ", ".join(f"{int(l.get('quantity') or 1)}× {l.get('name') or 'Item'}" for l in lines)
+    first = (client_name or "").split(" ")[0] or "there"
+    total = f"{float(order.get('total') or 0):.2f}"
+    rows = [("Order #", ref), ("Items", items), ("Total", f"${total}")]
+    return await _dispatch(
+        slug="client_shop_cart_recovery",
+        to_email=to_email,
+        ctx={"first_name": first, "order_number": ref, "items": items, "total": total},
+        rows=rows,
+        cta_url=checkout_url,
+        show_install=False,
+        fallback_subject="You left something in your cart",
+        fallback_title="🛍️ Still want this?",
+        fallback_intro=("Hi {{first_name}}, you started checking out at Sit Happens but didn't finish. "
+                        "Your cart (<strong>{{items}}</strong>, ${{total}}) is still waiting — pick up right "
+                        "where you left off."),
+        fallback_cta_text="Finish checking out",
+        outbox_key=f"shop_cart_recovery:{oid}",
+        on_success={"type": "notification_log", "key": f"shop_cart_recovery:{oid}",
+                    "meta": {"kind": "shop_cart_recovery", "order_id": oid}},
+        queue_on_failure=False,
+    )
+
+
 def _event_when(event: dict) -> tuple:
     """('Saturday, October 24, 2026', '2:00 PM – 5:00 PM') in the business timezone."""
     try:

@@ -538,6 +538,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "order_number", "items", "pickup_address", "business_phone"],
     },
     {
+        "slug": "client_shop_cart_recovery",
+        "name": "Shop Cart Recovery",
+        "description": "Sent once, about 10 minutes in, when a Shop checkout was started but never finished — while the checkout page is still open.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "You left something in your cart",
+        "default_title": "🛍️ Still want this?",
+        "default_intro_html": "Hi {{first_name}}, you started checking out at Sit Happens but didn't finish. Your cart (<strong>{{items}}</strong>, ${{total}}) is still waiting — pick up right where you left off.",
+        "default_cta_text": "Finish checking out",
+        "variables": ["first_name", "order_number", "items", "total"],
+    },
+    {
         "slug": "event_photos_ready",
         "name": "Event Photos Ready",
         "description": "Sent to a customer when their edited event photos are ready, with the download link.",
