@@ -478,7 +478,15 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               </button>
             )}
             <button type="button" data-testid="destination-printify"
-                    onClick={() => setForm((f) => ({ ...f, sales_destination: "printify" }))}
+                    // Clears a stale "Can be shipped (FedEx)" from before
+                    // the switch — that field hides the moment this isn't
+                    // "internal" (below), but the value itself doesn't
+                    // reset on its own, and the Shop cart then shows two
+                    // conflicting pickup-or-ship prompts for one Printify
+                    // item (the server now also refuses to save it either
+                    // way — see update_pos_product — but the form
+                    // shouldn't carry a value it no longer shows).
+                    onClick={() => setForm((f) => ({ ...f, sales_destination: "printify", shippable: false, shipping_weight_lbs: "" }))}
                     className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${isPrintify ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
               Printify Print-on-Demand
             </button>

@@ -1463,7 +1463,14 @@ export default function PortalShop({
           cartCount={cartCount}
           subtotal={cartSubtotal}
           onViewCart={() => setCartOpen(true)}
-          onCheckout={submitCheckout}
+          // The tray's own "Checkout" used to jump a signed-in client
+          // straight to Stripe, skipping the cart panel entirely — the one
+          // place the pickup-or-ship choice lives. Opens the cart instead,
+          // same as "View Cart"; its own "Continue to secure checkout"
+          // button is what actually submits. A guest is unaffected —
+          // submitCheckout already opens GuestCheckoutPanel for them
+          // (which has its own ship choice built in), never Stripe directly.
+          onCheckout={mode === "guest" ? submitCheckout : () => setCartOpen(true)}
           busy={checkoutBusy}
           justAdded={justAdded}
           previewMode={mode === "preview"}

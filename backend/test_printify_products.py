@@ -203,6 +203,51 @@ def test_duplicate_clears_printify_links_so_two_listings_never_share_one_printif
         _cleanup([p["id"]])
 
 
+# Owner-reported bug: a product's "Pick Up / Ship" choice showed up TWICE
+# in the Shop cart. Root cause — an admin can still submit shippable=true
+# for a Printify/Shopify listing (nothing in the form stops it, and a
+# product switched away from "internal" never had it cleared), so the
+# cart's FedEx ShippingChoice and the Printify ship/pickup choice both
+# rendered for the same item. create/update_pos_product must force
+# shippable off (and drop the weight) for any non-internal destination,
+# no matter what the client submits.
+def test_create_forces_off_shippable_for_a_printify_product_even_if_submitted_true():
+    p = _create(shippable=True, shipping_weight_lbs=2.5)
+    try:
+        assert p["shippable"] is False
+        assert p["shipping_weight_lbs"] is None
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_create_never_refuses_a_printify_product_for_a_missing_shipping_weight():
+    # shippable=True with no weight at all would refuse an *internal*
+    # product ("Enter a shipping weight") — it must not refuse here, since
+    # shippable is about to be forced off anyway for a Printify listing.
+    p = _create(shippable=True)
+    try:
+        assert p["shippable"] is False
+        assert p["shipping_weight_lbs"] is None
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_update_clears_shippable_when_switching_a_product_away_from_internal():
+    p = _create()
+    try:
+        patch = {
+            **_printify_body(),
+            "shippable": True,
+            "shipping_weight_lbs": 3.0,
+        }
+        updated = run(server.update_pos_product(p["id"], server.PosProductIn(**patch), ADMIN))
+        assert updated["sales_destination"] == "printify"
+        assert updated["shippable"] is False
+        assert updated["shipping_weight_lbs"] is None
+    finally:
+        _cleanup([p["id"]])
+
+
 def test_register_catalog_includes_it_with_every_size_always_in_stock():
     p = _create()
     try:

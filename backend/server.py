@@ -45265,7 +45265,11 @@ def _reconcile_pos_product_variants(existing_variants: List[dict], incoming: Lis
 
 
 async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
-    if body.shippable and not body.shipping_weight_lbs:
+    # Only actually enforced for an internal product — shippable is forced
+    # off for Printify/Shopify below regardless of what's submitted, so a
+    # missing weight there would be refusing a save over a field that's
+    # about to be cleared anyway.
+    if body.shippable and not body.shipping_weight_lbs and body.sales_destination == "internal":
         raise HTTPException(status_code=400, detail="Enter a shipping weight for this product.")
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="merch")
     destination_fields = _resolve_pos_product_destination_fields(body)
@@ -45303,8 +45307,16 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         # only ever being the absence of a field.
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
-        "shippable": body.shippable,
-        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2) if body.shippable else None,
+        # Self-fulfilled (FedEx) shipping only ever applies to an internal
+        # product — a Printify/Shopify listing ships through its own path
+        # entirely and must never ALSO be flagged shippable, or the Shop
+        # cart shows two conflicting pickup-or-ship prompts at once (a
+        # real bug: an admin can still submit shippable=true for either —
+        # nothing in the form enforces it client-side — so this is the
+        # authoritative, never-trust-the-client fix).
+        "shippable": body.shippable if destination_fields["sales_destination"] == "internal" else False,
+        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2)
+            if (body.shippable and destination_fields["sales_destination"] == "internal") else None,
         **destination_fields,
         # Shopify-linked listings never carry variants either — Shopify owns
         # inventory/options entirely for those (see _resolve_pos_product_
@@ -45330,7 +45342,9 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
     existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    if body.shippable and not body.shipping_weight_lbs:
+    # See create_pos_product's matching comment — only enforced when
+    # shippable will actually be honored (an internal product).
+    if body.shippable and not body.shipping_weight_lbs and body.sales_destination == "internal":
         raise HTTPException(status_code=400, detail="Enter a shipping weight for this product.")
     await _validate_category_subcategory_pair(
         body.category_id, body.subcategory_id,
@@ -45363,8 +45377,16 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         # only ever being the absence of a field.
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
-        "shippable": body.shippable,
-        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2) if body.shippable else None,
+        # Self-fulfilled (FedEx) shipping only ever applies to an internal
+        # product — see create_pos_product's matching comment. A product
+        # EDITED away from "internal" onto Printify/Shopify must have this
+        # cleared here too, not just hidden from the form, or a listing
+        # that was shippable before the switch stays shippable forever
+        # (the real bug this fixes: the Shop cart showing two conflicting
+        # pickup-or-ship prompts for one Printify item).
+        "shippable": body.shippable if body.sales_destination == "internal" else False,
+        "shipping_weight_lbs": round(float(body.shipping_weight_lbs), 2)
+            if (body.shippable and body.sales_destination == "internal") else None,
         **_product_image_fields(body),
         **_resolve_pos_product_destination_fields(body),
         # Omitted means "leave them alone"; an explicit [] means "clear
