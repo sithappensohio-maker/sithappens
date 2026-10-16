@@ -772,7 +772,8 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         </div>
         {isPrintify && (
           <p className="text-[11px] text-shTextMuted" data-testid="product-printify-online-note">
-            Not available in the client Shop — Printify items are sold at the register only; online ordering goes through Shopify instead. This stays sellable at the register regardless of this setting.
+            Sellable at the register either way — check this box to also offer it in the client Shop, where a
+            customer picks a size (and fills in any personalized text) before checking out, same as at the register.
           </p>
         )}
         {form.show_online && (
