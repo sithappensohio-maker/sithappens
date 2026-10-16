@@ -418,6 +418,9 @@ export default function CartPanel({
 }) {
   const panelRef = useRef(null);
   const returnFocusRef = useRef(null);
+  // Collapses the "Have a code?" form behind a link when a loyalty
+  // discount is already active — see the render below.
+  const [showCodeField, setShowCodeField] = useState(false);
 
   useEffect(() => {
     returnFocusRef.current = document.activeElement;
@@ -527,8 +530,22 @@ export default function CartPanel({
                     {loyaltyDiscount.pct}% loyalty discount already applied — thanks for being a regular!
                   </p>
                 )}
-                <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
-                                    onRemove={onRemoveDiscountCode} busy={discountBusy} />
+                {/* A client already getting their automatic loyalty
+                    discount doesn't need a full "enter a code" form
+                    staring back at them right under "already applied" —
+                    reads as being asked for the same discount twice.
+                    Collapsed behind a quiet link instead; a code can
+                    still win if it's actually better (never stacks with
+                    loyalty — see loyaltyEstimate/codeEstimate above). */}
+                {appliedDiscount || !loyaltyDiscount?.eligible || showCodeField ? (
+                  <DiscountCodeField applied={appliedDiscount} onApply={onApplyDiscountCode}
+                                      onRemove={onRemoveDiscountCode} busy={discountBusy} />
+                ) : (
+                  <button type="button" onClick={() => setShowCodeField(true)} data-testid="cart-discount-toggle"
+                          className="text-[11.5px] text-shTextMuted hover:text-shText underline">
+                    Have a better code?
+                  </button>
+                )}
               </>
             )}
 

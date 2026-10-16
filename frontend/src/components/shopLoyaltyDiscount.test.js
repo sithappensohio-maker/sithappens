@@ -115,6 +115,9 @@ test("the loyalty discount beats a weaker entered code — the cart shows loyalt
   });
   await mount(<PortalShop mode="authenticated" cart={[cartLine]} onCartChange={() => {}} />);
   await click("shop-cart-open");
+  // The code field is collapsed behind a link once loyalty is already
+  // giving a discount — see cart-discount-toggle.
+  await click("cart-discount-toggle");
   await type("cart-discount-input", "small5");
   await click("cart-discount-apply");
 
@@ -133,9 +136,38 @@ test("a stronger entered code beats the loyalty discount", async () => {
   });
   await mount(<PortalShop mode="authenticated" cart={[cartLine]} onCartChange={() => {}} />);
   await click("shop-cart-open");
+  await click("cart-discount-toggle");
   await type("cart-discount-input", "big20");
   await click("cart-discount-apply");
 
   expect(q("cart-discount").textContent).not.toContain("Loyalty");
   expect(q("cart-discount").textContent).toContain("16.00"); // 20% of $80
+});
+
+// Owner: "you have the loyal customer thing already applied and its
+// asking for a code for that as well" — showing the full "enter a code"
+// form right under "already applied" read as asking for the same
+// discount twice.
+test("a client already getting the loyalty discount sees a quiet link, not the full code form", async () => {
+  api.get.mockImplementation(mockGet({ eligible: true, pct: 10, visits: 12, min_visits: 10 }));
+  await mount(<PortalShop mode="authenticated" cart={[cartLine]} onCartChange={() => {}} />);
+  await click("shop-cart-open");
+
+  expect(q("cart-loyalty-note")).toBeTruthy();
+  expect(q("cart-discount-toggle")).toBeTruthy();
+  expect(q("cart-discount-form")).toBeFalsy();
+
+  await click("cart-discount-toggle");
+  expect(q("cart-discount-form")).toBeTruthy();
+  expect(q("cart-discount-toggle")).toBeFalsy();
+});
+
+test("a client with no loyalty discount sees the code form directly, nothing collapsed", async () => {
+  api.get.mockImplementation(mockGet({ eligible: false }));
+  await mount(<PortalShop mode="authenticated" cart={[cartLine]} onCartChange={() => {}} />);
+  await click("shop-cart-open");
+
+  expect(q("cart-loyalty-note")).toBeFalsy();
+  expect(q("cart-discount-toggle")).toBeFalsy();
+  expect(q("cart-discount-form")).toBeTruthy();
 });
