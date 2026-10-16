@@ -280,6 +280,60 @@ def test_register_webhooks_refuses_a_user_without_pricing_permission():
     assert exc_info.value.status_code == 403
 
 
+# ── Admin screen: "Fetch from Printify" variant picker ──────────────────────
+
+_RAW_PRODUCT = {
+    "id": "pf-prod-1", "title": "Trail Dog Hoodie",
+    "images": [{"src": "https://example.com/hoodie-back.jpg"}, {"src": "https://example.com/hoodie-front.jpg", "is_default": True}],
+    "variants": [
+        {"id": 111, "title": "Black / S", "price": 1999, "is_enabled": True, "is_available": True},
+        {"id": 112, "title": "Black / M", "price": 1999, "is_enabled": True, "is_available": True},
+        {"id": 113, "title": "Black / XL", "price": 2194, "is_enabled": True, "is_available": False},
+        # Most of a real Printify product's variants are disabled — every
+        # size/color combination its blueprint supports, not just the ones
+        # this listing actually offers. These must never reach the admin.
+        {"id": 999, "title": "Tropical Blue / M", "price": 1613, "is_enabled": False, "is_available": True},
+    ],
+}
+
+
+def test_fetch_printify_product_returns_only_enabled_variants_in_dollars():
+    with patch.object(printify_client, "get_product", AsyncMock(return_value=_RAW_PRODUCT)):
+        result = run(server.get_printify_product_variants("pf-prod-1", user=ADMIN))
+    assert result["title"] == "Trail Dog Hoodie"
+    assert result["image"] == "https://example.com/hoodie-front.jpg"  # is_default wins over list order
+    ids = [v["id"] for v in result["variants"]]
+    assert ids == ["111", "112", "113"]
+    assert "999" not in ids  # disabled — not a real option for this listing
+    black_s = next(v for v in result["variants"] if v["id"] == "111")
+    assert black_s["price"] == 19.99  # cents -> dollars
+    black_xl = next(v for v in result["variants"] if v["id"] == "113")
+    assert black_xl["price"] == 21.94
+    assert black_xl["is_available"] is False
+
+
+def test_fetch_printify_product_refuses_a_user_without_pricing_permission():
+    with pytest.raises(HTTPException) as exc_info:
+        run(server.get_printify_product_variants("pf-prod-1", user=NO_PERMS))
+    assert exc_info.value.status_code == 403
+
+
+def test_fetch_printify_product_404s_when_printify_doesnt_recognize_the_id():
+    not_found = printify_client.PrintifyApiError(404, "not found")
+    with patch.object(printify_client, "get_product", AsyncMock(side_effect=not_found)):
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.get_printify_product_variants("missing", user=ADMIN))
+    assert exc_info.value.status_code == 404
+
+
+def test_fetch_printify_product_400s_when_not_configured():
+    not_configured = printify_client.PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    with patch.object(printify_client, "get_product", AsyncMock(side_effect=not_configured)):
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.get_printify_product_variants("pf-prod-1", user=ADMIN))
+    assert exc_info.value.status_code == 400
+
+
 # ── Webhook event application (domains/printify/client.apply_webhook_event) ─
 
 def _event(topic, printify_order_id, **data):

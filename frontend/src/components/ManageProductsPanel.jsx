@@ -158,6 +158,112 @@ export function PrintLabelsModal({ productId, variantId = null, itemName, initia
   );
 }
 
+// A real Printify product carries dozens of color/size combinations, each
+// needing its own Printify variant id for a size row below — hand-copying
+// every one out of the Printify dashboard is slow and typo-prone. This
+// fetches the product's real (enabled-only) variants from Printify and
+// lets an admin check off which ones to actually carry; ProductEditor
+// turns the checked ones into size rows itself.
+export function PrintifyVariantPickerModal({ printifyProductId, existingVariantIds, onClose, onAdd }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [product, setProduct] = useState(null);
+  const [checked, setChecked] = useState(() => new Set());
+  const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr("");
+    api.get(`/admin/printify/products/${encodeURIComponent(printifyProductId)}`)
+      .then(({ data }) => { if (!cancelled) setProduct(data); })
+      .catch((e) => { if (!cancelled) setErr(e?.response?.data?.detail || "Could not fetch this product from Printify"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [printifyProductId]);
+
+  const already = useMemo(() => new Set(existingVariantIds || []), [existingVariantIds]);
+  const filtered = useMemo(() => {
+    const all = product?.variants || [];
+    const q = filter.trim().toLowerCase();
+    return q ? all.filter((v) => v.title.toLowerCase().includes(q)) : all;
+  }, [product, filter]);
+
+  const toggle = (id) => setChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const selectAllShown = () => setChecked((prev) => {
+    const next = new Set(prev);
+    filtered.forEach((v) => { if (!already.has(v.id)) next.add(v.id); });
+    return next;
+  });
+  const confirm = () => {
+    const chosen = (product?.variants || []).filter((v) => checked.has(v.id) && !already.has(v.id));
+    if (chosen.length === 0) return;
+    onAdd(chosen);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4" onClick={onClose} data-testid="printify-variant-picker-modal">
+      <div onClick={(e) => e.stopPropagation()} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 space-y-4">
+        <div className="flex items-start justify-between">
+          <h5 className="text-shText font-black text-[16px] uppercase italic tracking-tight">Fetch Sizes From Printify</h5>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-xmark text-xl" /></button>
+        </div>
+        {loading ? (
+          <p className="text-shTextMuted text-sm">Loading…</p>
+        ) : err ? (
+          <p className="text-shDanger text-sm" role="alert">{err}</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              {product.image && <img src={product.image} alt="" className="w-14 h-14 rounded-lg object-cover border border-shBorder" />}
+              <p className="text-shText font-bold text-sm">{product.title}</p>
+            </div>
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by color or size…"
+                   data-testid="printify-picker-filter"
+                   className="w-full bg-black/10 border border-shBorder rounded p-2 text-shText text-sm" />
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-shTextMuted">{filtered.length} shown · {checked.size} selected</span>
+              <button type="button" onClick={selectAllShown} data-testid="printify-picker-select-all"
+                      className="text-shPrimary font-black uppercase tracking-widest">Select All Shown</button>
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-1 border border-shBorder rounded-lg p-2">
+              {filtered.length === 0 ? (
+                <p className="text-shTextMuted text-sm py-2 text-center">No variants match.</p>
+              ) : filtered.map((v) => {
+                const alreadyAdded = already.has(v.id);
+                return (
+                  <label key={v.id} data-testid={`printify-picker-row-${v.id}`}
+                         className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm ${alreadyAdded ? "opacity-40" : "cursor-pointer hover:bg-white/5"}`}>
+                    <input type="checkbox" checked={alreadyAdded || checked.has(v.id)} disabled={alreadyAdded}
+                           onChange={() => toggle(v.id)} />
+                    <span className="flex-1 text-shText">{v.title}{alreadyAdded ? " (already added)" : ""}</span>
+                    <span className="text-shTextMuted">${v.price.toFixed(2)}</span>
+                    {!v.is_available && <span className="text-shAccent text-[10px] font-black uppercase ml-1">Unavailable</span>}
+                  </label>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className="flex gap-2 pt-2">
+          <button onClick={onClose} className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-2.5 font-black uppercase tracking-widest text-shTextMuted">
+            Cancel
+          </button>
+          <button onClick={confirm} disabled={loading || !!err || checked.size === 0} data-testid="printify-picker-add"
+                  className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-2.5 font-black uppercase tracking-widest disabled:opacity-40">
+            Add {checked.size || ""} {checked.size === 1 ? "Size" : "Sizes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Shared product add/edit form — used by this panel AND the unified Shop
 // Manager Items tab. Parent owns `form`/`setForm`/`originalImageId` state
 // and the actual save call (mirrors ProgramEditor's pattern in Programs.jsx);
@@ -207,6 +313,29 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
   // EXISTING row (a real id to generate/attach a barcode to), never a
   // not-yet-saved product or option.
   const [printTarget, setPrintTarget] = useState(null);
+
+  // "Fetch from Printify" — see PrintifyVariantPickerModal above.
+  const [showPrintifyPicker, setShowPrintifyPicker] = useState(false);
+  const addPrintifyVariants = (chosen) => {
+    setForm((f) => {
+      const basePrice = f.price !== "" && f.price != null ? Number(f.price) : null;
+      const rows = chosen.map((v, i) => ({
+        _localKey: `printify-${v.id}-${Date.now()}-${i}`,
+        name: v.title, sku: "", starting_stock: "0", printify_variant_id: v.id,
+        // Only set a per-size override when it actually differs from the
+        // product's base price — most sizes match it, and a blank field
+        // already means "same as above" (see the Price field's own label).
+        price_override: basePrice != null && basePrice === v.price ? "" : String(v.price),
+      }));
+      // An empty base price gets the first fetched size's price as a
+      // starting point, so picking sizes doesn't leave Selling Price blank
+      // — still fully editable, just one less manual step for the common
+      // case where every size costs the same.
+      const nextPrice = basePrice == null && chosen.length > 0 ? String(chosen[0].price) : f.price;
+      return { ...f, price: nextPrice, variants: [...(f.variants || []), ...rows] };
+    });
+    toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
+  };
 
   // Inline Receive/Adjust for an EXISTING variant's stock — the one place
   // this form steps outside "purely presentational" (see the file-level
@@ -335,12 +464,20 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         {isPrintify && (
           <div className="col-span-2">
             <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Printify Product ID *</label>
-            <input value={form.printify_product_id || ""} onChange={(e) => setForm((f) => ({ ...f, printify_product_id: e.target.value }))}
-                   placeholder="Copy from the product's page in your Printify dashboard"
-                   data-testid="product-printify-id"
-                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            <div className="flex gap-2">
+              <input value={form.printify_product_id || ""} onChange={(e) => setForm((f) => ({ ...f, printify_product_id: e.target.value }))}
+                     placeholder="Copy from the product's page in your Printify dashboard"
+                     data-testid="product-printify-id"
+                     className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+              <button type="button" onClick={() => setShowPrintifyPicker(true)}
+                      disabled={!(form.printify_product_id || "").trim()}
+                      data-testid="product-printify-fetch-sizes"
+                      className="shrink-0 bg-[var(--sh-card-base)] border border-shBorder rounded px-3 text-[11px] font-black uppercase tracking-widest text-shPrimary disabled:opacity-40 disabled:text-shTextMuted">
+                <i className="fas fa-cloud-arrow-down mr-1.5" />Fetch Sizes
+              </button>
+            </div>
             <p className="text-[11px] text-shTextMuted mt-0.5">
-              The Printify product this listing submits production orders against. Set up the product in Printify first, then copy its id here — each size below needs its own Printify variant id too.
+              The Printify product this listing submits production orders against. Set up the product in Printify first, then copy its id here — then Fetch Sizes to pick its colors/sizes instead of typing each variant id by hand.
             </p>
           </div>
         )}
@@ -763,6 +900,14 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           />
         );
       })()}
+      {showPrintifyPicker && (
+        <PrintifyVariantPickerModal
+          printifyProductId={form.printify_product_id.trim()}
+          existingVariantIds={variants.map((v) => v.printify_variant_id).filter(Boolean)}
+          onAdd={addPrintifyVariants}
+          onClose={() => setShowPrintifyPicker(false)}
+        />
+      )}
     </div>
   );
 }

@@ -44765,6 +44765,51 @@ async def register_printify_webhooks(user: dict = Depends(require_employee_or_ad
     return result
 
 
+@api.get("/admin/printify/products/{printify_product_id}")
+async def get_printify_product_variants(printify_product_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Fetches one Printify product's real color/size variants for the
+    product editor's "Fetch from Printify" picker — a real listing can
+    carry dozens of color/size combinations, each needing its own
+    Printify variant id; this lets an admin check off the ones they
+    actually want to sell instead of hand-copying every id out of the
+    Printify dashboard one at a time. Gated on "pricing", same as every
+    other Printify product-config action."""
+    if not _perms_for(user).get("pricing"):
+        raise HTTPException(status_code=403, detail="Missing permission: pricing")
+    try:
+        product = await printify_client.get_product(printify_product_id)
+    except printify_client.PrintifyNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except printify_client.PrintifyApiError as exc:
+        status = 404 if exc.status_code == 404 else 502
+        raise HTTPException(status_code=status, detail=f"Printify couldn't find that product: {exc}")
+    # A Printify product carries every color/size combination its blueprint
+    # supports (hundreds, typically) — is_enabled is the small subset this
+    # SPECIFIC listing actually offers; the rest were never real options for
+    # it and would just be noise (or a way to accidentally sell something
+    # Printify can't fulfill) in the picker.
+    variants = [
+        {
+            "id": str(v.get("id")),
+            "title": v.get("title") or "",
+            # Printify prices every variant in integer cents.
+            "price": round((v.get("price") or 0) / 100, 2),
+            "is_available": bool(v.get("is_available", True)),
+        }
+        for v in (product.get("variants") or [])
+        if v.get("is_enabled")
+    ]
+    images = product.get("images") or []
+    default_image = next((img.get("src") for img in images if img.get("is_default") and img.get("src")), None)
+    any_image = next((img.get("src") for img in images if img.get("src")), None)
+    return {
+        "id": product.get("id"),
+        "title": product.get("title") or "",
+        "image": default_image or any_image,
+        "variants": variants,
+    }
+
+
 def _validate_printify_variants(variants: List[dict]) -> None:
     """A printify product is useless to checkout without at least one size,
     and each size must be mapped to the Printify variant id it actually

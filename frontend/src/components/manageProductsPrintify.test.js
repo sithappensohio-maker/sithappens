@@ -87,3 +87,98 @@ test("requires at least one size — the add-size empty state says so", () => {
   expect(w.text()).toMatch(/needs at least one size/i);
   w.cleanup();
 });
+
+describe("Fetch Sizes from Printify", () => {
+  const { api } = require("../lib/api");
+  const { toast } = require("sonner");
+  const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
+
+  const PRODUCT = {
+    id: "pf-prod-1", title: "Trail Dog Hoodie", image: "https://example.com/hoodie.jpg",
+    variants: [
+      { id: "pf-var-s", title: "Black / S", price: 19.99, is_available: true },
+      { id: "pf-var-m", title: "Black / M", price: 19.99, is_available: true },
+      { id: "pf-var-xl", title: "Black / XL", price: 21.94, is_available: false },
+    ],
+  };
+
+  test("the button is disabled without a Printify product id, enabled with one", () => {
+    const w = mount(editor({ ...BASE_FORM, printify_product_id: "" }, () => {}));
+    expect(w.q('[data-testid="product-printify-fetch-sizes"]').disabled).toBe(true);
+    w.cleanup();
+  });
+
+  test("clicking it fetches the product's variants and lists them, already-added ones marked", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT });
+    const w = mount(editor(BASE_FORM, () => {}));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    expect(api.get).toHaveBeenCalledWith("/admin/printify/products/pf-prod-1");
+    expect(w.text()).toContain("Trail Dog Hoodie");
+    expect(w.text()).toContain("Black / S");
+    expect(w.q('[data-testid="printify-picker-row-pf-var-xl"]').textContent).toContain("Unavailable");
+    w.cleanup();
+  });
+
+  test("checking sizes and confirming adds exactly those rows, with price_override only when it differs", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT });
+    let current = { ...BASE_FORM, variants: [] }; // start with no sizes so pf-var-s/m aren't "already added"
+    const setForm = jest.fn((updater) => { current = updater(current); });
+    const w = mount(editor(current, setForm));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-s"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-xl"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    expect(current.variants).toHaveLength(2);
+    const s = current.variants.find((v) => v.printify_variant_id === "pf-var-s");
+    const xl = current.variants.find((v) => v.printify_variant_id === "pf-var-xl");
+    expect(s.name).toBe("Black / S");
+    expect(s.price_override).toBe("19.99"); // differs from BASE_FORM's $40 base price — kept explicit
+    expect(xl.price_override).toBe("21.94"); // also differs — kept explicit
+    expect(toast.success).toHaveBeenCalled();
+    w.cleanup();
+  });
+
+  test("a variant already on the form can't be double-added", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT });
+    // BASE_FORM already has pf-var-s as "Small".
+    const w = mount(editor(BASE_FORM, () => {}));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    const row = w.q('[data-testid="printify-picker-row-pf-var-s"]');
+    expect(row.textContent).toContain("already added");
+    expect(row.querySelector("input[type=checkbox]").disabled).toBe(true);
+    w.cleanup();
+  });
+
+  test("a fetch failure shows the real error instead of a blank modal", async () => {
+    api.get.mockReset();
+    api.get.mockRejectedValue({ response: { data: { detail: "Printify couldn't find that product: 404" } } });
+    const w = mount(editor(BASE_FORM, () => {}));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    expect(w.q('[role="alert"]').textContent).toContain("couldn't find that product");
+    w.cleanup();
+  });
+
+  test("filtering narrows the list to matching sizes/colors", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT });
+    const w = mount(editor({ ...BASE_FORM, variants: [] }, () => {}));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    const filterInput = w.q('[data-testid="printify-picker-filter"]');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      setter.call(filterInput, "XL");
+      filterInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(w.q('[data-testid="printify-picker-row-pf-var-xl"]')).toBeTruthy();
+    expect(w.q('[data-testid="printify-picker-row-pf-var-s"]')).toBeFalsy();
+    w.cleanup();
+  });
+});

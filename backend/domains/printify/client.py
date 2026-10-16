@@ -178,6 +178,24 @@ async def get_order(printify_order_id: str) -> Dict[str, Any]:
     return resp.json()
 
 
+async def get_product(printify_product_id: str) -> Dict[str, Any]:
+    """Fetches one product's full definition (title, images, every variant
+    with its own id/title/price/enabled flag) by Printify's own product id.
+    Used by the admin "fetch sizes from Printify" picker (see server.py's
+    /admin/printify/products/{id}) so a listing's real sizes/colors and
+    their ids never have to be hand-copied one at a time out of the
+    Printify dashboard — a real product can carry dozens of color/size
+    combinations, and every one of them is a typo-prone id to transcribe
+    by hand."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.get(f"/shops/{PRINTIFY_SHOP_ID}/products/{printify_product_id}.json", headers=_headers())
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text)
+    return resp.json()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 

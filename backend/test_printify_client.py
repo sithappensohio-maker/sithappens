@@ -48,6 +48,36 @@ def test_get_order_refuses_when_not_configured():
             _run(printify_client.get_order("pf-order-1"))
 
 
+def test_get_product_refuses_when_not_configured():
+    with patch.object(printify_client, "PRINTIFY_ENABLED", False):
+        with pytest.raises(printify_client.PrintifyNotConfigured):
+            _run(printify_client.get_product("pf-prod-1"))
+
+
+def test_get_product_fetches_by_id_and_returns_the_parsed_body():
+    fake_resp = _FakeResponse(200, json_body={"id": "pf-prod-1", "title": "Trail Dog Hoodie", "variants": []})
+    mock_get = AsyncMock(return_value=fake_resp)
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "test-key"), \
+         patch.object(printify_client, "PRINTIFY_SHOP_ID", "shop-1"), \
+         patch("httpx.AsyncClient.get", mock_get):
+        result = _run(printify_client.get_product("pf-prod-1"))
+    assert result == {"id": "pf-prod-1", "title": "Trail Dog Hoodie", "variants": []}
+    assert mock_get.call_args.args == ("/shops/shop-1/products/pf-prod-1.json",)
+
+
+def test_get_product_raises_on_a_non_2xx_response():
+    fake_resp = _FakeResponse(404, text="not found")
+    mock_get = AsyncMock(return_value=fake_resp)
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "test-key"), \
+         patch.object(printify_client, "PRINTIFY_SHOP_ID", "shop-1"), \
+         patch("httpx.AsyncClient.get", mock_get):
+        with pytest.raises(printify_client.PrintifyApiError) as exc_info:
+            _run(printify_client.get_product("missing"))
+    assert exc_info.value.status_code == 404
+
+
 def test_create_order_posts_the_documented_shape_and_returns_the_parsed_body():
     fake_resp = _FakeResponse(200, json_body={"id": "pf-order-123"})
     mock_post = AsyncMock(return_value=fake_resp)
