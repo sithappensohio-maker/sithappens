@@ -118,14 +118,17 @@ class PosSalePreviewIn(BaseModel):
     # the commit body) so the live cart total the cashier sees already
     # reflects it before checkout.
     client_id: Optional[str] = None
+    # The pickup-or-ship choice for a cart with a Printify-fulfilled line —
+    # required at commit time (checked server-side against each line's
+    # actual product in _create_pos_sale_impl, never trusted from a client-
+    # side guess), but present on the preview body too so the live total
+    # the cashier sees already includes Printify's own real shipping cost
+    # once a choice is made, same reasoning as client_id above. Ignored
+    # when the cart has no Printify line, or no choice has been made yet.
+    printify_fulfillment: Optional[PrintifyFulfillmentIn] = None
 
 
 class PosSaleIn(PosSalePreviewIn):
     tenders: List[PosSaleTenderIn] = Field(min_length=1)
     workstation_id: Optional[str] = Field(default=None, max_length=100)
     idempotency_key: str = Field(min_length=8, max_length=128)
-    # Required when the cart contains a Printify-fulfilled line (checked
-    # server-side against each line's actual product in
-    # _create_pos_sale_impl, never trusted from a client-side guess);
-    # ignored otherwise.
-    printify_fulfillment: Optional[PrintifyFulfillmentIn] = None

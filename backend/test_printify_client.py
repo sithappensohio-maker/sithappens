@@ -149,6 +149,65 @@ def test_estimate_shipping_uses_the_right_profile_for_a_different_variant_subset
     assert result == {"cost_cents": 799, "currency": "USD"}
 
 
+# ── Cart-level shipping (owner request: charge Printify's real rate) ───────
+
+def test_estimate_cart_shipping_sums_one_line():
+    with patch.object(printify_client, "get_shipping_rates", AsyncMock(return_value=REAL_SHAPE_RATES)):
+        total = _run(printify_client.estimate_cart_shipping_cents(
+            [{"blueprint_id": 6, "print_provider_id": 99, "variant_id": 12126, "quantity": 1}], "US"))
+    assert total == 399
+
+
+def test_estimate_cart_shipping_sums_multiple_lines_each_as_its_own_shipment():
+    # Two lines sharing a provider are priced independently and summed —
+    # each pays its own first-item cost rather than one combined
+    # first+additional charge (see the function's own docstring for why).
+    with patch.object(printify_client, "get_shipping_rates", AsyncMock(return_value=REAL_SHAPE_RATES)):
+        total = _run(printify_client.estimate_cart_shipping_cents(
+            [
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 12126, "quantity": 1},
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 11986, "quantity": 2},
+            ], "US"))
+    assert total == 399 + (799 + 240)  # line 1 alone + line 2's own first+additional
+
+
+def test_estimate_cart_shipping_reuses_cached_rates_across_lines_same_blueprint_provider():
+    mock_get_rates = AsyncMock(return_value=REAL_SHAPE_RATES)
+    with patch.object(printify_client, "get_shipping_rates", mock_get_rates):
+        _run(printify_client.estimate_cart_shipping_cents(
+            [
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 12126, "quantity": 1},
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 11986, "quantity": 1},
+            ], "US"))
+    mock_get_rates.assert_called_once_with(6, 99)
+
+
+def test_estimate_cart_shipping_fetches_separate_rates_per_distinct_blueprint_provider():
+    other_rates = {"profiles": [{"variant_ids": [999], "countries": ["US"], "first_item": {"cost": 100, "currency": "USD"}, "additional_items": {"cost": 50, "currency": "USD"}}]}
+
+    async def _fake_rates(blueprint_id, print_provider_id):
+        return REAL_SHAPE_RATES if blueprint_id == 6 else other_rates
+
+    with patch.object(printify_client, "get_shipping_rates", AsyncMock(side_effect=_fake_rates)) as mock_get_rates:
+        total = _run(printify_client.estimate_cart_shipping_cents(
+            [
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 12126, "quantity": 1},
+                {"blueprint_id": 7, "print_provider_id": 5, "variant_id": 999, "quantity": 1},
+            ], "US"))
+    assert total == 399 + 100
+    assert mock_get_rates.call_count == 2
+
+
+def test_estimate_cart_shipping_none_when_any_line_cant_be_priced():
+    with patch.object(printify_client, "get_shipping_rates", AsyncMock(return_value=REAL_SHAPE_RATES)):
+        total = _run(printify_client.estimate_cart_shipping_cents(
+            [
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": 12126, "quantity": 1},
+                {"blueprint_id": 6, "print_provider_id": 99, "variant_id": "not-real", "quantity": 1},
+            ], "US"))
+    assert total is None
+
+
 def test_get_product_raises_on_a_non_2xx_response():
     fake_resp = _FakeResponse(404, text="not found")
     mock_get = AsyncMock(return_value=fake_resp)

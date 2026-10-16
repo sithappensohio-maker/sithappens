@@ -308,6 +308,42 @@ def estimate_shipping_cents(rates: Dict[str, Any], *, variant_id: Any, quantity:
     return {"cost_cents": total_cents, "currency": cheapest["first_item"].get("currency", "USD")}
 
 
+async def estimate_cart_shipping_cents(lines: List[Dict[str, Any]], country: str) -> Optional[int]:
+    """Real Printify shipping cost for a whole cart's Printify lines, in
+    cents — the register and online-Shop checkouts' own "pay shipping
+    based on Printify's shipping" charge (owner request), not the flat
+    free-shipping this started with.
+
+    Each `line` needs `blueprint_id`, `print_provider_id`, `variant_id`
+    (Printify's own variant id, not this app's row id) and `quantity`.
+    Priced PER LINE — each cart line treated as its own shipment, summed —
+    even when two lines share a print provider and would in reality ship
+    together under one combined first-item-then-additional-items charge.
+    That slightly OVER-prices that one (uncommon — a personalized line is
+    always qty 1, and most carts carry a single Printify item) edge case,
+    deliberately: the alternative is a "more accurate" combined estimate
+    this module has no way to verify against what Printify will actually
+    bill the business, and erring toward the business never under-
+    collecting shipping is the safer direction.
+
+    Returns None when ANY line can't be priced (get_shipping_rates' own
+    cache keeps repeat blueprint/provider lookups cheap) — the caller must
+    refuse the ship option rather than silently charge $0 for a line
+    Printify won't ship to that country at all."""
+    rates_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    total_cents = 0
+    for line in lines:
+        key = (int(line["blueprint_id"]), int(line["print_provider_id"]))
+        if key not in rates_cache:
+            rates_cache[key] = await get_shipping_rates(*key)
+        estimate = estimate_shipping_cents(
+            rates_cache[key], variant_id=line["variant_id"], quantity=line["quantity"], country=country)
+        if estimate is None:
+            return None
+        total_cents += estimate["cost_cents"]
+    return total_cents
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 

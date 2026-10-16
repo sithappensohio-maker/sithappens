@@ -45979,12 +45979,74 @@ async def _price_pos_cart(
     )
 
 
+def _pos_printify_lines(priced: dict, product_cache: Dict[str, dict]) -> List[dict]:
+    """Every priced retail line whose product is Printify-fulfilled — shared
+    by the "pickup or ship?" requirement check and the shipping-cost
+    computation below, so the two can never disagree about which lines
+    count."""
+    return [
+        li for li in priced["line_items"]
+        if li["kind"] == "retail" and product_cache.get(li["product_id"], {}).get("sales_destination") == "printify"
+    ]
+
+
+async def _price_pos_printify_shipping(
+    priced: dict, product_cache: Dict[str, dict], printify_fulfillment: Optional[PrintifyFulfillmentIn],
+) -> float:
+    """The real Printify shipping cost for a priced cart's Printify line(s),
+    in dollars — owner request: "pay shipping based on printifys shipping,
+    dont worry about the fed ex crap" (the Shop's existing shipping_amount
+    is a SEPARATE FedEx-rate concept for self-fulfilled products; this is
+    Printify's own catalog shipping table, domains/printify/client.
+    estimate_cart_shipping_cents). 0.0 for pickup, or when no choice has
+    been made yet (a live preview before the cashier picks one) — never
+    guessed, never charged without an explicit "ship" choice and address.
+
+    Shared by preview_pos_sale (so the live total the cashier sees already
+    includes it before checkout) and _create_pos_sale_impl (which also
+    enforces that a choice was made at all — see there). Raises
+    HTTPException — never silently returns 0.0 — when a line can't actually
+    be priced: an unmapped product, or an address Printify doesn't cover."""
+    if not printify_fulfillment or printify_fulfillment.method != "ship":
+        return 0.0
+    printify_lines = _pos_printify_lines(priced, product_cache)
+    if not printify_lines:
+        return 0.0
+    cart_lines = []
+    for li in printify_lines:
+        product = product_cache[li["product_id"]]
+        variant = next((v for v in (product.get("variants") or []) if v.get("id") == li.get("variant_id")), None)
+        if not variant or not variant.get("printify_variant_id") \
+                or not product.get("printify_blueprint_id") or not product.get("printify_print_provider_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{product.get('name') or 'This item'} isn't fully set up for shipping yet — "
+                       f"missing its Printify blueprint/print-provider/variant mapping.")
+        cart_lines.append({
+            "blueprint_id": product["printify_blueprint_id"], "print_provider_id": product["printify_print_provider_id"],
+            "variant_id": variant["printify_variant_id"], "quantity": int(li["qty"]),
+        })
+    country = ((printify_fulfillment.shipping_address.country if printify_fulfillment.shipping_address else None) or "US")
+    try:
+        cents = await printify_client.estimate_cart_shipping_cents(cart_lines, country)
+    except printify_client.PrintifyNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except printify_client.PrintifyApiError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not get a shipping rate from Printify: {exc}")
+    if cents is None:
+        raise HTTPException(status_code=400, detail="Printify can't ship one of these items to that address — try pickup instead.")
+    return round(cents / 100, 2)
+
+
 async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_employee_or_admin)):
     """Prices a cart without creating anything — pure read, safe to call on
     every cart edit for live cart totals. Covers every sellable kind
     (retail, custom, credit_pack, training_program) as one unified total."""
     _require_take_payments(user)
-    priced, _caches = await _price_pos_cart(body.lines, body.discount, can_price=bool(_perms_for(user).get("pricing")), client_id=body.client_id)
+    priced, caches = await _price_pos_cart(body.lines, body.discount, can_price=bool(_perms_for(user).get("pricing")), client_id=body.client_id)
+    shipping = await _price_pos_printify_shipping(priced, caches["products"], body.printify_fulfillment)
+    if shipping:
+        priced = {**priced, "total": round(priced["total"] + shipping, 2), "printify_shipping_amount": shipping}
     return priced
 
 
@@ -46052,15 +46114,19 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     # pickup-or-ship choice before money moves, same as tenders summing to
     # the total: this is checked against the ACTUAL cart (never trusted from
     # a client-side guess that the cart has/doesn't have one).
-    printify_lines = [
-        li for li in priced["line_items"]
-        if li["kind"] == "retail" and product_cache.get(li["product_id"], {}).get("sales_destination") == "printify"
-    ]
+    printify_lines = _pos_printify_lines(priced, product_cache)
     if printify_lines:
         if not body.printify_fulfillment:
             raise HTTPException(status_code=400, detail="This cart includes a Printify item — choose pickup or shipping before taking payment.")
         if body.printify_fulfillment.method == "ship" and not body.printify_fulfillment.shipping_address:
             raise HTTPException(status_code=400, detail="A shipping address is required to ship a Printify item.")
+
+    # Priced the same way the live preview already showed it (same helper —
+    # a surprise total at tender time, different from what the cashier saw
+    # while building the cart, is exactly the bug class this shares code
+    # to avoid). Ship charges Printify's own real rate; pickup is free.
+    printify_shipping_amount = await _price_pos_printify_shipping(priced, product_cache, body.printify_fulfillment)
+    total = round(total + printify_shipping_amount, 2)
 
     client_name = ""
     if body.client_id:
@@ -46192,6 +46258,10 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             "discount_amount": priced["discount_amount"], "discount_kind": priced["discount_kind"],
             "discount_reason": priced["discount_reason"],
             "tax_amount": priced["tax_amount"], "tax_rate_pct": priced["tax_rate_pct"], "total": total,
+            # 0.0 for pickup or a cart with no Printify line — only ever
+            # non-zero when the customer actually chose to ship, at
+            # Printify's own real rate (see _price_pos_printify_shipping).
+            "printify_shipping_amount": printify_shipping_amount,
             "tenders": tender_docs, "cash_component": cash_component,
             "status": "completed", "business_date": business_date,
             "created_at": ts, "created_by": user.get("id"),

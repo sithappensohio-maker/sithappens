@@ -619,16 +619,29 @@ export default function Pos({ onOpenShopManager } = {}) {
     return { kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty, personalization: l.personalization || null };
   });
 
+  // A cart with a Printify-fulfilled line needs the pickup-or-ship choice
+  // before payment (see _create_pos_sale_impl) — declared here, above the
+  // live cart-preview effect right below, which reads both to price
+  // Printify's own real shipping cost the moment a choice is made.
+  const hasPrintifyLine = cartLines.some((l) => l.sales_destination === "printify");
+  const [printifyFulfillment, setPrintifyFulfillment] = useState(null); // {method, shipping_address} | null
+
   useEffect(() => {
     if (cartLines.length === 0) { setPriced(null); return; }
     const t = setTimeout(() => {
-      api.post("/pos/checkout/preview", { lines: cartLinesPayload(), discount, client_id: selectedClient?.id || null })
+      api.post("/pos/checkout/preview", {
+        lines: cartLinesPayload(), discount, client_id: selectedClient?.id || null,
+        // Once a pickup-or-ship choice is made, the live total reflects
+        // Printify's own real shipping cost for "ship" immediately —
+        // never a surprise only discovered at tender time.
+        printify_fulfillment: hasPrintifyLine ? printifyFulfillment : null,
+      })
         .then(({ data }) => setPriced(data))
         .catch((e) => { toast.error(e?.response?.data?.detail || "Could not price the cart"); setPriced(null); });
     }, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(cartLines), JSON.stringify(discount), selectedClient?.id]);
+  }, [JSON.stringify(cartLines), JSON.stringify(discount), selectedClient?.id, JSON.stringify(printifyFulfillment)]);
 
   // ── Client panel ─────────────────────────────────────────────────────────
   const [clientQuery, setClientQuery] = useState("");
@@ -758,8 +771,8 @@ export default function Pos({ onOpenShopManager } = {}) {
   // ── Printify POD fulfillment (pickup vs. ship) ───────────────────────────
   // A cart with a Printify-fulfilled line needs this choice before payment —
   // the server refuses the sale without it (see _create_pos_sale_impl).
-  const hasPrintifyLine = cartLines.some((l) => l.sales_destination === "printify");
-  const [printifyFulfillment, setPrintifyFulfillment] = useState(null); // {method, shipping_address} | null
+  // hasPrintifyLine/printifyFulfillment themselves are declared earlier
+  // (right above the live cart-preview effect, which reads both).
   const [printifyModalOpen, setPrintifyModalOpen] = useState(false);
 
   // ── Stripe Terminal tender (Phase 4) ─────────────────────────────────────
@@ -878,12 +891,26 @@ export default function Pos({ onOpenShopManager } = {}) {
 
   // Confirmed from the Printify fulfillment modal — saves the choice, then
   // falls straight through to the tender panel so the cashier isn't making
-  // two separate taps to get to payment.
-  const confirmPrintifyFulfillment = (choice) => {
+  // two separate taps to get to payment. Re-prices right here (awaited,
+  // not left to the debounced background preview) so a "Ship" choice's
+  // real Printify shipping cost is already in `total` before the tender
+  // screen opens — never a stale, pre-shipping amount pre-filled in.
+  const confirmPrintifyFulfillment = async (choice) => {
     setPrintifyFulfillment(choice);
     setPrintifyModalOpen(false);
-    setTenders([]); setTenderAmount(String(total)); setCashReceived(""); setTenderNotes(""); setTenderMethod("cash");
+    setTenders([]); setCashReceived(""); setTenderNotes(""); setTenderMethod("cash");
     setTerminalCharge(null);
+    try {
+      const { data } = await api.post("/pos/checkout/preview", {
+        lines: cartLinesPayload(), discount, client_id: selectedClient?.id || null,
+        printify_fulfillment: choice,
+      });
+      setPriced(data);
+      setTenderAmount(String(data.total ?? 0));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not price the cart with that shipping choice");
+      setTenderAmount(String(total));
+    }
     setTenderOpen(true);
   };
 
@@ -2400,6 +2427,15 @@ export default function Pos({ onOpenShopManager } = {}) {
                    here is how untaxed sales go out unnoticed, so say it. */
                 <div className="text-[12px] text-shOrange font-black" data-testid="pos-no-tax-notice">
                   No sales tax is being charged on merchandise — switch it on in Settings → Sales Tax.
+                </div>
+              )}
+              {priced?.printify_shipping_amount > 0 && (
+                /* Printify's own real shipping rate (owner request) — a
+                   SEPARATE charge from sales tax, only present once "Ship
+                   to Them" is actually chosen (see the fulfillment summary
+                   right below). Never shown for pickup. */
+                <div className="flex justify-between text-shTextMuted" data-testid="pos-cart-printify-shipping">
+                  <span>Shipping (Printify)</span><span>{money(priced.printify_shipping_amount)}</span>
                 </div>
               )}
               <div className="flex justify-between items-baseline text-shText font-black"><span className="text-[15px]">Total</span><span className="text-[24px]">{money(total)}</span></div>
