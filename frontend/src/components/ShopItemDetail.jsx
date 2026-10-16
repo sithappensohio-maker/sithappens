@@ -255,11 +255,15 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // price of its own); optional for a plain internal product that happens
   // to have options, same permissiveness the register already has.
   const [selectedVariantId, setSelectedVariantId] = useState(null);
+  // Free-text fields a personalized item needs filled in (e.g. a pet tag's
+  // Name/Phone) — {fieldName: value}, reset along with everything else
+  // whenever a different item loads.
+  const [personalizationValues, setPersonalizationValues] = useState({});
   const isGuest = mode === "guest";
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null);
+    setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null); setPersonalizationValues({});
     const url = isGuest
       ? `/public/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`
       : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
@@ -349,6 +353,9 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // plain internal product with options stays purchasable at its own base
   // price with nothing picked, same as it always has been.
   const needsVariantChoice = isPrintify && hasVariants && !selectedVariant;
+  const personalizationFields = item.kind === "product" ? (item.personalization_fields || []) : [];
+  const missingPersonalization = personalizationFields.filter((f) => !(personalizationValues[f] || "").trim());
+  const needsPersonalization = personalizationFields.length > 0 && missingPersonalization.length > 0;
   const outOfStock = isGuest
     ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
     : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
@@ -410,7 +417,14 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
       toast.error("Choose a size before adding this to your cart.");
       return;
     }
-    onAddToCart(item, item.kind === "product" ? qty : 1, undefined, undefined, selectedVariantId || undefined);
+    if (needsPersonalization) {
+      toast.error(`Enter: ${missingPersonalization.join(", ")}`);
+      return;
+    }
+    const personalization = personalizationFields.length > 0
+      ? Object.fromEntries(personalizationFields.map((f) => [f, personalizationValues[f].trim()]))
+      : undefined;
+    onAddToCart(item, item.kind === "product" ? qty : 1, undefined, undefined, selectedVariantId || undefined, personalization);
     toast.success(item.kind === "product"
       ? `Added ${qty} ${selectedVariant ? `(${selectedVariant.name}) ` : ""}to cart`
       : `${item.name} added to cart`);
@@ -483,6 +497,23 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {personalizationFields.length > 0 && (
+            <div className="mt-4 space-y-2.5" data-testid="shop-detail-personalization">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+                This item is personalized — enter exactly what should be printed
+              </p>
+              {personalizationFields.map((field) => (
+                <div key={field}>
+                  <label className="text-[10px] text-shTextMuted uppercase tracking-widest font-black">{field}</label>
+                  <input value={personalizationValues[field] || ""}
+                         onChange={(e) => setPersonalizationValues((v) => ({ ...v, [field]: e.target.value }))}
+                         data-testid={`shop-detail-personalization-${field}`}
+                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm" />
+                </div>
+              ))}
             </div>
           )}
 
@@ -777,6 +808,10 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             ) : needsVariantChoice ? (
               <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
                 Choose a Size to Continue
+              </PremiumButton>
+            ) : needsPersonalization ? (
+              <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
+                Fill In {missingPersonalization.join(", ")} to Continue
               </PremiumButton>
             ) : (
               <PremiumButton variant="primary" onClick={handlePurchase} data-testid="shop-detail-purchase" className="w-full justify-center py-3">

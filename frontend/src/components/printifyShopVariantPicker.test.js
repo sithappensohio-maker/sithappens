@@ -48,6 +48,13 @@ const SHIRT_INTERNAL = {
   ],
 };
 
+const PET_TAG = {
+  kind: "product", id: "tag-1", name: "Pet ID Tag",
+  sales_destination: "printify", price: 12.0, effective_price: 12.0,
+  in_stock: true, description: "", image_ids: [],
+  personalization_fields: ["Name", "Phone"],
+};
+
 let container, root, added;
 
 beforeEach(() => {
@@ -72,13 +79,22 @@ const mountDetail = async (item, props = {}) => {
     root.render(
       <ShopItemDetail
         kind="product" itemId={item.id} cart={[]}
-        onAddToCart={(it, qty, dogId, gift, variantId) => added.push({ it, qty, dogId, gift, variantId })}
+        onAddToCart={(it, qty, dogId, gift, variantId, personalization) => added.push({ it, qty, dogId, gift, variantId, personalization })}
         onBack={() => {}} allItems={[item]} onOpenItem={() => {}}
         mode="authenticated" dogs={[]} {...props} />);
   });
 };
 const q = (id) => container.querySelector(`[data-testid="${id}"]`);
 const click = async (el) => { await act(async () => { el.click(); }); };
+const type = async (id, value) => {
+  const el = q(id);
+  if (!el) throw new Error(`no [data-testid="${id}"]`);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(el, String(value));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
 
 describe("Printify product page — size required", () => {
   test("the size picker lists every enabled variant, unavailable one disabled", async () => {
@@ -159,5 +175,46 @@ describe("Merch card — a Printify item routes to the detail page", () => {
     expect(opened).toEqual([SHIRT]);
     act(() => r.unmount());
     host.remove();
+  });
+});
+
+describe("Printify product page — personalization required", () => {
+  test("shows one input per declared field", async () => {
+    await mountDetail(PET_TAG);
+    expect(q("shop-detail-personalization")).toBeTruthy();
+    expect(q("shop-detail-personalization-Name")).toBeTruthy();
+    expect(q("shop-detail-personalization-Phone")).toBeTruthy();
+  });
+
+  test("purchase is disabled until every field is filled", async () => {
+    await mountDetail(PET_TAG);
+    expect(q("shop-detail-purchase-disabled")).toBeTruthy();
+    expect(q("shop-detail-purchase-disabled").textContent).toMatch(/Name/);
+    expect(q("shop-detail-purchase-disabled").textContent).toMatch(/Phone/);
+    expect(q("shop-detail-purchase")).toBeFalsy();
+  });
+
+  test("filling only one field still refuses, naming just the missing one", async () => {
+    await mountDetail(PET_TAG);
+    await type("shop-detail-personalization-Name", "Rex");
+    expect(q("shop-detail-purchase-disabled").textContent).toMatch(/Phone/);
+    expect(q("shop-detail-purchase-disabled").textContent).not.toMatch(/Name/);
+    expect(q("shop-detail-purchase")).toBeFalsy();
+  });
+
+  test("filling every field enables purchase and hands the values to onAddToCart", async () => {
+    await mountDetail(PET_TAG);
+    await type("shop-detail-personalization-Name", "Rex");
+    await type("shop-detail-personalization-Phone", "330-555-0101");
+    expect(q("shop-detail-purchase-disabled")).toBeFalsy();
+    expect(q("shop-detail-purchase")).toBeTruthy();
+    await click(q("shop-detail-purchase"));
+    expect(added).toHaveLength(1);
+    expect(added[0].personalization).toEqual({ Name: "Rex", Phone: "330-555-0101" });
+  });
+
+  test("a plain item never shows a personalization form", async () => {
+    await mountDetail(SHIRT_INTERNAL);
+    expect(q("shop-detail-personalization")).toBeFalsy();
   });
 });

@@ -298,6 +298,15 @@ export function cartGiftKey(g) {
           (g.gift_message || "").trim()].join("|");
 }
 
+// Two personalized lines of the same product+size (different Name/Phone
+// text) must never be treated as "the same line" by a qty-change/remove
+// click — this is the identity cart mutations compare on, same role
+// cartGiftKey plays for a gift line.
+export function personalizationKey(p) {
+  if (!p) return "";
+  return Object.entries(p).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join("|");
+}
+
 export function guestItemCta(item) {
   if (item.kind === "product" && item.sales_destination === "shopify_external") {
     return { type: "shopify" };

@@ -46,6 +46,7 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
   const payload = useMemo(() => cart.map((c) => ({
     kind: c.kind, ref_id: c.ref_id, quantity: c.quantity,
     variant_id: c.variant_id || null,
+    personalization: c.personalization || null,
     recipient_email: c.gift?.recipient_email || null,
     recipient_name: c.gift?.recipient_name || null,
     gift_message: c.gift?.gift_message || null,

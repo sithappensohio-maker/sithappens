@@ -37,6 +37,13 @@ function LineContext({ line }) {
   if (variant) {
     bits.push({ icon: "fa-ruler", text: variant.name, testId: "cart-line-variant" });
   }
+  if (line.personalization) {
+    bits.push({
+      icon: "fa-pen",
+      text: Object.entries(line.personalization).map(([k, v]) => `${k}: ${v}`).join(" · "),
+      testId: "cart-line-personalization",
+    });
+  }
   if (line.dog_name) {
     bits.push({ icon: "fa-paw", text: `For ${line.dog_name}`, testId: "cart-line-dog" });
   }
@@ -72,7 +79,9 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
   // A gift card's quantity is a count of cards for one named person, and a
   // dog-bound course is one enrolment — neither is a thing you buy "three
   // of" from a stepper. Only merchandise gets one.
-  const adjustable = item.kind === "product" && !line.dog_id;
+  // A personalized line is one specific physical item — no stepper, same
+  // "one at a time" reasoning as a dog-bound course line (!line.dog_id).
+  const adjustable = item.kind === "product" && !line.dog_id && !line.personalization;
   const ceiling = stockCeiling(item);
   const unitPrice = cartLineUnitPrice(item, line.variant_id);
 
@@ -108,12 +117,12 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
           {adjustable ? (
             <QuantityStepper value={line.quantity} max={ceiling ?? undefined}
                              idSuffix={`-${line.ref_id}`}
-                             onChange={(q) => onQtyChange(line.kind, line.ref_id, q, line.dog_id, line.gift, line.variant_id)} />
+                             onChange={(q) => onQtyChange(line.kind, line.ref_id, q, line.dog_id, line.gift, line.variant_id, line.personalization)} />
           ) : (
             <span className="text-[12px] text-shTextMuted">Qty {line.quantity}</span>
           )}
           <button type="button"
-                  onClick={() => onRemove(line.kind, line.ref_id, line.dog_id, line.gift, line.variant_id)}
+                  onClick={() => onRemove(line.kind, line.ref_id, line.dog_id, line.gift, line.variant_id, line.personalization)}
                   aria-label={`Remove ${item.name || "item"} from your cart`}
                   data-testid={`shop-cart-remove-${line.ref_id}`}
                   className="text-[12px] font-bold text-shTextMuted hover:text-shDanger transition
@@ -421,8 +430,8 @@ export default function CartPanel({
             </div>
           ) : (
             <ul className="divide-y divide-shBorder">
-              {lines.map((l) => (
-                <CartLine key={`${l.kind}:${l.ref_id}:${l.dog_id || ""}:${l.variant_id || ""}`} line={l}
+              {lines.map((l, i) => (
+                <CartLine key={`${l.kind}:${l.ref_id}:${l.dog_id || ""}:${l.variant_id || ""}:${l.personalization ? i : ""}`} line={l}
                           onQtyChange={onQtyChange} onRemove={onRemove}
                           guestBlocked={blockedKeys.has(`${l.kind}:${l.ref_id}`)} />
               ))}
