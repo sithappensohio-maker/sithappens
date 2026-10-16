@@ -369,7 +369,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // with the chosen variant. null when no picker is open.
   const [variantPickerItem, setVariantPickerItem] = useState(null);
 
-  const addItem = (item, variant) => {
+  const addItem = (item, variant, personalization) => {
     const cartKind = CART_KIND[item.kind];
     if (cartKind !== "retail" && !selectedClient) {
       toast.error(item.kind === "credit_pack"
@@ -400,7 +400,12 @@ export default function Pos({ onOpenShopManager } = {}) {
     }
     const idField = CART_ID_FIELD[cartKind];
     setCartLines((lines) => {
-      const idx = lines.findIndex((l) => l.kind === cartKind && l[idField] === item.id && (l.variant_id || null) === (variant?.id || null));
+      // A personalized line is one specific physical item (its own Name/
+      // Phone/etc.) — it never merges into an existing line, even an
+      // identical-looking one; each tap is its own line, same "one at a
+      // time" rule the backend enforces (_normalize_cart_lines).
+      const idx = personalization ? -1
+        : lines.findIndex((l) => l.kind === cartKind && l[idField] === item.id && (l.variant_id || null) === (variant?.id || null));
       if (idx >= 0) {
         const copy = [...lines];
         copy[idx] = { ...copy[idx], qty: copy[idx].qty + 1 };
@@ -415,16 +420,47 @@ export default function Pos({ onOpenShopManager } = {}) {
         // Printify POD — needs a pickup-or-ship choice before checkout; see
         // the printifyFulfillment gate around completeSale() below.
         sales_destination: item.kind === "product" ? item.sales_destination : null,
+        personalization: personalization || undefined,
       }];
     });
     setVariantPickerItem(null);
+    setPersonalizationItem(null);
+  };
+
+  // A product needing personalization (e.g. a pet tag's Name/Phone) can't
+  // go straight to cart from a tile or the size picker — this form asks
+  // for it first. { item, variant } while open, null when closed.
+  const [personalizationItem, setPersonalizationItem] = useState(null);
+  const [personalizationValues, setPersonalizationValues] = useState({});
+
+  const requestAdd = (item, variant) => {
+    if (item.kind === "product" && item.personalization_fields?.length > 0) {
+      setVariantPickerItem(null);
+      setPersonalizationValues({});
+      setPersonalizationItem({ item, variant });
+      return;
+    }
+    addItem(item, variant);
+  };
+
+  const submitPersonalization = () => {
+    const { item, variant } = personalizationItem;
+    const missing = (item.personalization_fields || []).filter((f) => !(personalizationValues[f] || "").trim());
+    if (missing.length) { toast.error(`Enter: ${missing.join(", ")}`); return; }
+    const values = {};
+    for (const f of item.personalization_fields) values[f] = personalizationValues[f].trim();
+    addItem(item, variant, values);
   };
 
   const openItem = (item) => {
     if (item.kind === "product" && item.variants?.length > 0) { setVariantPickerItem(item); return; }
-    addItem(item);
+    requestAdd(item);
   };
   const updateQty = (i, delta) => setCartLines((lines) => {
+    if (lines[i]?.personalization && delta > 0) {
+      toast.error("Scan or tap this item again to add another — each one needs its own details.");
+      return lines;
+    }
     const copy = [...lines];
     const nextQty = Math.round((copy[i].qty + delta) * 100) / 100;
     if (nextQty <= 0) { copy.splice(i, 1); return copy; }
@@ -574,7 +610,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, gift_card_topup: !!l.gift_card_topup, gift_card_recipient_email: l.gift_card_recipient_email || null, qty: 1 };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
-    return { kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty };
+    return { kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty, personalization: l.personalization || null };
   });
 
   useEffect(() => {
@@ -2128,6 +2164,11 @@ export default function Pos({ onOpenShopManager } = {}) {
                         {item.variants.every((v) => !v.in_stock) && <span className="text-shDanger"> • All Out of Stock</span>}
                       </p>
                     )}
+                    {item.personalization_fields?.length > 0 && (
+                      <p className="text-shSecondary text-[10px] font-black uppercase tracking-widest mt-0.5">
+                        <i className="fas fa-pen mr-1" />Personalized
+                      </p>
+                    )}
                     {item.kind === "product" && !hasVariants && item.track_inventory && (
                       <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-shDanger" : lowStock ? "text-shAccent" : "text-shTextMuted"}`}>
                         {outOfStock ? (Number(item.stock_held || 0) > 0 ? "Held for online order" : "Out of Stock") : lowStock ? `${item.stock_on_hand} left • Low Stock` : `${item.stock_on_hand} in stock`}
@@ -2287,6 +2328,12 @@ export default function Pos({ onOpenShopManager } = {}) {
                         row — and now the rack code has to be readable here
                         before the sale is taken. */}
                     <p className="text-shText truncate">{l.name || l.description}</p>
+                    {l.personalization && (
+                      <p className="text-shSecondary text-[11px]" data-testid={`pos-cart-personalization-${i}`}>
+                        <i className="fas fa-pen mr-1" />
+                        {Object.entries(l.personalization).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                      </p>
+                    )}
                     {l.kind === "credit_pack" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Credit Pack</p>}
                     {l.kind === "training_program" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Training Program</p>}
                     {l.has_price_override && <p className="text-shPrimary text-[10px] font-black uppercase tracking-widest">Client price applied</p>}
@@ -2423,7 +2470,7 @@ export default function Pos({ onOpenShopManager } = {}) {
             <p className="text-shText font-black text-sm mb-3">{variantPickerItem.name} — choose an option</p>
             <div className="space-y-2">
               {variantPickerItem.variants.map((v) => (
-                <button key={v.id} onClick={() => addItem(variantPickerItem, v)} disabled={!v.in_stock}
+                <button key={v.id} onClick={() => requestAdd(variantPickerItem, v)} disabled={!v.in_stock}
                         data-testid={`pos-variant-${v.id}`}
                         className="w-full flex items-center justify-between bg-black/10 border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40">
                   <span className="text-shText font-bold text-sm">{v.name}</span>
@@ -2440,6 +2487,36 @@ export default function Pos({ onOpenShopManager } = {}) {
                     className="w-full text-shTextMuted text-[12px] font-black uppercase tracking-widest mt-3 py-2">
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+      {personalizationItem && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" data-testid="pos-personalization-form"
+             onClick={() => setPersonalizationItem(null)}>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <p className="text-shText font-black text-sm mb-1">{personalizationItem.item.name}{personalizationItem.variant ? ` — ${personalizationItem.variant.name}` : ""}</p>
+            <p className="text-shTextMuted text-[12px] mb-3">This item is personalized — enter exactly what should be printed.</p>
+            <div className="space-y-2.5">
+              {personalizationItem.item.personalization_fields.map((field) => (
+                <div key={field}>
+                  <label className="text-[10px] text-shTextMuted uppercase tracking-widest font-black">{field}</label>
+                  <input value={personalizationValues[field] || ""}
+                         onChange={(e) => setPersonalizationValues((v) => ({ ...v, [field]: e.target.value }))}
+                         data-testid={`pos-personalization-${field}`}
+                         className="w-full bg-black/10 border border-shBorder rounded p-2 text-shText text-sm" />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setPersonalizationItem(null)} data-testid="pos-personalization-cancel"
+                      className="flex-1 text-shTextMuted text-[12px] font-black uppercase tracking-widest py-2.5 border border-shBorder rounded-xl">
+                Cancel
+              </button>
+              <button onClick={submitPersonalization} data-testid="pos-personalization-add"
+                      className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-2.5 text-[12px] font-black uppercase tracking-widest">
+                Add to Cart
+              </button>
+            </div>
           </div>
         </div>
       )}
