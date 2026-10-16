@@ -288,3 +288,23 @@ describe("Fetch Sizes from Printify", () => {
     w.cleanup();
   });
 });
+
+// Owner: "we could just dump shopify all together" — now that Printify
+// handles print-on-demand directly, Shopify is never offered for a NEW
+// product; it only still shows for one that's already on it, so an admin
+// can keep seeing/editing it until they move it to Printify themselves.
+describe("Shopify is retired going forward", () => {
+  test("a product that isn't already on Shopify never offers it as a destination", () => {
+    const w = mount(editor({ ...BASE_FORM, sales_destination: "internal" }, () => {}));
+    expect(w.q('[data-testid="destination-shopify"]')).toBeFalsy();
+    expect(w.q('[data-testid="destination-internal"]')).toBeTruthy();
+    expect(w.q('[data-testid="destination-printify"]')).toBeTruthy();
+    w.cleanup();
+  });
+
+  test("a product already on Shopify still shows it, so it stays visible/editable until moved", () => {
+    const w = mount(editor({ ...BASE_FORM, sales_destination: "shopify_external", printify_product_id: "" }, () => {}));
+    expect(w.q('[data-testid="destination-shopify"]')).toBeTruthy();
+    w.cleanup();
+  });
+});

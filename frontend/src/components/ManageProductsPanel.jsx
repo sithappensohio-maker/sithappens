@@ -465,11 +465,18 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                     className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "internal" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
               Internal Sit Happens Checkout
             </button>
-            <button type="button" data-testid="destination-shopify"
-                    onClick={() => setForm((f) => ({ ...f, sales_destination: "shopify_external" }))}
-                    className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "shopify_external" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
-              External Shopify Product
-            </button>
+            {/* Retired going forward (owner: moving every Shopify-linked
+                item to Printify now that it handles print-on-demand
+                directly) — only shown at all for a product that's ALREADY
+                on Shopify, so an admin can still see/edit it until it's
+                moved; never offered as a choice from any other state. */}
+            {form.sales_destination === "shopify_external" && (
+              <button type="button" data-testid="destination-shopify"
+                      onClick={() => setForm((f) => ({ ...f, sales_destination: "shopify_external" }))}
+                      className="flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
+                External Shopify Product
+              </button>
+            )}
             <button type="button" data-testid="destination-printify"
                     onClick={() => setForm((f) => ({ ...f, sales_destination: "printify" }))}
                     className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${isPrintify ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
@@ -479,7 +486,9 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           <p className="text-[11px] text-shTextMuted mt-1">
             {isPrintify
               ? "Sold and paid for right here, same as a normal product — Printify only takes over production and shipping after payment."
-              : "Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout."}
+              : form.sales_destination === "shopify_external"
+                ? "Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout. Switch this to Printify when you're ready to move it off Shopify."
+                : "Sold and paid for right here — stock, price, and checkout are all handled in this app."}
           </p>
         </div>
 
