@@ -396,7 +396,7 @@ export function PrintifyShipChoice({ fulfillment, onChange }) {
             <input value={address.zip} onChange={(e) => setField("zip", e.target.value)}
                    placeholder="ZIP" data-testid="shop-printify-zip" className={fieldCls} />
           </div>
-          <p className="text-[11px] text-shTextMuted">Made after you check out — Printify ships it straight to this address.</p>
+          <p className="text-[11px] text-shTextMuted">Made after you check out — Printify ships it straight to this address. Shipping cost (Printify's own rate) is calculated at checkout.</p>
         </div>
       )}
     </div>

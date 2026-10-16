@@ -866,16 +866,20 @@ def test_shop_order_with_ship_queues_outbox_row_using_the_buyers_own_identity():
     # The physical address is what the buyer entered at checkout; the
     # name/email/phone a Printify label also needs come from the order's
     # own buyer identity (client account), never re-typed in this form.
-    p = _create(show_online=True)
+    # _create_shippable + a mocked shipping estimate: this test is about
+    # the address content, not shipping-cost math (see the dedicated
+    # shipping-charge tests for that).
+    p = _create_shippable(show_online=True)
     cid, user = _shop_client()
     run(server.db.clients.update_one({"id": cid}, {"$set": {"phone": "330-555-9999"}}))
     order = None
     try:
         variant_id = p["variants"][0]["id"]
-        order = _shop_pay(
-            user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
-            printify_fulfillment=server.ShopPrintifyFulfillmentIn(
-                method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS)))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
+            order = _shop_pay(
+                user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(
+                    method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS)))
         row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
         assert row["fulfillment_method"] == "ship"
         addr = row["shipping_address"]
@@ -896,12 +900,12 @@ def test_shop_order_with_ship_queues_outbox_row_using_the_buyers_own_identity():
 
 
 def test_guest_shop_checkout_with_ship_queues_outbox_row_using_the_guests_own_identity():
-    p = _create(show_online=True, guest_cart_allowed=True)
+    p = _create_shippable(show_online=True, guest_cart_allowed=True)
     order = None
     try:
         variant_id = p["variants"][0]["id"]
         buyer = server.shop_checkout.guest_buyer(email="rex.guest@example.com", name="Rex Guest", phone="330-555-1234")
-        with _StripeMocked():
+        with _StripeMocked(), patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
             out = run(server.shop_checkout.create_checkout(
                 buyer=buyer,
                 items=[server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
@@ -930,6 +934,121 @@ def test_guest_shop_checkout_with_ship_queues_outbox_row_using_the_guests_own_id
             run(server.db.shop_checkout_claims.delete_many({"shop_order_id": order["id"]}))
             run(server.db.shop_payment_attempts.delete_many({"shop_order_id": order["id"]}))
             run(server.db.printify_order_outbox.delete_many({"source_id": order["id"]}))
+        _cleanup([p["id"]])
+
+
+# ── Online Shop pays Printify's real shipping rate too (owner request) ────
+# Same engine as the register's own shipping-charge tests above
+# (_price_pos_printify_shipping) — here it's _price_shop_cart's own
+# printify_shipping_amount, a SEPARATE field from the Shop's existing
+# FedEx shipping_amount.
+
+def test_shop_cart_adds_no_printify_shipping_for_pickup_or_no_choice():
+    p = _create_shippable(show_online=True)
+    try:
+        variant_id = p["variants"][0]["id"]
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)):
+            no_choice = run(server._price_shop_cart([cart_item], client_id=None))
+            pickup = run(server._price_shop_cart(
+                [cart_item], client_id=None, printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup")))
+        assert no_choice["printify_shipping_amount"] == 0.0 and no_choice["total"] == 40.0
+        assert pickup["printify_shipping_amount"] == 0.0 and pickup["total"] == 40.0
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_shop_cart_adds_real_printify_shipping_once_ship_is_chosen():
+    p = _create_shippable(show_online=True)
+    try:
+        variant_id = p["variants"][0]["id"]
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)
+        fulfillment = server.ShopPrintifyFulfillmentIn(
+            method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=499)) as mock_est:
+            priced = run(server._price_shop_cart([cart_item], client_id=None, printify_fulfillment=fulfillment))
+        assert priced["printify_shipping_amount"] == 4.99
+        assert priced["total"] == 44.99
+        call_lines, call_country = mock_est.call_args.args
+        assert call_country == "US"
+        assert call_lines == [{"blueprint_id": 6, "print_provider_id": 99, "variant_id": "pf-var-s", "quantity": 1}]
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_shop_cart_never_guesses_shipping_with_no_address_yet():
+    p = _create_shippable(show_online=True)
+    try:
+        variant_id = p["variants"][0]["id"]
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)
+        fulfillment = server.ShopPrintifyFulfillmentIn(method="ship")  # no shipping_address yet
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=499)) as mock_est:
+            priced = run(server._price_shop_cart([cart_item], client_id=None, printify_fulfillment=fulfillment))
+        assert priced["printify_shipping_amount"] == 0.0
+        mock_est.assert_not_called()
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_shop_checkout_sends_printify_shipping_as_its_own_stripe_line_item():
+    # The order's own printify_shipping_amount being right (proven above)
+    # is not enough on its own — Stripe is what actually charges the
+    # customer, and without its own line item Stripe would collect less
+    # than order["total"] says. This is the "the two must always agree"
+    # check. Drives create_shop_checkout directly (not the _shop_pay
+    # helper, which patches Stripe itself and would shadow this capture).
+    p = _create_shippable(show_online=True)
+    cid, user = _shop_client()
+    order_id = None
+    captured = {}
+
+    def _capturing_session_create(**kw):
+        captured["line_items"] = kw.get("line_items")
+        return _FakeStripeObj(id="cs_test_" + uuid.uuid4().hex[:8], url="https://checkout.stripe.com/test/x")
+
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.ShopPrintifyFulfillmentIn(
+            method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=499)), \
+             patch.object(server.stripe.Customer, "create", side_effect=lambda **kw: _FakeStripeObj(id="cus_test_" + uuid.uuid4().hex[:8])), \
+             patch.object(server.stripe.checkout.Session, "create", side_effect=_capturing_session_create):
+            out = run(server.create_shop_checkout(server.ShopCheckoutIn(
+                items=[server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                idempotency_key=f"{TAG}-{uuid.uuid4().hex}", printify_fulfillment=fulfillment,
+            ), user))
+        order_id = out["order_id"]
+        shipping_lines = [li for li in captured["line_items"] if li["price_data"]["product_data"]["name"] == "Shipping (Printify)"]
+        assert len(shipping_lines) == 1
+        assert shipping_lines[0]["price_data"]["unit_amount"] == 499
+    finally:
+        if order_id:
+            _cleanup_shop_order(cid, order_id)
+        else:
+            run(server.db.clients.delete_one({"id": cid}))
+        _cleanup([p["id"]])
+
+
+def test_shop_checkout_ship_charges_real_shipping_and_stores_it_on_the_order():
+    p = _create_shippable(show_online=True)
+    cid, user = _shop_client()
+    order = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.ShopPrintifyFulfillmentIn(
+            method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=499)):
+            order = _shop_pay(
+                user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                printify_fulfillment=fulfillment)
+        assert order["printify_shipping_amount"] == 4.99
+        assert order["total"] == 44.99
+        assert order["shipping_amount"] == 0.0  # the SEPARATE FedEx field is untouched
+    finally:
+        if order:
+            _cleanup_shop_order(cid, order["id"])
+        else:
+            run(server.db.clients.delete_one({"id": cid}))
         _cleanup([p["id"]])
 
 

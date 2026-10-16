@@ -42975,6 +42975,7 @@ async def _price_shop_cart(
     items: List[ShopCartItemIn], client_id: Optional[str] = None, *,
     discount_code: Optional[str] = None, is_guest: bool = False,
     shipping_address: Optional[shop_shipping.ShopShippingAddressIn] = None,
+    printify_fulfillment: Optional[ShopPrintifyFulfillmentIn] = None,
 ) -> dict:
     """Prices a Shop cart entirely server-side — never trusts a client-
     supplied price. Only `product` lines are physical/taxable; credit_pack
@@ -43297,10 +43298,29 @@ async def _price_shop_cart(
     if shipping_address is not None:
         shipping_amount = await shop_shipping.quote_for_cart(lines, shipping_address)
 
-    total = round(subtotal - discount_amount + tax_amount + shipping_amount, 2)
+    # Printify's own real shipping rate (owner request) — a SEPARATE charge
+    # from shipping_amount above: different carrier, different real cost,
+    # never summed into one field. 0.0 for pickup, no choice yet, or a
+    # cart with no Printify line.
+    printify_shipping_amount = 0.0
+    if printify_fulfillment is not None and printify_fulfillment.method == "ship" and printify_fulfillment.shipping_address is not None:
+        # No address yet — never guess a country; create_checkout's own
+        # "address required to ship" check is what should surface for an
+        # incomplete choice, not a confusing "can't price this" from here.
+        printify_lines = [l for l in lines if l.get("printify_fulfilled")]
+        if printify_lines:
+            cart_lines = [
+                _printify_shipping_cart_line(product_cache[l["ref_id"]], l.get("variant_id"), l["quantity"])
+                for l in printify_lines
+            ]
+            country = ((printify_fulfillment.shipping_address.country if printify_fulfillment.shipping_address else None) or "US")
+            printify_shipping_amount = await _estimate_printify_shipping_dollars(cart_lines, country)
+
+    total = round(subtotal - discount_amount + tax_amount + shipping_amount + printify_shipping_amount, 2)
     return {
         "lines": lines, "subtotal": subtotal, "tax_amount": tax_amount,
         "shipping_amount": shipping_amount,
+        "printify_shipping_amount": printify_shipping_amount,
         "shipping_address": shipping_address.model_dump() if shipping_address else None,
         "tax_rate_pct": tax_rate_pct, "total": total,
         "discount_amount": discount_amount,
@@ -45990,6 +46010,42 @@ def _pos_printify_lines(priced: dict, product_cache: Dict[str, dict]) -> List[di
     ]
 
 
+def _printify_shipping_cart_line(product: dict, variant_id: Optional[str], qty: int) -> dict:
+    """One line's shape for printify_client.estimate_cart_shipping_cents —
+    shared by the register's and the online Shop's own shipping-cost
+    pricing (below), so a product missing its Printify mapping is refused
+    with the exact same message regardless of which surface sold it.
+    Raises HTTPException — never silently prices $0 — for a product that
+    isn't actually set up for production yet."""
+    variant = next((v for v in (product.get("variants") or []) if v.get("id") == variant_id), None)
+    if not variant or not variant.get("printify_variant_id") \
+            or not product.get("printify_blueprint_id") or not product.get("printify_print_provider_id"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{product.get('name') or 'This item'} isn't fully set up for shipping yet — "
+                   f"missing its Printify blueprint/print-provider/variant mapping.")
+    return {
+        "blueprint_id": product["printify_blueprint_id"], "print_provider_id": product["printify_print_provider_id"],
+        "variant_id": variant["printify_variant_id"], "quantity": int(qty),
+    }
+
+
+async def _estimate_printify_shipping_dollars(cart_lines: List[dict], country: str) -> float:
+    """The actual printify_client.estimate_cart_shipping_cents call plus
+    its error translation, in dollars — shared so the register and the
+    Shop give an admin/customer the exact same refusal wording for the
+    exact same underlying Printify failure."""
+    try:
+        cents = await printify_client.estimate_cart_shipping_cents(cart_lines, country)
+    except printify_client.PrintifyNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except printify_client.PrintifyApiError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not get a shipping rate from Printify: {exc}")
+    if cents is None:
+        raise HTTPException(status_code=400, detail="Printify can't ship one of these items to that address — try pickup instead.")
+    return round(cents / 100, 2)
+
+
 async def _price_pos_printify_shipping(
     priced: dict, product_cache: Dict[str, dict], printify_fulfillment: Optional[PrintifyFulfillmentIn],
 ) -> float:
@@ -46004,38 +46060,22 @@ async def _price_pos_printify_shipping(
 
     Shared by preview_pos_sale (so the live total the cashier sees already
     includes it before checkout) and _create_pos_sale_impl (which also
-    enforces that a choice was made at all — see there). Raises
-    HTTPException — never silently returns 0.0 — when a line can't actually
-    be priced: an unmapped product, or an address Printify doesn't cover."""
-    if not printify_fulfillment or printify_fulfillment.method != "ship":
+    enforces that a choice was made at all — see there)."""
+    if not printify_fulfillment or printify_fulfillment.method != "ship" or not printify_fulfillment.shipping_address:
+        # No address yet (or pickup, or no choice) — never guess a country.
+        # _create_pos_sale_impl's own "address required to ship" check is
+        # what should surface first for an incomplete choice, not a
+        # confusing "can't price this" from here.
         return 0.0
     printify_lines = _pos_printify_lines(priced, product_cache)
     if not printify_lines:
         return 0.0
-    cart_lines = []
-    for li in printify_lines:
-        product = product_cache[li["product_id"]]
-        variant = next((v for v in (product.get("variants") or []) if v.get("id") == li.get("variant_id")), None)
-        if not variant or not variant.get("printify_variant_id") \
-                or not product.get("printify_blueprint_id") or not product.get("printify_print_provider_id"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"{product.get('name') or 'This item'} isn't fully set up for shipping yet — "
-                       f"missing its Printify blueprint/print-provider/variant mapping.")
-        cart_lines.append({
-            "blueprint_id": product["printify_blueprint_id"], "print_provider_id": product["printify_print_provider_id"],
-            "variant_id": variant["printify_variant_id"], "quantity": int(li["qty"]),
-        })
+    cart_lines = [
+        _printify_shipping_cart_line(product_cache[li["product_id"]], li.get("variant_id"), li["qty"])
+        for li in printify_lines
+    ]
     country = ((printify_fulfillment.shipping_address.country if printify_fulfillment.shipping_address else None) or "US")
-    try:
-        cents = await printify_client.estimate_cart_shipping_cents(cart_lines, country)
-    except printify_client.PrintifyNotConfigured as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except printify_client.PrintifyApiError as exc:
-        raise HTTPException(status_code=400, detail=f"Could not get a shipping rate from Printify: {exc}")
-    if cents is None:
-        raise HTTPException(status_code=400, detail="Printify can't ship one of these items to that address — try pickup instead.")
-    return round(cents / 100, 2)
+    return await _estimate_printify_shipping_dollars(cart_lines, country)
 
 
 async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_employee_or_admin)):

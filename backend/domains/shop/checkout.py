@@ -234,7 +234,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
         priced = await _s("_price_shop_cart")(
             normalized_items, client_id=buyer.client_id,
             discount_code=discount_code, is_guest=buyer.is_guest,
-            shipping_address=shipping_address,
+            shipping_address=shipping_address, printify_fulfillment=printify_fulfillment,
         )
         if priced["total"] <= 0.005:
             raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
@@ -286,6 +286,10 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
             "loyalty_discount_pct": priced.get("loyalty_discount_pct"),
             "shipping_amount": priced.get("shipping_amount") or 0.0,
             "shipping_address": priced.get("shipping_address"),
+            # Printify's own real shipping rate — a SEPARATE charge from
+            # shipping_amount above (FedEx, for self-fulfilled products);
+            # 0.0 for pickup or a cart with no Printify line.
+            "printify_shipping_amount": priced.get("printify_shipping_amount") or 0.0,
             # See ShopPrintifyFulfillmentIn — None whenever the cart has no
             # Printify line, even if one was somehow passed in.
             "printify_fulfillment": printify_fulfillment.model_dump() if (cart_has_printify and printify_fulfillment) else None,
@@ -409,6 +413,18 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
                 "price_data": {
                     "currency": "usd", "product_data": {"name": "Shipping (FedEx Ground)"},
                     "unit_amount": _s("_stripe_amount_cents")(order["shipping_amount"]),
+                },
+                "quantity": 1,
+            })
+        if order.get("printify_shipping_amount"):
+            # A SEPARATE line from the FedEx one above — Printify's own
+            # real shipping rate for a print-on-demand item, never summed
+            # into shipping_amount. Without this, Stripe would charge less
+            # than order["total"] says — the two must always agree.
+            line_items.append({
+                "price_data": {
+                    "currency": "usd", "product_data": {"name": "Shipping (Printify)"},
+                    "unit_amount": _s("_stripe_amount_cents")(order["printify_shipping_amount"]),
                 },
                 "quantity": 1,
             })
