@@ -66,6 +66,74 @@ def test_get_product_fetches_by_id_and_returns_the_parsed_body():
     assert mock_get.call_args.args == ("/shops/shop-1/products/pf-prod-1.json",)
 
 
+# ── Shipping rates ───────────────────────────────────────────────────────────
+
+# Shape confirmed against the real connected account (blueprint 6 / provider
+# 99, a Gildan 5000 tee): the SAME variant set can carry more than one
+# profile for the same country at different costs (alternate tiers), and a
+# distinct, smaller variant set can have its own profile+cost entirely.
+REAL_SHAPE_RATES = {
+    "handling_time": {"value": 10, "unit": "day"},
+    "profiles": [
+        {"variant_ids": [11812, 11813, 12126], "countries": ["US"], "first_item": {"cost": 399, "currency": "USD"}, "additional_items": {"cost": 209, "currency": "USD"}},
+        {"variant_ids": [11812, 11813, 12126], "countries": ["US"], "first_item": {"cost": 495, "currency": "USD"}, "additional_items": {"cost": 240, "currency": "USD"}},
+        {"variant_ids": [11812, 11813, 12126], "countries": ["CA"], "first_item": {"cost": 969, "currency": "USD"}, "additional_items": {"cost": 439, "currency": "USD"}},
+        {"variant_ids": [11812, 11813, 12126], "countries": ["REST_OF_THE_WORLD"], "first_item": {"cost": 1039, "currency": "USD"}, "additional_items": {"cost": 400, "currency": "USD"}},
+        {"variant_ids": [11986, 11987], "countries": ["US"], "first_item": {"cost": 799, "currency": "USD"}, "additional_items": {"cost": 240, "currency": "USD"}},
+    ],
+}
+
+
+def test_get_shipping_rates_refuses_when_not_configured():
+    with patch.object(printify_client, "PRINTIFY_ENABLED", False):
+        with pytest.raises(printify_client.PrintifyNotConfigured):
+            _run(printify_client.get_shipping_rates(6, 99))
+
+
+def test_get_shipping_rates_fetches_the_catalog_endpoint_and_caches_it():
+    fake_resp = _FakeResponse(200, json_body=REAL_SHAPE_RATES)
+    mock_get = AsyncMock(return_value=fake_resp)
+    printify_client._SHIPPING_RATES_CACHE.clear()
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "test-key"), \
+         patch("httpx.AsyncClient.get", mock_get):
+        first = _run(printify_client.get_shipping_rates(6, 99))
+        second = _run(printify_client.get_shipping_rates(6, 99))
+    assert first == REAL_SHAPE_RATES
+    assert second == REAL_SHAPE_RATES
+    mock_get.assert_called_once()  # second call served from cache, no second request
+    assert mock_get.call_args.args == ("/catalog/blueprints/6/print_providers/99/shipping.json",)
+    printify_client._SHIPPING_RATES_CACHE.clear()
+
+
+def test_estimate_shipping_picks_the_cheapest_matching_profile():
+    # Two profiles both cover variant 12126 for US at $3.99 and $4.95 —
+    # the cheaper one must win, matching create_order's own shipping_method=1.
+    result = printify_client.estimate_shipping_cents(REAL_SHAPE_RATES, variant_id=12126, quantity=1, country="US")
+    assert result == {"cost_cents": 399, "currency": "USD"}
+
+
+def test_estimate_shipping_charges_first_item_plus_additional_for_more_than_one():
+    result = printify_client.estimate_shipping_cents(REAL_SHAPE_RATES, variant_id=12126, quantity=3, country="US")
+    assert result["cost_cents"] == 399 + 2 * 209
+
+
+def test_estimate_shipping_falls_back_to_rest_of_the_world():
+    result = printify_client.estimate_shipping_cents(REAL_SHAPE_RATES, variant_id=12126, quantity=1, country="DE")
+    assert result == {"cost_cents": 1039, "currency": "USD"}
+
+
+def test_estimate_shipping_returns_none_for_an_unknown_variant():
+    assert printify_client.estimate_shipping_cents(REAL_SHAPE_RATES, variant_id="not-a-real-variant", quantity=1, country="US") is None
+
+
+def test_estimate_shipping_uses_the_right_profile_for_a_different_variant_subset():
+    # Variant 11986 only appears in the $7.99 profile — must never fall
+    # through to the $3.99 one just because it's cheaper elsewhere.
+    result = printify_client.estimate_shipping_cents(REAL_SHAPE_RATES, variant_id=11986, quantity=1, country="US")
+    assert result == {"cost_cents": 799, "currency": "USD"}
+
+
 def test_get_product_raises_on_a_non_2xx_response():
     fake_resp = _FakeResponse(404, text="not found")
     mock_get = AsyncMock(return_value=fake_resp)

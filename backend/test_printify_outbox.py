@@ -283,7 +283,7 @@ def test_register_webhooks_refuses_a_user_without_pricing_permission():
 # ── Admin screen: "Fetch from Printify" variant picker ──────────────────────
 
 _RAW_PRODUCT = {
-    "id": "pf-prod-1", "title": "Trail Dog Hoodie",
+    "id": "pf-prod-1", "title": "Trail Dog Hoodie", "blueprint_id": 6, "print_provider_id": 99,
     "images": [{"src": "https://example.com/hoodie-back.jpg"}, {"src": "https://example.com/hoodie-front.jpg", "is_default": True}],
     "variants": [
         {"id": 111, "title": "Black / S", "price": 1999, "is_enabled": True, "is_available": True},
@@ -310,6 +310,8 @@ def test_fetch_printify_product_returns_only_enabled_variants_in_dollars():
     black_xl = next(v for v in result["variants"] if v["id"] == "113")
     assert black_xl["price"] == 21.94
     assert black_xl["is_available"] is False
+    assert result["blueprint_id"] == 6
+    assert result["print_provider_id"] == 99
 
 
 def test_fetch_printify_product_refuses_a_user_without_pricing_permission():

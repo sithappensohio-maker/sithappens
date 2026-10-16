@@ -128,6 +128,31 @@ def test_create_keeps_price_variants_and_forces_off_stock_tracking():
         _cleanup([p["id"]])
 
 
+def test_create_persists_the_blueprint_and_print_provider_ids():
+    # Captured by the "Fetch Sizes" picker (GET /admin/printify/products/{id})
+    # alongside the variant ids — needed later to look up real shipping cost.
+    p = _create(printify_blueprint_id=6, printify_print_provider_id=99)
+    try:
+        assert p["printify_blueprint_id"] == 6
+        assert p["printify_print_provider_id"] == 99
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_switching_away_from_printify_clears_the_blueprint_and_provider_ids():
+    p = _create(printify_blueprint_id=6, printify_print_provider_id=99)
+    try:
+        updated = run(server.update_pos_product(
+            p["id"],
+            server.PosProductIn(name=f"{TAG} Hoodie", sales_destination="internal", price=40.0),
+            ADMIN,
+        ))
+        assert updated["printify_blueprint_id"] is None
+        assert updated["printify_print_provider_id"] is None
+    finally:
+        _cleanup([p["id"]])
+
+
 def test_update_re_validates_printify_variants():
     p = _create()
     try:

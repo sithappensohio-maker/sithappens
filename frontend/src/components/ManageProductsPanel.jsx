@@ -33,7 +33,7 @@ const BLANK_FORM = {
   // Printify POD — the Printify product id this listing submits production
   // orders against. Each variant row carries its own printify_variant_id
   // (see the Options section below) instead of a plain barcode SKU.
-  printify_product_id: "",
+  printify_product_id: "", printify_blueprint_id: null, printify_print_provider_id: null,
   // Public no-account storefront — see the "Public Storefront" section of
   // the editor below. guest_cart_allowed never permits guest checkout, only
   // temporary local cart placement.
@@ -202,7 +202,7 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
   const confirm = () => {
     const chosen = (product?.variants || []).filter((v) => checked.has(v.id) && !already.has(v.id));
     if (chosen.length === 0) return;
-    onAdd(chosen);
+    onAdd(chosen, { blueprintId: product.blueprint_id ?? null, printProviderId: product.print_provider_id ?? null });
     onClose();
   };
 
@@ -316,7 +316,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
 
   // "Fetch from Printify" — see PrintifyVariantPickerModal above.
   const [showPrintifyPicker, setShowPrintifyPicker] = useState(false);
-  const addPrintifyVariants = (chosen) => {
+  const addPrintifyVariants = (chosen, { blueprintId, printProviderId } = {}) => {
     setForm((f) => {
       const basePrice = f.price !== "" && f.price != null ? Number(f.price) : null;
       const rows = chosen.map((v, i) => ({
@@ -332,7 +332,14 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
       // — still fully editable, just one less manual step for the common
       // case where every size costs the same.
       const nextPrice = basePrice == null && chosen.length > 0 ? String(chosen[0].price) : f.price;
-      return { ...f, price: nextPrice, variants: [...(f.variants || []), ...rows] };
+      return {
+        ...f, price: nextPrice, variants: [...(f.variants || []), ...rows],
+        // Identifies the print method (blank garment + printer) — needed
+        // later to look up real shipping cost. Captured once, here, so
+        // nobody ever has to type a blueprint/print-provider id by hand.
+        printify_blueprint_id: blueprintId ?? f.printify_blueprint_id,
+        printify_print_provider_id: printProviderId ?? f.printify_print_provider_id,
+      };
     });
     toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
   };
@@ -1033,6 +1040,8 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_display_price: p.shopify_display_price != null ? String(p.shopify_display_price) : "",
       shopify_from_price: !!p.shopify_from_price,
       printify_product_id: p.printify_product_id || "",
+      printify_blueprint_id: p.printify_blueprint_id ?? null,
+      printify_print_provider_id: p.printify_print_provider_id ?? null,
       publicly_visible: !!p.publicly_visible, guest_cart_allowed: !!p.guest_cart_allowed,
       show_public_price: p.show_public_price !== false,
       requires_approval: !!p.requires_approval, requires_completed_onboarding: !!p.requires_completed_onboarding,
@@ -1102,6 +1111,8 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
       shopify_from_price: isShopify && form.shopify_from_price,
       printify_product_id: isPrintify ? form.printify_product_id.trim() : null,
+      printify_blueprint_id: isPrintify ? form.printify_blueprint_id : null,
+      printify_print_provider_id: isPrintify ? form.printify_print_provider_id : null,
       // A Shopify listing may be public: it is a display-only card that sends
       // the visitor to Shopify. Everything below it stays internal-only,
       // because none of it describes buying something here.

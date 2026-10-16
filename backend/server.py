@@ -44507,6 +44507,13 @@ class PosProductIn(BaseModel):
     # orders against. Required when sales_destination == "printify"; each
     # variant separately carries its own printify_variant_id (the size).
     printify_product_id: Optional[str] = Field(default=None, max_length=80)
+    # Captured alongside printify_product_id by the "Fetch Sizes" picker
+    # (GET /admin/printify/products/{id}) — identifies the print method
+    # (blank garment + who prints it) this listing uses, so a real shipping
+    # cost can be looked up later without re-fetching the whole Printify
+    # product. Never entered by hand.
+    printify_blueprint_id: Optional[int] = None
+    printify_print_provider_id: Optional[int] = None
     # Front Desk checkout integrity audit — per-item taxable configuration,
     # replacing the old hardcoded "kind == product" tax rule. Defaults True
     # (physical retail goods) so every existing product keeps its current
@@ -44644,6 +44651,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "shopify_display_price": round(float(body.shopify_display_price), 2) if body.shopify_display_price is not None else None,
             "shopify_from_price": bool(body.shopify_from_price),
             "printify_product_id": None,
+            "printify_blueprint_id": None,
+            "printify_print_provider_id": None,
             "featured": bool(body.featured),
             "price": 0.0,
             "cost": None,
@@ -44660,6 +44669,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "shopify_display_price": None,
             "shopify_from_price": False,
             "printify_product_id": printify_product_id,
+            "printify_blueprint_id": body.printify_blueprint_id,
+            "printify_print_provider_id": body.printify_print_provider_id,
             "featured": bool(body.featured),
             "price": round(float(body.price), 2),
             "cost": round(float(body.cost), 2) if body.cost is not None else None,
@@ -44672,6 +44683,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
         "shopify_display_price": None,
         "shopify_from_price": False,
         "printify_product_id": None,
+        "printify_blueprint_id": None,
+        "printify_print_provider_id": None,
         "featured": bool(body.featured),
         "price": round(float(body.price), 2),
         "cost": round(float(body.cost), 2) if body.cost is not None else None,
@@ -44807,6 +44820,14 @@ async def get_printify_product_variants(printify_product_id: str, user: dict = D
         "title": product.get("title") or "",
         "image": default_image or any_image,
         "variants": variants,
+        # Identifies the print method this listing uses (blueprint = the
+        # blank garment, print_provider = who prints it) — needed to look
+        # up its real shipping cost table (domains/printify/client.
+        # get_shipping_rates); stored on the product so a later online-Shop
+        # checkout never has to re-fetch the whole Printify product just to
+        # price shipping.
+        "blueprint_id": product.get("blueprint_id"),
+        "print_provider_id": product.get("print_provider_id"),
     }
 
 

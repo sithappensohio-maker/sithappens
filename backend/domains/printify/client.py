@@ -29,7 +29,7 @@ import hmac
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -194,6 +194,72 @@ async def get_product(printify_product_id: str) -> Dict[str, Any]:
     if resp.status_code >= 300:
         raise PrintifyApiError(resp.status_code, resp.text)
     return resp.json()
+
+
+# Catalog shipping tables, keyed by (blueprint_id, print_provider_id) — see
+# get_shipping_rates. This data is static per blueprint/provider combo (it
+# describes a print method's shipping cost, not any particular order) and
+# the catalog endpoints share a tighter 100-requests/minute limit than the
+# rest of the API, so it's cached for the life of the process rather than
+# refetched on every cart price or checkout.
+_SHIPPING_RATES_CACHE: Dict[Tuple[int, int], Dict[str, Any]] = {}
+
+
+async def get_shipping_rates(blueprint_id: int, print_provider_id: int) -> Dict[str, Any]:
+    """Fetches one blueprint+print-provider's real shipping cost table:
+    a handling_time plus a list of country-keyed "profiles", each a flat
+    first-item cost and a separate per-additional-item cost, in cents.
+
+    Printify has no live per-cart/per-order shipping-quote endpoint — this
+    catalog table is the closest real number available, and it's the one
+    estimate_shipping_cents() reads from. Verified against the real
+    connected account: the same blueprint+provider can carry more than one
+    profile for the very same country (e.g. $3.99 and $4.95 first-item
+    costs both listed for US, covering the identical variant set) — these
+    are alternate shipping tiers (standard vs. a faster one), not a
+    variant partition, which is why estimate_shipping_cents() picks the
+    CHEAPEST matching one: that's the "standard" tier create_order's own
+    hardcoded shipping_method=1 actually submits against."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    key = (int(blueprint_id), int(print_provider_id))
+    cached = _SHIPPING_RATES_CACHE.get(key)
+    if cached is not None:
+        return cached
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.get(f"/catalog/blueprints/{key[0]}/print_providers/{key[1]}/shipping.json", headers=_headers())
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text)
+    data = resp.json()
+    _SHIPPING_RATES_CACHE[key] = data
+    return data
+
+
+def estimate_shipping_cents(rates: Dict[str, Any], *, variant_id: Any, quantity: int, country: str) -> Optional[Dict[str, Any]]:
+    """Given a get_shipping_rates() payload, the cost (in cents) to ship
+    `quantity` of one variant to `country` — the cheapest profile that
+    actually covers this variant, for this country, falling back to the
+    REST_OF_THE_WORLD profile when the country has none of its own. A pure
+    function (no network) so cart pricing can call it per line without
+    awaiting anything beyond the one cached get_shipping_rates() call.
+    Returns None when nothing covers this variant+country at all — the
+    caller must treat that as "can't price this," never as free shipping."""
+    vid = str(variant_id)
+    profiles = rates.get("profiles") or []
+
+    def _covers(p: Dict[str, Any], countries: List[str]) -> bool:
+        return vid in {str(v) for v in (p.get("variant_ids") or [])} and bool(set(countries) & set(p.get("countries") or []))
+
+    candidates = [p for p in profiles if _covers(p, [country])]
+    if not candidates:
+        candidates = [p for p in profiles if _covers(p, ["REST_OF_THE_WORLD"])]
+    if not candidates:
+        return None
+    cheapest = min(candidates, key=lambda p: p["first_item"]["cost"])
+    first_cost = cheapest["first_item"]["cost"]
+    additional_cost = cheapest["additional_items"]["cost"]
+    total_cents = first_cost + max(0, int(quantity) - 1) * additional_cost
+    return {"cost_cents": total_cents, "currency": cheapest["first_item"].get("currency", "USD")}
 
 
 def _now_iso() -> str:

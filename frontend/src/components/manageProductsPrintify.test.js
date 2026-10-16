@@ -95,6 +95,7 @@ describe("Fetch Sizes from Printify", () => {
 
   const PRODUCT = {
     id: "pf-prod-1", title: "Trail Dog Hoodie", image: "https://example.com/hoodie.jpg",
+    blueprint_id: 6, print_provider_id: 99,
     variants: [
       { id: "pf-var-s", title: "Black / S", price: 19.99, is_available: true },
       { id: "pf-var-m", title: "Black / M", price: 19.99, is_available: true },
@@ -138,6 +139,8 @@ describe("Fetch Sizes from Printify", () => {
     expect(s.name).toBe("Black / S");
     expect(s.price_override).toBe("19.99"); // differs from BASE_FORM's $40 base price — kept explicit
     expect(xl.price_override).toBe("21.94"); // also differs — kept explicit
+    expect(current.printify_blueprint_id).toBe(6);
+    expect(current.printify_print_provider_id).toBe(99);
     expect(toast.success).toHaveBeenCalled();
     w.cleanup();
   });
