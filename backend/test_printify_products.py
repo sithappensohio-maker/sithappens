@@ -367,10 +367,10 @@ SHIP_ADDRESS = {
 }
 
 
-def _sale_body(product_id, variant_id, fulfillment=None, qty=1):
+def _sale_body(product_id, variant_id, fulfillment=None, qty=1, personalization=None):
     return server.PosSaleIn(
         client_id=None,
-        lines=[server.PosSaleLineIn(kind="retail", product_id=product_id, variant_id=variant_id, qty=qty)],
+        lines=[server.PosSaleLineIn(kind="retail", product_id=product_id, variant_id=variant_id, qty=qty, personalization=personalization)],
         tenders=[server.PosSaleTenderIn(method="cash", amount=40.0 * qty, tendered_amount=40.0 * qty)],
         idempotency_key=f"test-{uuid.uuid4()}",
         printify_fulfillment=fulfillment,
@@ -481,3 +481,155 @@ def test_register_sale_with_no_printify_items_never_requires_fulfillment_or_queu
         if sale_id:
             run(server.db.pos_sales.delete_one({"id": sale_id}))
         _cleanup([internal["id"]])
+
+
+# ── Personalization (text layers — e.g. a pet tag's Name/Phone) ────────────
+
+PET_TAG_PRINT_AREAS = [{
+    "variant_ids": ["pf-var-s"],
+    "placeholders": [
+        {"position": "front", "images": [
+            {"id": "logo-id", "name": "logo.png", "type": "image/png", "height": 1254, "width": 1254,
+             "x": 0.5, "y": 0.5, "scale": 0.6, "angle": 0, "layerType": "image"},
+        ], "decoration_method": "dye-sublimation"},
+        {"position": "back", "images": [
+            {"id": "name-layer", "name": "Name", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.35,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Name", "layerType": "text"},
+            {"id": "phone-layer", "name": "Phone", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.5,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Phone", "layerType": "text"},
+        ], "decoration_method": "dye-sublimation"},
+    ],
+    "background": "#ffffff", "canvas": False,
+}]
+
+
+def _create_personalized(**overrides):
+    return _create(printify_print_areas=PET_TAG_PRINT_AREAS, **overrides)
+
+
+def test_create_derives_personalization_fields_from_print_areas():
+    p = _create_personalized()
+    try:
+        assert p["printify_personalization_fields"] == ["Name", "Phone"]
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_create_with_no_print_areas_has_no_personalization_fields():
+    p = _create()
+    try:
+        assert p["printify_personalization_fields"] == []
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_catalog_exposes_personalization_fields():
+    p = _create_personalized()
+    try:
+        catalog = run(server.get_register_catalog(client_id=None, user=ADMIN))
+        item = next(i for i in catalog["items"] if i["id"] == p["id"])
+        assert item["personalization_fields"] == ["Name", "Phone"]
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_pricing_refuses_a_personalized_line_missing_fields():
+    p = _create_personalized()
+    try:
+        variant_id = p["variants"][0]["id"]
+        line = server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id,
+                                     personalization={"Name": "Rex"})  # Phone missing
+        try:
+            run(server._price_pos_cart([line], None, can_price=True, client_id=None))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "Phone" in e.detail
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_pricing_accepts_and_carries_personalization():
+    p = _create_personalized()
+    try:
+        variant_id = p["variants"][0]["id"]
+        line = server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id,
+                                     personalization={"Name": " Rex ", "Phone": "330-555-0101"})
+        priced, _caches = run(server._price_pos_cart([line], None, can_price=True, client_id=None))
+        li = priced["line_items"][0]
+        # Trimmed, and only the fields the product actually declared.
+        assert li["personalization"] == {"Name": "Rex", "Phone": "330-555-0101"}
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_sale_queues_an_outbox_row_carrying_personalization_and_the_template():
+    p = _create_personalized()
+    sale_id = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        fulfillment = server.PrintifyFulfillmentIn(method="pickup")
+        body = _sale_body(p["id"], variant_id, fulfillment, personalization={"Name": "Rex", "Phone": "330-555-0101"})
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+            result = run(server.create_pos_sale(body, ADMIN))
+        sale_id = result["pos_sale_id"]
+        row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
+        li = row["line_items"][0]
+        assert li["personalization"] == {"Name": "Rex", "Phone": "330-555-0101"}
+        assert li["printify_blueprint_id"] == p["printify_blueprint_id"]
+        assert li["printify_print_provider_id"] == p["printify_print_provider_id"]
+        assert li["printify_print_areas"] == PET_TAG_PRINT_AREAS
+        assert li["unit_price_cents"] == 4000  # $40.00 base price, no variant override
+    finally:
+        if sale_id:
+            run(server.db.pos_sales.delete_one({"id": sale_id}))
+            _cleanup_outbox([sale_id])
+        _cleanup([p["id"]])
+
+
+def test_client_shop_checkout_refuses_a_personalized_line_missing_fields():
+    p = _create_personalized(show_online=True)
+    try:
+        variant_id = next(v["id"] for v in p["variants"] if v["name"] == "Small")
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id,
+                                           personalization={"Phone": "330-555-0101"})  # Name missing
+        try:
+            run(server._price_shop_cart([cart_item], client_id=None))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "Name" in e.detail
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_client_shop_checkout_prices_a_personalized_line_and_carries_its_text():
+    p = _create_personalized(show_online=True)
+    try:
+        variant_id = next(v["id"] for v in p["variants"] if v["name"] == "Small")
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id,
+                                           personalization={"Name": "Rex", "Phone": "330-555-0101"})
+        priced = run(server._price_shop_cart([cart_item], client_id=None))
+        assert priced["lines"][0]["personalization"] == {"Name": "Rex", "Phone": "330-555-0101"}
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_normalize_cart_lines_keeps_two_differently_personalized_lines_separate():
+    items = [
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=1, variant_id="v1", personalization={"Name": "Rex"}),
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=1, variant_id="v1", personalization={"Name": "Buddy"}),
+    ]
+    lines = server._normalize_cart_lines(items)
+    assert len(lines) == 2
+    names = sorted(l.personalization["Name"] for l in lines)
+    assert names == ["Buddy", "Rex"]
+
+
+def test_normalize_cart_lines_refuses_quantity_greater_than_one_for_a_personalized_line():
+    items = [server.ShopCartItemIn(kind="product", ref_id="p1", quantity=2, variant_id="v1", personalization={"Name": "Rex"})]
+    try:
+        server._normalize_cart_lines(items)
+        assert False, "should have been refused"
+    except HTTPException as e:
+        assert e.status_code == 422

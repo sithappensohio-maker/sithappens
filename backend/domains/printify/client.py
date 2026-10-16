@@ -17,10 +17,22 @@ Field shapes below follow Printify's documented Create an Order endpoint
 (https://developers.printify.com/#create-a-new-order), the "existing
 product" line-item form (product_id + variant_id) — the form used when the
 product was already created in the Printify dashboard and its id/variant
-ids were copied into this app's product config, not the print-area/
-blueprint form used to create a brand-new Printify product from this call.
-This has not been exercised against a live Printify account; verify field
-names against the current API reference once PRINTIFY_API_KEY is set.
+ids were copied into this app's product config. Verified end-to-end
+against the real connected account (shop/orders/shipping/products/uploads
+endpoints all exercised for real).
+
+Personalization (see create_personalized_product) is the one case that
+submits the OTHER form: a brand-new one-off product, built from an
+existing listing's own print_areas as a template. Printify's own
+"variable text" layers (layerType="text" in a product's print_areas)
+turned out NOT to be writable through the public product-creation API —
+POST /products.json refuses a text layer's id with "Provided images do
+not exist" regardless of what's sent, confirmed against the real account.
+So personalized text is rendered to a flat PNG ourselves (Pillow) and
+submitted as an ordinary uploaded image instead, which IS a documented,
+working path (also confirmed live) — the one Printify mechanism that
+could have avoided that rendering step turned out not to be usable from
+outside Printify's own product editor.
 """
 from __future__ import annotations
 
@@ -296,15 +308,34 @@ async def _hold_outbox_row(db, row: dict, error: str) -> None:
     )
 
 
+async def _resolve_outbox_line(li: Dict[str, Any]) -> PrintifyLineItem:
+    """One priced outbox line → the product_id/variant_id it actually
+    submits against. A personalized line (li["personalization"] set)
+    builds a fresh one-off product first (create_personalized_product) and
+    submits against THAT instead of the template listing — every other
+    line submits against its own stored printify_product_id/variant_id
+    unchanged, exactly as before personalization existed."""
+    if li.get("personalization"):
+        product = await create_personalized_product(
+            title=f"Personalized — {li['name']}"[:255],
+            blueprint_id=li["printify_blueprint_id"], print_provider_id=li["printify_print_provider_id"],
+            variant_id=li["printify_variant_id"],
+            variant_price_cents=int(li.get("unit_price_cents") or 0),
+            print_areas_template=li.get("printify_print_areas") or [],
+            personalization=li["personalization"],
+        )
+        return PrintifyLineItem(str(product["id"]), str(product["variants"][0]["id"]), li["quantity"])
+    return PrintifyLineItem(li["printify_product_id"], li["printify_variant_id"], li["quantity"])
+
+
 async def process_outbox(db) -> Dict[str, int]:
     """Submits every due printify_order_outbox row to Printify. Runs every
     scheduler tick (see server.py's _scheduler_jobs) — a plain no-op return
     when Printify isn't configured yet, so it's always safe to register
     regardless of whether an admin has set it up. Each row's own
     (source, source_id) is where the order actually came from — a register
-    sale ("pos_sale"); Printify items are register-only, online ordering
-    stays entirely on Shopify — this function only reads the outbox queue,
-    never that source collection directly."""
+    sale or a paid Shop order — this function only reads the outbox queue,
+    never those source collections directly."""
     if not PRINTIFY_ENABLED:
         return {"skipped": 1, "submitted": 0, "held": 0, "checked": 0}
     now = _now_iso()
@@ -323,13 +354,20 @@ async def process_outbox(db) -> Dict[str, int]:
                 held += 1
                 continue
 
-        line_items = [
-            PrintifyLineItem(li["printify_product_id"], li["printify_variant_id"], li["quantity"])
-            for li in row["line_items"]
-        ]
-        missing = [li["name"] for li, pli in zip(row["line_items"], line_items) if not pli.product_id or not pli.variant_id]
+        missing = [li["name"] for li in row["line_items"] if not li.get("personalization") and (not li.get("printify_product_id") or not li.get("printify_variant_id"))]
         if missing:
             await _hold_outbox_row(db, row, f"Missing Printify product/variant mapping for: {', '.join(missing)}.")
+            held += 1
+            continue
+
+        try:
+            # Built INSIDE the try — a personalized line's one-off-product
+            # creation is a real network call that can fail (a bad upload,
+            # a Printify outage) exactly like create_order itself can, and
+            # must back off/retry the same way rather than crashing the tick.
+            line_items = [await _resolve_outbox_line(li) for li in row["line_items"]]
+        except Exception as exc:
+            await _hold_outbox_row(db, row, str(exc))
             held += 1
             continue
 
@@ -447,3 +485,155 @@ async def ensure_webhooks_registered(callback_url: str) -> Dict[str, Any]:
                 raise PrintifyApiError(resp.status_code, resp.text)
             created.append(topic)
     return {"created": created, "already_registered": already}
+
+
+# ── Personalization — a flattened one-off product per order ────────────────
+#
+# See the module docstring for why this renders text itself rather than
+# using Printify's own "variable text" layers: that API path was tried
+# first against the real account and refused ("Provided images do not
+# exist" for the text layer's own id, every time), while re-submitting a
+# flattened PNG through the ordinary upload+image-placeholder path worked
+# on the first attempt. This trades pixel-perfect font matching (Printify's
+# own "Open Sans" vs. Pillow's bundled default font) for something that
+# reliably ships.
+
+def personalization_field_names(print_areas: List[Dict[str, Any]]) -> List[str]:
+    """Every distinct variable-text layer name across a product's
+    print_areas (e.g. ["Name", "Phone", "Address"]), in first-seen order —
+    what the admin product editor offers to fetch, and what the register/
+    Shop then ask a customer to fill in."""
+    seen: List[str] = []
+    for pa in print_areas or []:
+        for ph in pa.get("placeholders") or []:
+            for img in ph.get("images") or []:
+                name = img.get("name")
+                if img.get("layerType") == "text" and name and name not in seen:
+                    seen.append(name)
+    return seen
+
+
+def render_personalization_image(text_layers: List[Dict[str, Any]], values: Dict[str, str]) -> bytes:
+    """Flattens a placeholder's text layers (Printify's own position/size
+    hints, Pillow's bundled scalable font — see module docstring) onto one
+    PNG, each layer's own `input_text` placeholder replaced by the
+    matching value from `values` (by layer `name`). Pure/no network —
+    testable without Printify, and reused by both the register and the
+    Shop checkout paths, which both only ever hand this real customer
+    text, already validated non-blank upstream.
+
+    Canvas size follows the layers' own declared width (every text layer
+    on a real Printify personalizable product shares one — confirmed
+    against the account this was built against), square, falling back to
+    1000px for a product whose layers happen not to declare one."""
+    from PIL import Image, ImageDraw, ImageFont
+    import io as _io
+
+    size = int(max((lyr.get("width") or 0) for lyr in text_layers) or 1000)
+    im = Image.new("RGB", (size, size), "white")
+    draw = ImageDraw.Draw(im)
+    for lyr in text_layers:
+        name = lyr.get("name") or ""
+        text = (values.get(name) or lyr.get("input_text") or "").strip()
+        if not text:
+            continue
+        x = float(lyr.get("x", 0.5)) * size
+        y = float(lyr.get("y", 0.5)) * size
+        # Printify's own font_size is in the SAME pixel space as its width/
+        # height hints, but the print area Printify actually maps this
+        # flattened image onto (see _personalized_print_areas) turned out
+        # to be LARGER than the canvas inferred from those hints — text
+        # sized to merely fit the canvas still printed oversized and
+        # clipped, confirmed against a real rendered mockup. 55% of the
+        # canvas width, not ~92%, is the margin that actually held up.
+        base_font_size = int(lyr.get("font_size") or 60)
+        max_width = size * 0.55
+        font_size = base_font_size
+        font = ImageFont.load_default(size=max(10, font_size))
+        while font_size > 10:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            if (bbox[2] - bbox[0]) <= max_width:
+                break
+            font_size = int(font_size * 0.9)
+            font = ImageFont.load_default(size=max(10, font_size))
+        draw.text((x, y), text, fill=lyr.get("font_color") or "black", anchor="mm", font=font)
+    buf = _io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def upload_image(file_name: str, contents_b64: str) -> Dict[str, Any]:
+    """Uploads one image (base64-encoded contents) to this shop's Printify
+    media library, returning its id/src — the id is what a print_areas
+    placeholder references. Printify deduplicates by content, so uploading
+    the same bytes twice is safe and cheap (confirmed against the real
+    account: a second upload of identical bytes returns the SAME id)."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.post(
+            "/uploads/images.json",
+            json={"file_name": file_name, "contents": contents_b64},
+            headers=_headers(),
+        )
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text)
+    return resp.json()
+
+
+async def _personalized_print_areas(print_areas: List[Dict[str, Any]], personalization: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Returns a deep copy of `print_areas` with every placeholder's text
+    layers replaced by one flattened, freshly-uploaded image — everything
+    else (a placeholder with no text layers, e.g. a fixed front logo) is
+    carried through byte-for-byte."""
+    import base64 as _b64
+    import copy
+
+    out = copy.deepcopy(print_areas or [])
+    for pa in out:
+        for ph in pa.get("placeholders") or []:
+            images = ph.get("images") or []
+            text_layers = [img for img in images if img.get("layerType") == "text"]
+            if not text_layers:
+                continue
+            other_layers = [img for img in images if img.get("layerType") != "text"]
+            png_bytes = render_personalization_image(text_layers, personalization)
+            uploaded = await upload_image(
+                f"personalized-{ph.get('position') or 'area'}.png", _b64.b64encode(png_bytes).decode(),
+            )
+            ph["images"] = other_layers + [{"id": uploaded["id"], "x": 0.5, "y": 0.5, "scale": 1, "angle": 0}]
+    return out
+
+
+async def create_personalized_product(
+    *, title: str, blueprint_id: int, print_provider_id: int,
+    variant_id: Any, variant_price_cents: int,
+    print_areas_template: List[Dict[str, Any]], personalization: Dict[str, str],
+) -> Dict[str, Any]:
+    """Creates a brand-new, one-off Printify product for a single
+    personalized order: the same blueprint/print-provider/variant as the
+    listing a customer actually bought, but with its text layers flattened
+    into a real image carrying THEIR text (see render_personalization_image
+    and the module docstring for why). Returns the created product — its
+    `id` and this one variant's `id` are what the order is actually
+    submitted against, in place of the template listing's own ids.
+
+    Left live in the account rather than deleted after ordering — a cheap,
+    accurate record of exactly what was printed for this order, the same
+    role a kept invoice/receipt plays everywhere else in this app."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    print_areas = await _personalized_print_areas(print_areas_template, personalization)
+    body = {
+        "title": title[:255],
+        "description": "Personalized order — created automatically, one per sale.",
+        "blueprint_id": blueprint_id,
+        "print_provider_id": print_provider_id,
+        "variants": [{"id": variant_id, "price": variant_price_cents, "is_enabled": True}],
+        "print_areas": print_areas,
+    }
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.post(f"/shops/{PRINTIFY_SHOP_ID}/products.json", json=body, headers=_headers())
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text)
+    return resp.json()

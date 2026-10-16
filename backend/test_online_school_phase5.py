@@ -752,7 +752,7 @@ def test_shop_cart_item_model_has_no_client_controlled_price_or_fulfillment_fiel
     # is the same shape as ref_id — an identifier _price_shop_cart looks up
     # against the real product's own stored variants; the price it resolves
     # to is the variant's own price_override, never anything the client sends.
-    assert fields == {"kind", "ref_id", "quantity", "dog_id", "variant_id",
+    assert fields == {"kind", "ref_id", "quantity", "dog_id", "variant_id", "personalization",
                       "recipient_email", "recipient_name", "gift_message"}
     assert "price" not in fields
     assert "unit_price" not in fields

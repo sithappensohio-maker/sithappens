@@ -920,6 +920,11 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
             "low_stock_threshold": p.get("low_stock_threshold") if track else None,
             "taxable": bool(p.get("taxable", True)),
             "tax_exempt_reason": p.get("tax_exempt_reason"),
+            # Which free-text fields (e.g. "Name", "Phone") this listing
+            # needs filled in before it can be sold — empty for anything
+            # that isn't a personalized Printify item. See price_pos_cart's
+            # own validation of these against the line's own personalization.
+            "personalization_fields": p.get("printify_personalization_fields") or [],
             # Variant prices don't go through client-tier resolution (see
             # price_pos_cart) — just the variant's own override, or the
             # product's plain list price, same rule in both places.
@@ -1112,6 +1117,18 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                 product_cache[line.product_id] = product
             qty = round(float(line.qty or 1), 3)
             taxable = bool(product.get("taxable", True))
+            # Printify personalization (e.g. a pet tag's Name/Phone/Address)
+            # — required non-blank before this line can be priced at all,
+            # same "refuse at pricing time, not at Printify's expense"
+            # discipline every other line-level requirement here follows.
+            required_fields = product.get("printify_personalization_fields") or []
+            personalization = None
+            if required_fields:
+                supplied = line.personalization or {}
+                missing = [f for f in required_fields if not (supplied.get(f) or "").strip()]
+                if missing:
+                    raise HTTPException(status_code=400, detail=f"{product.get('name') or 'This item'} needs: {', '.join(missing)}.")
+                personalization = {f: supplied[f].strip() for f in required_fields}
             if line.variant_id:
                 variant = next((v for v in (product.get("variants") or []) if v.get("id") == line.variant_id), None)
                 if not variant:
@@ -1130,6 +1147,7 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                     "qty": qty, "unit_price": unit_price, "amount": amount,
                     "list_price": unit_price, "has_price_override": False, "price_override_id": None,
                     "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
+                    "personalization": personalization,
                 })
                 qty_by_variant[(product["id"], variant["id"])] = qty_by_variant.get((product["id"], variant["id"]), 0) + qty
             else:
@@ -1146,6 +1164,7 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                     "has_price_override": has_override,
                     "price_override_id": pricing["override_id"],
                     "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
+                    "personalization": personalization,
                 })
                 qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
         elif line.kind == "gift_card":

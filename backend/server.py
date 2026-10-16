@@ -42108,6 +42108,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "price": list_price,
                 "from_price": True,
                 "variants": variant_rows,
+                "personalization_fields": p.get("printify_personalization_fields") or [],
                 "in_stock": len(variant_rows) > 0,
                 "image_id": p.get("image_id"),
                 "image_ids": shop_media_services.gallery_ids(p),
@@ -42997,6 +42998,7 @@ async def _price_shop_cart(
     product_cache: Dict[str, dict] = {}
     for cart_item in items:
         qty = int(cart_item.quantity)
+        personalization = None  # only ever set below, for a "product" line that needs it
         if cart_item.kind == "product":
             product = product_cache.get(cart_item.ref_id)
             if product is None:
@@ -43024,6 +43026,18 @@ async def _price_shop_cart(
                     status_code=400,
                     detail="Choose a size for this item before adding it to your cart.",
                 )
+            # Printify personalization (e.g. a pet tag's Name/Phone/Address)
+            # — same requirement, same reasoning, as the register's own
+            # price_pos_cart: required non-blank before this line can be
+            # priced, so a customer never pays for a tag that can't be made.
+            required_fields = product.get("printify_personalization_fields") or []
+            personalization = None
+            if required_fields:
+                supplied = getattr(cart_item, "personalization", None) or {}
+                missing = [f for f in required_fields if not (supplied.get(f) or "").strip()]
+                if missing:
+                    raise HTTPException(status_code=400, detail=f"{product.get('name') or 'This item'} needs: {', '.join(missing)}.")
+                personalization = {f: supplied[f].strip() for f in required_fields}
             if cart_item.variant_id:
                 variant = next((v for v in (product.get("variants") or []) if v.get("id") == cart_item.variant_id), None)
                 if not variant:
@@ -43098,6 +43112,7 @@ async def _price_shop_cart(
         line = {
             "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
             "variant_id": getattr(cart_item, "variant_id", None) if cart_item.kind == "product" else None,
+            "personalization": personalization,
             "recipient_email": (getattr(cart_item, "recipient_email", None) or "").strip(),
             "recipient_name": (getattr(cart_item, "recipient_name", None) or "").strip(),
             "gift_message": (getattr(cart_item, "gift_message", None) or "").strip(),
@@ -44591,6 +44606,11 @@ class PosProductIn(BaseModel):
     # product. Never entered by hand.
     printify_blueprint_id: Optional[int] = None
     printify_print_provider_id: Optional[int] = None
+    # The product's own raw print_areas, captured at the same "Fetch Sizes"
+    # moment — the template process_outbox builds a personalized one-off
+    # product from (see domains/printify/client.create_personalized_product).
+    # None for a listing with nothing personalizable.
+    printify_print_areas: Optional[List[Dict[str, Any]]] = None
     # Front Desk checkout integrity audit — per-item taxable configuration,
     # replacing the old hardcoded "kind == product" tax rule. Defaults True
     # (physical retail goods) so every existing product keeps its current
@@ -44730,6 +44750,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "printify_product_id": None,
             "printify_blueprint_id": None,
             "printify_print_provider_id": None,
+            "printify_print_areas": None,
+            "printify_personalization_fields": [],
             "featured": bool(body.featured),
             "price": 0.0,
             "cost": None,
@@ -44748,6 +44770,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "printify_product_id": printify_product_id,
             "printify_blueprint_id": body.printify_blueprint_id,
             "printify_print_provider_id": body.printify_print_provider_id,
+            "printify_print_areas": body.printify_print_areas,
+            "printify_personalization_fields": printify_client.personalization_field_names(body.printify_print_areas or []),
             "featured": bool(body.featured),
             "price": round(float(body.price), 2),
             "cost": round(float(body.cost), 2) if body.cost is not None else None,
@@ -44762,6 +44786,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
         "printify_product_id": None,
         "printify_blueprint_id": None,
         "printify_print_provider_id": None,
+        "printify_print_areas": None,
+        "printify_personalization_fields": [],
         "featured": bool(body.featured),
         "price": round(float(body.price), 2),
         "cost": round(float(body.cost), 2) if body.cost is not None else None,
@@ -44776,20 +44802,39 @@ def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[
     up fresh from each product's own stored printify_product_id/variant's
     printify_variant_id (never trusted from the request), so a listing's
     Printify mapping can be fixed after the fact without corrupting orders
-    already queued against the old one. Used by the register's outbox
-    writer — Printify items are register-only; online ordering goes
-    entirely through Shopify instead."""
+    already queued against the old one. Shared by the register's own
+    outbox writer and the Shop checkout's (see _queue_printify_shop_lines).
+
+    A personalized line (li["personalization"] set) also carries the
+    product's own blueprint_id/print_provider_id/print_areas template —
+    process_outbox needs all three to build that order's one-off
+    personalized product (domains.printify.client.
+    create_personalized_product) before it can be submitted at all; a
+    plain (non-personalized) line never needs them, so they're left out
+    rather than bloating every row with a template nothing will read."""
     out = []
     for li in printify_lines:
         product = product_cache[li["product_id"]]
         variant = next((v for v in (product.get("variants") or []) if v.get("id") == li.get("variant_id")), None)
-        out.append({
+        row = {
             "product_id": product["id"], "variant_id": li.get("variant_id"),
             "printify_product_id": product.get("printify_product_id"),
             "printify_variant_id": (variant or {}).get("printify_variant_id"),
             "quantity": int(li["qty"]),
             "name": f"{product.get('name')} — {(variant or {}).get('name', '?')}",
-        })
+            "personalization": li.get("personalization"),
+        }
+        if li.get("personalization"):
+            row["printify_blueprint_id"] = product.get("printify_blueprint_id")
+            row["printify_print_provider_id"] = product.get("printify_print_provider_id")
+            row["printify_print_areas"] = product.get("printify_print_areas")
+            # What the customer was actually charged per unit — the one-off
+            # product this line builds needs SOME price (Printify's own
+            # validation), and the real sale price is the only honest one
+            # to put there; it's otherwise unused (this shop never syncs to
+            # a real storefront, so nothing re-reads it).
+            row["unit_price_cents"] = round(float(li.get("unit_price") or 0) * 100)
+        out.append(row)
     return out
 
 
@@ -44905,6 +44950,15 @@ async def get_printify_product_variants(printify_product_id: str, user: dict = D
         # price shipping.
         "blueprint_id": product.get("blueprint_id"),
         "print_provider_id": product.get("print_provider_id"),
+        # Carried straight through to PosProductIn.printify_print_areas on
+        # save — the template a personalized order is built from (see
+        # domains/printify/client.create_personalized_product). Deliberately
+        # the raw, unfiltered print_areas (not just the enabled-variant
+        # subset above): a text layer lives on the PLACEHOLDER, not on a
+        # specific variant, so it must survive regardless of which variants
+        # get picked.
+        "print_areas": product.get("print_areas") or [],
+        "personalization_fields": printify_client.personalization_field_names(product.get("print_areas") or []),
     }
 
 

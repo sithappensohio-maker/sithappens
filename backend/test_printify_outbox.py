@@ -153,6 +153,83 @@ def test_ship_row_submits_with_the_customers_address_and_notification_on():
         _cleanup([row["id"]])
 
 
+PET_TAG_PRINT_AREAS = [{"placeholders": [{"images": [
+    {"name": "Name", "layerType": "text", "width": 714, "x": 0.5, "y": 0.35, "font_size": 200, "input_text": "Name"},
+]}]}]
+
+
+def _personalized_row(**overrides):
+    row = _row(**overrides)
+    row["line_items"] = [{
+        "product_id": "p1", "variant_id": "v1",
+        "printify_product_id": "pf-prod-1", "printify_variant_id": "pf-var-1",
+        "quantity": 1, "name": "Pet Tag — 1\"",
+        "personalization": {"Name": "Rex"},
+        "printify_blueprint_id": 566, "printify_print_provider_id": 70,
+        "printify_print_areas": PET_TAG_PRINT_AREAS, "unit_price_cents": 1599,
+    }]
+    return row
+
+
+def test_a_personalized_row_builds_a_one_off_product_before_ordering():
+    row = _insert(_personalized_row())
+    try:
+        created_product = {"id": "pf-prod-new", "variants": [{"id": "pf-var-new"}]}
+        mock_create_personalized = AsyncMock(return_value=created_product)
+        mock_create_order = AsyncMock(return_value={"id": "pf-order-789"})
+        with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+             patch.dict("os.environ", PICKUP_ENV), \
+             patch.object(printify_client, "create_personalized_product", mock_create_personalized), \
+             patch.object(printify_client, "create_order", mock_create_order):
+            result = run(printify_client.process_outbox(server.db))
+        assert result["submitted"] == 1
+        # The ORIGINAL template ids were never submitted — the freshly
+        # created one-off product's own ids were, in their place.
+        _, create_kwargs = mock_create_personalized.call_args
+        assert create_kwargs["blueprint_id"] == 566
+        assert create_kwargs["print_provider_id"] == 70
+        assert create_kwargs["variant_id"] == "pf-var-1"
+        assert create_kwargs["variant_price_cents"] == 1599
+        assert create_kwargs["personalization"] == {"Name": "Rex"}
+        order_line_items = mock_create_order.call_args.kwargs["line_items"]
+        assert order_line_items[0].product_id == "pf-prod-new"
+        assert order_line_items[0].variant_id == "pf-var-new"
+        assert _fetch(row["id"])["status"] == "submitted"
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_a_personalized_row_holds_when_building_the_one_off_product_fails():
+    row = _insert(_personalized_row())
+    try:
+        mock_create_personalized = AsyncMock(side_effect=printify_client.PrintifyApiError(400, "Provided images do not exist"))
+        with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+             patch.dict("os.environ", PICKUP_ENV), \
+             patch.object(printify_client, "create_personalized_product", mock_create_personalized):
+            result = run(printify_client.process_outbox(server.db))
+        assert result["held"] == 1
+        fresh = _fetch(row["id"])
+        assert fresh["status"] == "pending"
+        assert "do not exist" in fresh["last_error"]
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_a_non_personalized_row_never_calls_create_personalized_product():
+    row = _insert(_row())  # the plain fixture — no personalization key at all
+    try:
+        mock_create_personalized = AsyncMock()
+        mock_create_order = AsyncMock(return_value={"id": "pf-order-1"})
+        with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+             patch.dict("os.environ", PICKUP_ENV), \
+             patch.object(printify_client, "create_personalized_product", mock_create_personalized), \
+             patch.object(printify_client, "create_order", mock_create_order):
+            run(printify_client.process_outbox(server.db))
+        mock_create_personalized.assert_not_called()
+    finally:
+        _cleanup([row["id"]])
+
+
 def test_a_missing_printify_variant_mapping_holds_without_calling_the_api():
     row = _insert(_row(line_items=[{
         "product_id": "p1", "variant_id": "v1",

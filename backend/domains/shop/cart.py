@@ -31,6 +31,11 @@ class ShopCartItemIn(BaseModel):
     # product, which still sells at its own base price with no option
     # picked, exactly as it always has.
     variant_id: Optional[str] = None
+    # product lines only — free-text fields a personalized Printify listing
+    # needs (e.g. {"Name": "Rex", "Phone": "330-555-0101"}), validated
+    # non-blank in _price_shop_cart against the product's own
+    # printify_personalization_fields. Never priced; purely descriptive.
+    personalization: Optional[Dict[str, str]] = None
     # Phase 5 — Online School commerce. Only meaningful for a
     # training_program line whose program is configured
     # purchase_fulfillment="online_school" (see _validate_shop_item_eligibility);
@@ -128,14 +133,17 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
     requests for the SAME (kind, ref_id, dog_id) combining to >1 — neither
     a single oversized line nor a client re-submitting the same dog+course
     twice can turn into a quantity>1 charge for one entitlement."""
-    combined: Dict[Tuple[str, str, Optional[str], Optional[str]], int] = {}
-    order_seen: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+    combined: Dict[tuple, int] = {}
+    order_seen: List[tuple] = []
+    personalization_by_key: Dict[tuple, Optional[Dict[str, str]]] = {}
     for it in items:
         kind = it.kind
         ref_id = (it.ref_id or "").strip()
         qty = it.quantity
         dog_id = (it.dog_id or "").strip() or None
         variant_id = (it.variant_id or "").strip() or None if kind == "product" else None
+        personalization = {k: (v or "").strip() for k, v in (it.personalization or {}).items()} if kind == "product" else None
+        personalization = personalization or None
         if kind not in ("product", "credit_pack", "training_program", "gift_card"):
             raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
         if not ref_id:
@@ -144,26 +152,36 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
             raise HTTPException(status_code=422, detail="Invalid quantity in cart.")
         if dog_id and qty != 1:
             raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
+        # A personalized line IS one physical customized item — unlike a
+        # plain product, "quantity 2" has no honest meaning (two of exactly
+        # whose name?). Same one-at-a-time rule as a dog-bound course line,
+        # same reasoning.
+        if personalization and qty != 1:
+            raise HTTPException(status_code=422, detail="Add a personalized item one at a time, so each one's details stay its own.")
         # Two gift cards of the same value for DIFFERENT people are two
         # different things, so the gift identity is part of the key. Summing
         # them into one line would send both to whichever recipient happened
-        # to be first.
+        # to be first. Two personalized items (different text) are the same
+        # — never merged into one line just because they're the same product.
         gift = _gift_identity(it) if kind == "gift_card" else None
-        key = (kind, ref_id, dog_id, gift, variant_id)
+        personalization_key = tuple(sorted(personalization.items())) if personalization else None
+        key = (kind, ref_id, dog_id, gift, variant_id, personalization_key)
         if key not in combined:
             order_seen.append(key)
             combined[key] = 0
+            personalization_by_key[key] = personalization
         combined[key] += qty
         if dog_id and combined[key] > 1:
             raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
     return [
         ShopCartItemIn.model_construct(
-            kind=k, ref_id=rid, quantity=combined[(k, rid, did, gift, vid)], dog_id=did, variant_id=vid,
+            kind=key[0], ref_id=key[1], quantity=combined[key], dog_id=key[2], variant_id=key[4],
+            personalization=personalization_by_key[key],
             # Carried through explicitly. model_construct builds a NEW line
             # from exactly the fields named here, so anything left out is
             # gone — silently, with no error anywhere.
-            recipient_email=(gift or (None, None, None))[0],
-            recipient_name=(gift or (None, None, None))[1],
-            gift_message=(gift or (None, None, None))[2])
-        for (k, rid, did, gift, vid) in order_seen
+            recipient_email=(key[3] or (None, None, None))[0],
+            recipient_name=(key[3] or (None, None, None))[1],
+            gift_message=(key[3] or (None, None, None))[2])
+        for key in order_seen
     ]

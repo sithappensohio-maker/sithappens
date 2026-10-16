@@ -246,6 +246,97 @@ def test_ensure_webhooks_registered_refuses_without_a_secret():
             _run(printify_client.ensure_webhooks_registered("https://example.com/api/webhooks/printify"))
 
 
+# ── Personalization ──────────────────────────────────────────────────────────
+
+REAL_PRINT_AREAS = [{
+    "variant_ids": [70870],
+    "placeholders": [
+        {"position": "front", "images": [
+            {"id": "6a3d2f2c", "name": "logo.png", "type": "image/png", "height": 1254, "width": 1254,
+             "x": 0.5, "y": 0.536, "scale": 0.588, "angle": 0, "layerType": "image"},
+        ], "decoration_method": "dye-sublimation"},
+        {"position": "back", "images": [
+            {"id": "42782caa", "name": "Name", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.357,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Name", "layerType": "text"},
+            {"id": "da70280b", "name": "Phone", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.5,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Phone", "layerType": "text"},
+        ], "decoration_method": "dye-sublimation"},
+    ],
+    "background": "#ffffff", "canvas": False,
+}]
+
+
+def test_personalization_field_names_lists_every_text_layer_once_in_order():
+    assert printify_client.personalization_field_names(REAL_PRINT_AREAS) == ["Name", "Phone"]
+
+
+def test_personalization_field_names_empty_for_a_product_with_no_text_layers():
+    assert printify_client.personalization_field_names([{"placeholders": [{"images": []}]}]) == []
+
+
+def test_render_personalization_image_is_a_real_png_with_the_right_canvas_size():
+    layers = REAL_PRINT_AREAS[0]["placeholders"][1]["images"]
+    png = printify_client.render_personalization_image(layers, {"Name": "Rex", "Phone": "330-555-0101"})
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    from PIL import Image
+    import io
+    im = Image.open(io.BytesIO(png))
+    assert im.size == (714, 714)  # the layers' own declared width
+
+
+def test_render_personalization_image_falls_back_to_the_layers_own_placeholder_text():
+    layers = REAL_PRINT_AREAS[0]["placeholders"][1]["images"]
+    # No "Phone" key supplied — must still render SOMETHING rather than a blank tag.
+    png = printify_client.render_personalization_image(layers, {"Name": "Rex"})
+    assert len(png) > 0
+
+
+def test_personalized_print_areas_replaces_only_the_text_bearing_placeholder():
+    uploaded = AsyncMock(return_value={"id": "new-upload-id"})
+    with patch.object(printify_client, "upload_image", uploaded):
+        result = _run(printify_client._personalized_print_areas(REAL_PRINT_AREAS, {"Name": "Rex", "Phone": "330-555-0101"}))
+    front = result[0]["placeholders"][0]
+    back = result[0]["placeholders"][1]
+    # The fixed front logo is untouched — same image id, never re-uploaded.
+    assert front["images"] == REAL_PRINT_AREAS[0]["placeholders"][0]["images"]
+    # The back placeholder's text layers are gone, replaced by one uploaded image.
+    assert len(back["images"]) == 1
+    assert back["images"][0]["id"] == "new-upload-id"
+    assert all(img.get("layerType") != "text" for img in back["images"])
+    uploaded.assert_called_once()
+
+
+def test_create_personalized_product_posts_the_flattened_product_and_returns_it():
+    uploaded = AsyncMock(return_value={"id": "new-upload-id"})
+    created = _FakeResponse(200, json_body={"id": "pf-prod-new", "variants": [{"id": 70870}]})
+    mock_post = AsyncMock(return_value=created)
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "test-key"), \
+         patch.object(printify_client, "PRINTIFY_SHOP_ID", "shop-1"), \
+         patch.object(printify_client, "upload_image", uploaded), \
+         patch("httpx.AsyncClient.post", mock_post):
+        result = _run(printify_client.create_personalized_product(
+            title="Pet Tag for Rex", blueprint_id=566, print_provider_id=70,
+            variant_id=70870, variant_price_cents=1599,
+            print_areas_template=REAL_PRINT_AREAS, personalization={"Name": "Rex", "Phone": "330-555-0101"},
+        ))
+    assert result == {"id": "pf-prod-new", "variants": [{"id": 70870}]}
+    url, kwargs = mock_post.call_args.args, mock_post.call_args.kwargs
+    assert url == ("/shops/shop-1/products.json",)
+    body = kwargs["json"]
+    assert body["blueprint_id"] == 566 and body["print_provider_id"] == 70
+    assert body["variants"] == [{"id": 70870, "price": 1599, "is_enabled": True}]
+
+
+def test_create_personalized_product_refuses_when_not_configured():
+    with patch.object(printify_client, "PRINTIFY_ENABLED", False):
+        with pytest.raises(printify_client.PrintifyNotConfigured):
+            _run(printify_client.create_personalized_product(
+                title="x", blueprint_id=1, print_provider_id=1, variant_id=1, variant_price_cents=100,
+                print_areas_template=[], personalization={},
+            ))
+
+
 def test_ensure_webhooks_registered_creates_only_whats_missing():
     url = "https://example.com/api/webhooks/printify"
     # Already subscribed to one topic at this exact URL; the rest are new.

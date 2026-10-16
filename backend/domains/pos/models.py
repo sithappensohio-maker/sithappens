@@ -11,7 +11,7 @@ two.
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -23,6 +23,13 @@ class PosSaleLineIn(BaseModel):
     # size) — never set for a plain, non-variant product. Resolves its own
     # price_override/stock against product.variants; see _price_pos_cart.
     variant_id: Optional[str] = None
+    # Required, filled in, when the product has any
+    # printify_personalization_fields (e.g. {"Name": "Rex", "Phone":
+    # "330-555-0101"}) — carried onto the outbox row so process_outbox can
+    # build the actual personalized product before ordering it (see
+    # domains/printify/client.create_personalized_product). Never priced;
+    # purely descriptive text the customer supplied.
+    personalization: Optional[Dict[str, str]] = None
     pack_id: Optional[str] = None  # required when kind == "credit_pack"
     program_id: Optional[str] = None  # required when kind == "training_program"
     description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail/pack/program
