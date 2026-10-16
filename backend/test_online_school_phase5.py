@@ -748,8 +748,11 @@ def test_shop_cart_item_model_has_no_client_controlled_price_or_fulfillment_fiel
     # accident. The three gift fields say WHO an emailed gift card goes to
     # and what it says — they are validated in _normalize_cart_lines and
     # never touch price, eligibility, quantity or fulfillment kind, all of
-    # which stay server-resolved from the real catalog document.
-    assert fields == {"kind", "ref_id", "quantity", "dog_id",
+    # which stay server-resolved from the real catalog document. variant_id
+    # is the same shape as ref_id — an identifier _price_shop_cart looks up
+    # against the real product's own stored variants; the price it resolves
+    # to is the variant's own price_override, never anything the client sends.
+    assert fields == {"kind", "ref_id", "quantity", "dog_id", "variant_id",
                       "recipient_email", "recipient_name", "gift_message"}
     assert "price" not in fields
     assert "unit_price" not in fields

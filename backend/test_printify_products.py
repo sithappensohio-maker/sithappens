@@ -6,8 +6,8 @@ Covers: create/update validation (needs a Printify product id and a
 Printify variant id per size), duplicate clears those ids, register
 catalog includes it with variants always "in stock" (Printify makes each
 on demand), register checkout skips the variant stock check for it, and
-the client Shop (no size-picker yet) keeps it off the catalog and refuses
-it defensively at cart-pricing time.
+(own-Shop Phase 2) the client Shop catalog/cart now carry real variant
+pricing and require a size choice before a Printify line can be priced.
 
 Disposable tag TEST_PRINTIFY_PRODUCTS.
 """
@@ -230,16 +230,28 @@ def test_register_checkout_skips_the_variant_stock_check_for_printify():
         _cleanup([p["id"]])
 
 
-def test_client_shop_catalog_leaves_it_out():
+def test_client_shop_catalog_includes_it_with_its_real_variants():
+    # Own-Shop Phase 2 — Printify items are no longer register-only; the
+    # catalog now carries each size with its own price (falling back to
+    # the product's base price when a size has no override of its own).
     p = _create(show_online=True)
     try:
         catalog = run(server._build_shop_catalog(None))
-        assert not any(i["id"] == p["id"] for i in catalog["items"])
+        item = next((i for i in catalog["items"] if i["id"] == p["id"]), None)
+        assert item is not None
+        assert item["sales_destination"] == "printify"
+        assert item["in_stock"] is True
+        # The catalog's variant id is the row's own internal id (same one
+        # the register's price_pos_cart matches on) — never the Printify
+        # variant id, which is just an attribute of that row.
+        assert {v["id"] for v in item["variants"]} == {v["id"] for v in p["variants"]}
+        assert {v["name"] for v in item["variants"]} == {"Small", "Medium"}
+        assert all(v["price"] == 40.0 for v in item["variants"])  # no per-size override in _printify_body
     finally:
         _cleanup([p["id"]])
 
 
-def test_client_shop_checkout_refuses_it_defensively():
+def test_client_shop_checkout_requires_a_size_choice():
     p = _create(show_online=True)
     try:
         cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1)
@@ -248,9 +260,66 @@ def test_client_shop_checkout_refuses_it_defensively():
             assert False, "should have been refused"
         except HTTPException as e:
             assert e.status_code == 400
-            assert "register" in e.detail
+            assert "size" in e.detail.lower()
     finally:
         _cleanup([p["id"]])
+
+
+def test_client_shop_checkout_prices_a_chosen_size_from_the_real_variant():
+    p = _create(show_online=True, variants=[
+        {"name": "Small", "printify_variant_id": "pf-var-s"},
+        {"name": "Medium", "printify_variant_id": "pf-var-m", "price_override": 45.0},
+    ])
+    try:
+        medium_id = next(v["id"] for v in p["variants"] if v["name"] == "Medium")
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=2, variant_id=medium_id)
+        priced = run(server._price_shop_cart([cart_item], client_id=None))
+        line = priced["lines"][0]
+        assert line["unit_price"] == 45.0
+        assert line["quantity"] == 2
+        assert line["variant_id"] == medium_id
+        assert "Medium" in line["name"]
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_client_shop_checkout_refuses_a_variant_id_that_doesnt_belong_to_the_product():
+    p = _create(show_online=True)
+    try:
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id="not-a-real-variant")
+        try:
+            run(server._price_shop_cart([cart_item], client_id=None))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "no longer available" in e.detail
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_normalize_cart_lines_keeps_different_sizes_of_the_same_product_separate():
+    # Without variant_id in the aggregation key, a Small and a Medium of the
+    # same shirt would silently combine into one line carrying only one of
+    # the two variant ids — wrong size (or wrong price) for half the order.
+    items = [
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=1, variant_id="small-id"),
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=2, variant_id="medium-id"),
+    ]
+    lines = server._normalize_cart_lines(items)
+    assert len(lines) == 2
+    by_variant = {l.variant_id: l.quantity for l in lines}
+    assert by_variant == {"small-id": 1, "medium-id": 2}
+
+
+def test_normalize_cart_lines_combines_two_requests_for_the_same_size():
+    items = [
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=1, variant_id="small-id"),
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=2, variant_id="small-id"),
+    ]
+    lines = server._normalize_cart_lines(items)
+    assert len(lines) == 1
+    assert lines[0].quantity == 3
+    assert lines[0].variant_id == "small-id"
 
 
 def test_a_full_register_sale_of_a_printify_variant_commits_with_no_inventory_movement():

@@ -38,6 +38,13 @@ export function priceProps(item) {
     }
     return { unknownLabel: "View price on Shopify" };
   }
+  // A Printify listing has no single sellable price — item.price is a
+  // "from" display price only, since every real sale needs a size (see
+  // _build_shop_catalog's printify branch). Never shown as a flat number.
+  if (item?.sales_destination === "printify" && item?.from_price) {
+    const amount = item?.price != null ? item.price : item?.effective_price;
+    return amount != null ? { display: `From ${money(amount)}` } : { unknownLabel: null };
+  }
   const amount = item?.price != null ? item.price : item?.effective_price;
   return { amount };
 }

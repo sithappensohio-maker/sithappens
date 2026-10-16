@@ -175,6 +175,26 @@ export function isInternalPhysical(item) {
   return !!item && item.kind === "product" && item.sales_destination !== "shopify_external";
 }
 
+// The chosen size/color row, for a cart line that named one — own-Shop
+// variant support (Printify sizes, or any internal product with options).
+// Returns null for a line with no variant_id, or one whose variant no
+// longer exists on the (possibly since-edited) catalog item.
+export function cartLineVariant(item, variantId) {
+  if (!item || !variantId) return null;
+  return (item.variants || []).find((v) => v.id === variantId) || null;
+}
+
+// What a cart line actually costs per unit — the chosen variant's own
+// price when there is one, falling back to the item's own price exactly
+// as the server's _price_shop_cart does. Every cart-display total (the
+// tray, the panel, the discount estimate) reads price through THIS, never
+// item.price directly, so a Printify line's real per-size price is never
+// silently replaced by the product's "from" price.
+export function cartLineUnitPrice(item, variantId) {
+  const variant = cartLineVariant(item, variantId);
+  return variant ? variant.price : (item?.price || 0);
+}
+
 // Shop Appearance & Organization — hardcoded fallback metadata for the 3
 // permanent section keys, used whenever shop_page settings are absent or
 // incomplete so the Shop always renders something sensible on a fresh

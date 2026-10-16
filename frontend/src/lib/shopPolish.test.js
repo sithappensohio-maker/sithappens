@@ -7,7 +7,8 @@ import {
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
   creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
-  creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget } from "./shopPolish";
+  creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget,
+  cartLineVariant, cartLineUnitPrice } from "./shopPolish";
 
 const categories = [
   { id: "cat-merch", name: "Merch", subcategories: [{ id: "sub-collars", name: "Collars" }, { id: "sub-toys", name: "Toys" }] },
@@ -492,4 +493,33 @@ test("an unknown or missing kind never invents a department", () => {
     expect(t.path).toBe("/shop");
     expect(t.tab).toBeNull();
   }
+});
+
+// Own-Shop Phase 2 — variant pricing for a cart line (Printify sizes, or
+// any internal product with options).
+const SHIRT = {
+  kind: "product", id: "p1", name: "Trail Dog Hoodie", price: 19.99,
+  variants: [
+    { id: "v-s", name: "Small", price: 19.99 },
+    { id: "v-xl", name: "XL", price: 21.94 },
+  ],
+};
+
+test("cartLineVariant finds the chosen row by id", () => {
+  expect(cartLineVariant(SHIRT, "v-xl")).toEqual({ id: "v-xl", name: "XL", price: 21.94 });
+});
+
+test("cartLineVariant is null with no variant_id, or one the item no longer has", () => {
+  expect(cartLineVariant(SHIRT, null)).toBeNull();
+  expect(cartLineVariant(SHIRT, "v-gone")).toBeNull();
+  expect(cartLineVariant(null, "v-s")).toBeNull();
+});
+
+test("cartLineUnitPrice reads the variant's own price when one is chosen", () => {
+  expect(cartLineUnitPrice(SHIRT, "v-xl")).toBe(21.94);
+});
+
+test("cartLineUnitPrice falls back to the item's own price with no variant chosen", () => {
+  expect(cartLineUnitPrice(SHIRT, null)).toBe(19.99);
+  expect(cartLineUnitPrice({ price: 8 }, undefined)).toBe(8);
 });

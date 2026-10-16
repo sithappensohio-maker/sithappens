@@ -24,11 +24,16 @@ import { Price, Badges, Availability, ProductImage, CardShell, RatingStars, mone
 function useCta(item, mode) {
   const isGuest = mode === "guest";
   const shopify = item.kind === "product" && item.sales_destination === "shopify_external";
+  // A Printify listing is made to order in whatever size/color is chosen —
+  // there is no single "add one" action from a grid card, same reasoning
+  // as Shopify's own "go elsewhere to pick" card below, just routed to the
+  // detail page instead of an outside site.
+  const printify = item.kind === "product" && item.sales_destination === "printify";
   const cta = isGuest ? guestItemCta(item) : null;
   const soldOut = item.availability === "out_of_stock"
-    || (item.kind === "product" && !shopify && item.track_inventory && item.in_stock === false);
+    || (item.kind === "product" && !shopify && !printify && item.track_inventory && item.in_stock === false);
   return {
-    isGuest, shopify, soldOut,
+    isGuest, shopify, printify, soldOut,
     blocked: isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify",
     reason: cta?.type,
     reasonDetail: cta?.reason,
@@ -75,6 +80,11 @@ function CardAction({ item, mode, onAdd, onOpenDetail, onRequireAccount, onShopi
   if (s.shopify) {
     return <ActionButton testId={id} variant="secondary" onClick={() => onShopify?.(item)}>
       View on Shopify <i className="fas fa-arrow-up-right-from-square ml-1 text-[10px]" aria-hidden="true" />
+    </ActionButton>;
+  }
+  if (s.printify && !s.blocked) {
+    return <ActionButton testId={id} variant="secondary" onClick={() => onOpenDetail?.(item)}>
+      Choose Size
     </ActionButton>;
   }
   if (s.blocked) {

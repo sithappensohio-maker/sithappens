@@ -196,7 +196,7 @@ describe("the guest checkout panel", () => {
     expect(Object.keys(body)).toEqual(["items"]);
     for (const line of body.items) {
       expect(Object.keys(line).sort()).toEqual(
-        ["gift_message", "kind", "quantity", "recipient_email", "recipient_name", "ref_id"]);
+        ["gift_message", "kind", "quantity", "recipient_email", "recipient_name", "ref_id", "variant_id"]);
     }
   });
 

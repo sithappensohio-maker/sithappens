@@ -41,7 +41,7 @@ import {
   categoryGroupsForTab, matchesSearchQuery, OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta, creditPackCardLine,
-  isCheckoutRestart,
+  isCheckoutRestart, cartLineUnitPrice,
 } from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
@@ -153,7 +153,7 @@ function useCartLines(cart, items, dogs = []) {
       const dog_name = c.dog_id ? dogs.find((d) => d.id === c.dog_id)?.name : undefined;
       return { ...c, item, dog_name };
     }).filter((l) => l.item);
-    const subtotal = lines.reduce((sum, l) => sum + (l.item.price || 0) * l.quantity, 0);
+    const subtotal = lines.reduce((sum, l) => sum + cartLineUnitPrice(l.item, l.variant_id) * l.quantity, 0);
     return { lines, subtotal };
   }, [cart, items, dogs]);
 }
@@ -784,13 +784,13 @@ export default function PortalShop({
   // line identity includes dogId so two different dogs buying the SAME
   // program stay as two separate lines — matches the server's own
   // dog_id-aware _normalize_cart_lines aggregation key.
-  const addToCart = (item, qty = 1, dogId = undefined, gift = undefined) => {
+  const addToCart = (item, qty = 1, dogId = undefined, gift = undefined, variantId = undefined) => {
     const ceiling = stockCeiling(item);
     // A gift card for Dana and one for Sam are different things even at the
     // same value, so the recipient is part of what makes a cart line the
-    // same line — matching how the server keys them.
+    // same line — matching how the server keys them. variant_id does the same.
     const sameLine = (c) => c.kind === item.kind && c.ref_id === item.id
-      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift);
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift) && (c.variant_id || null) === (variantId || null);
     const existingQty = cart.find(sameLine)?.quantity || 0;
     if (ceiling != null && existingQty >= ceiling) {
       toast.error(`Only ${ceiling} are currently available`);
@@ -806,7 +806,7 @@ export default function PortalShop({
       if (existing) {
         return prev.map((c) => (c === existing ? { ...c, quantity: nextQty } : c));
       }
-      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty, dog_id: dogId, gift }];
+      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty, dog_id: dogId, gift, variant_id: variantId || null }];
     });
     // The reference and how many. Deliberately not the gift fields beside
     // it — a recipient's name and address are exactly what analytics must
@@ -816,12 +816,12 @@ export default function PortalShop({
     pulseTray();
   };
 
-  const changeQty = (kind, refId, qty, dogId = undefined, gift = undefined) => {
+  const changeQty = (kind, refId, qty, dogId = undefined, gift = undefined, variantId = undefined) => {
     idemKeyRef.current = null;
     // Must match addToCart's identity exactly, or changing the quantity on
     // Dana's card silently changes Sam's as well.
     const sameLine = (c) => c.kind === kind && c.ref_id === refId
-      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift);
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift) && (c.variant_id || null) === (variantId || null);
     if (qty <= 0) {
       setCart((prev) => prev.filter((c) => !sameLine(c)));
       return;
@@ -835,11 +835,11 @@ export default function PortalShop({
     setCart((prev) => prev.map((c) => (sameLine(c) ? { ...c, quantity: qty } : c)));
   };
 
-  const removeFromCart = (kind, refId, dogId = undefined, gift = undefined) => {
+  const removeFromCart = (kind, refId, dogId = undefined, gift = undefined, variantId = undefined) => {
     idemKeyRef.current = null;
     trackShop({ event: "remove_from_cart", kind, ref_id: refId });
     setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId
-      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift))));
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift) && (c.variant_id || null) === (variantId || null))));
   };
 
   // My Orders — a compact panel over the client's own existing order history
@@ -935,6 +935,7 @@ export default function PortalShop({
         // recipient silently becomes the buyer.
         items: cart.map((c) => ({
           kind: c.kind, ref_id: c.ref_id, quantity: c.quantity, dog_id: c.dog_id,
+          variant_id: c.variant_id || null,
           recipient_email: c.gift?.recipient_email || null,
           recipient_name: c.gift?.recipient_name || null,
           gift_message: c.gift?.gift_message || null,

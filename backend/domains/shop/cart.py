@@ -25,6 +25,12 @@ class ShopCartItemIn(BaseModel):
     kind: Literal["product", "credit_pack", "training_program", "gift_card"]
     ref_id: str = Field(min_length=1)
     quantity: int = Field(ge=1, le=50)
+    # product lines only — which size/color/option. Required for a Printify
+    # listing (it has no single sellable price/SKU of its own, only its
+    # variants do — see _price_shop_cart); optional for a plain internal
+    # product, which still sells at its own base price with no option
+    # picked, exactly as it always has.
+    variant_id: Optional[str] = None
     # Phase 5 — Online School commerce. Only meaningful for a
     # training_program line whose program is configured
     # purchase_fulfillment="online_school" (see _validate_shop_item_eligibility);
@@ -98,6 +104,12 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
     so this function is the one place a malformed line is guaranteed to be
     rejected with a clean 422, never an unhandled construction error.
 
+    The aggregation key includes `variant_id` (product lines only) so two
+    different sizes/colors of the same product stay as separate lines —
+    without this, adding a Small and a Medium of the same Printify shirt
+    would silently combine into one line carrying only one of the two
+    variant ids, charging and producing the wrong size for half the order.
+
     Phase 5 — the aggregation key includes `dog_id` so two different dogs
     buying the same online_school-fulfillment program stay as separate
     lines (each needs its own enrollment) rather than being summed into a
@@ -116,13 +128,14 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
     requests for the SAME (kind, ref_id, dog_id) combining to >1 — neither
     a single oversized line nor a client re-submitting the same dog+course
     twice can turn into a quantity>1 charge for one entitlement."""
-    combined: Dict[Tuple[str, str, Optional[str]], int] = {}
-    order_seen: List[Tuple[str, str, Optional[str]]] = []
+    combined: Dict[Tuple[str, str, Optional[str], Optional[str]], int] = {}
+    order_seen: List[Tuple[str, str, Optional[str], Optional[str]]] = []
     for it in items:
         kind = it.kind
         ref_id = (it.ref_id or "").strip()
         qty = it.quantity
         dog_id = (it.dog_id or "").strip() or None
+        variant_id = (it.variant_id or "").strip() or None if kind == "product" else None
         if kind not in ("product", "credit_pack", "training_program", "gift_card"):
             raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
         if not ref_id:
@@ -136,7 +149,7 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
         # them into one line would send both to whichever recipient happened
         # to be first.
         gift = _gift_identity(it) if kind == "gift_card" else None
-        key = (kind, ref_id, dog_id, gift)
+        key = (kind, ref_id, dog_id, gift, variant_id)
         if key not in combined:
             order_seen.append(key)
             combined[key] = 0
@@ -145,12 +158,12 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
             raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
     return [
         ShopCartItemIn.model_construct(
-            kind=k, ref_id=rid, quantity=combined[(k, rid, did, gift)], dog_id=did,
+            kind=k, ref_id=rid, quantity=combined[(k, rid, did, gift, vid)], dog_id=did, variant_id=vid,
             # Carried through explicitly. model_construct builds a NEW line
             # from exactly the fields named here, so anything left out is
             # gone — silently, with no error anywhere.
             recipient_email=(gift or (None, None, None))[0],
             recipient_name=(gift or (None, None, None))[1],
             gift_message=(gift or (None, None, None))[2])
-        for (k, rid, did, gift) in order_seen
+        for (k, rid, did, gift, vid) in order_seen
     ]

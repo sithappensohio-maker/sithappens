@@ -1,6 +1,6 @@
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
-import { guestItemCta, isInternalPhysical, stockCeiling } from "../../lib/shopPolish";
+import { guestItemCta, isInternalPhysical, stockCeiling, cartLineUnitPrice, cartLineVariant } from "../../lib/shopPolish";
 import { money, Price, ProductImage, QuantityStepper } from "./ShopPrimitives";
 
 /**
@@ -33,6 +33,10 @@ export function guestBlockers(lines) {
 
 function LineContext({ line }) {
   const bits = [];
+  const variant = cartLineVariant(line.item, line.variant_id);
+  if (variant) {
+    bits.push({ icon: "fa-ruler", text: variant.name, testId: "cart-line-variant" });
+  }
   if (line.dog_name) {
     bits.push({ icon: "fa-paw", text: `For ${line.dog_name}`, testId: "cart-line-dog" });
   }
@@ -70,6 +74,7 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
   // of" from a stepper. Only merchandise gets one.
   const adjustable = item.kind === "product" && !line.dog_id;
   const ceiling = stockCeiling(item);
+  const unitPrice = cartLineUnitPrice(item, line.variant_id);
 
   return (
     <li className={`flex gap-3 py-4 ${guestBlocked ? "opacity-95" : ""}`}
@@ -92,9 +97,9 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
             )}
           </div>
           <div className="text-right shrink-0">
-            <Price amount={(item.price || 0) * line.quantity} size="sm" />
+            <Price amount={unitPrice * line.quantity} size="sm" />
             {line.quantity > 1 && (
-              <p className="text-[11px] text-shTextMuted mt-0.5">{money(item.price)} each</p>
+              <p className="text-[11px] text-shTextMuted mt-0.5">{money(unitPrice)} each</p>
             )}
           </div>
         </div>
@@ -103,12 +108,12 @@ export function CartLine({ line, onQtyChange, onRemove, guestBlocked }) {
           {adjustable ? (
             <QuantityStepper value={line.quantity} max={ceiling ?? undefined}
                              idSuffix={`-${line.ref_id}`}
-                             onChange={(q) => onQtyChange(line.kind, line.ref_id, q, line.dog_id, line.gift)} />
+                             onChange={(q) => onQtyChange(line.kind, line.ref_id, q, line.dog_id, line.gift, line.variant_id)} />
           ) : (
             <span className="text-[12px] text-shTextMuted">Qty {line.quantity}</span>
           )}
           <button type="button"
-                  onClick={() => onRemove(line.kind, line.ref_id, line.dog_id, line.gift)}
+                  onClick={() => onRemove(line.kind, line.ref_id, line.dog_id, line.gift, line.variant_id)}
                   aria-label={`Remove ${item.name || "item"} from your cart`}
                   data-testid={`shop-cart-remove-${line.ref_id}`}
                   className="text-[12px] font-bold text-shTextMuted hover:text-shDanger transition
@@ -359,7 +364,7 @@ export default function CartPanel({
   // CartSummary's own note on this.
   const discountableSubtotal = lines
     .filter((l) => l.item?.kind !== "gift_card")
-    .reduce((sum, l) => sum + (l.item?.price || 0) * l.quantity, 0);
+    .reduce((sum, l) => sum + cartLineUnitPrice(l.item, l.variant_id) * l.quantity, 0);
   const codeEstimate = appliedDiscount
     ? (appliedDiscount.kind === "percent"
         ? Math.round(discountableSubtotal * (appliedDiscount.value / 100) * 100) / 100
@@ -417,7 +422,7 @@ export default function CartPanel({
           ) : (
             <ul className="divide-y divide-shBorder">
               {lines.map((l) => (
-                <CartLine key={`${l.kind}:${l.ref_id}:${l.dog_id || ""}`} line={l}
+                <CartLine key={`${l.kind}:${l.ref_id}:${l.dog_id || ""}:${l.variant_id || ""}`} line={l}
                           onQtyChange={onQtyChange} onRemove={onRemove}
                           guestBlocked={blockedKeys.has(`${l.kind}:${l.ref_id}`)} />
               ))}

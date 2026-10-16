@@ -47,7 +47,7 @@ function FormattedDescription({ text }) {
   );
 }
 
-function PriceBlock({ item, hiddenPriceMessage }) {
+function PriceBlock({ item, hiddenPriceMessage, selectedVariant }) {
   const isShopify = item.kind === "product" && item.sales_destination === "shopify_external";
   if (isShopify) {
     // One rule for both surfaces: the grid card and this page ask the same
@@ -56,6 +56,19 @@ function PriceBlock({ item, hiddenPriceMessage }) {
     // a blank space when Shopify never gave us one.
     const resolved = priceProps(item);
     return <Price {...resolved} size="lg" unknownLabel={resolved.unknownLabel || null} />;
+  }
+  // A chosen size/color's own price — once picked, this is what checkout
+  // actually charges, so it replaces the "From $X" display price rather
+  // than sitting next to it.
+  if (selectedVariant) {
+    return <p className="text-shPrimary font-black text-[26px]" data-testid="shop-detail-variant-price">{money(selectedVariant.price)}</p>;
+  }
+  // No size chosen yet on a made-to-order item — same "From $X" the grid
+  // card already shows (priceProps), never a flat number nothing can
+  // actually be bought at.
+  if (item.kind === "product" && item.sales_destination === "printify" && item.from_price) {
+    const resolved = priceProps(item);
+    return <Price {...resolved} size="lg" />;
   }
   // Public no-account storefront — price fields are simply ABSENT from the
   // response when hidden (never a zero/malformed value), so this must be
@@ -237,11 +250,16 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [qty, setQty] = useState(1);
+  // Own-Shop variant support — which size/color row is chosen. Required
+  // before a Printify item can be added at all (it has no single sellable
+  // price of its own); optional for a plain internal product that happens
+  // to have options, same permissiveness the register already has.
+  const [selectedVariantId, setSelectedVariantId] = useState(null);
   const isGuest = mode === "guest";
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setNotFound(false); setItem(null); setQty(1);
+    setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null);
     const url = isGuest
       ? `/public/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`
       : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
@@ -322,6 +340,15 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   }
 
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
+  const isPrintify = item.kind === "product" && item.sales_destination === "printify";
+  const variants = item.kind === "product" ? (item.variants || []) : [];
+  const hasVariants = variants.length > 0;
+  const selectedVariant = hasVariants ? variants.find((v) => v.id === selectedVariantId) || null : null;
+  // A Printify item can never be added without a size — there's no base
+  // price/SKU to fall back to (see PriceBlock and _price_shop_cart). A
+  // plain internal product with options stays purchasable at its own base
+  // price with nothing picked, same as it always has been.
+  const needsVariantChoice = isPrintify && hasVariants && !selectedVariant;
   const outOfStock = isGuest
     ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
     : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
@@ -334,7 +361,10 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // exact priority order.
   const cta = isGuest ? guestItemCta(item) : null;
   const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
-  const cartQty = (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
+  // Scoped to the chosen size/color when this product has options — a Small
+  // already in the cart must never read as "In Cart" while picking a Medium.
+  const cartQty = (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id
+    && (c.variant_id || null) === (selectedVariantId || null))?.quantity || 0;
   const dogCartQty = isOnlineSchoolProgram && selectedDogId
     ? (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id && c.dog_id === selectedDogId)?.quantity || 0
     : 0;
@@ -376,8 +406,14 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                            : `${item.name} added to cart`);
       return;
     }
-    onAddToCart(item, item.kind === "product" ? qty : 1);
-    toast.success(item.kind === "product" ? `Added ${qty} to cart` : `${item.name} added to cart`);
+    if (needsVariantChoice) {
+      toast.error("Choose a size before adding this to your cart.");
+      return;
+    }
+    onAddToCart(item, item.kind === "product" ? qty : 1, undefined, undefined, selectedVariantId || undefined);
+    toast.success(item.kind === "product"
+      ? `Added ${qty} ${selectedVariant ? `(${selectedVariant.name}) ` : ""}to cart`
+      : `${item.name} added to cart`);
   };
 
   return (
@@ -414,7 +450,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           {item.kind === "product" && <RatingStars item={item} className="mt-1.5" />}
 
           <div className="mt-3">
-            <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} />
+            <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} selectedVariant={selectedVariant} />
           </div>
 
           {avail && (
@@ -422,6 +458,32 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
               {avail.label}
               {item.track_inventory && item.in_stock ? ` · ${item.stock_on_hand} available` : ""}
             </p>
+          )}
+
+          {hasVariants && (
+            <div className="mt-4" data-testid="shop-detail-variant-picker">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">
+                {isPrintify ? "Choose a size" : "Choose an option"}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {variants.map((v) => {
+                  const selected = v.id === selectedVariantId;
+                  const unavailable = v.is_available === false;
+                  return (
+                    <button key={v.id} type="button" disabled={unavailable}
+                            onClick={() => setSelectedVariantId(selected ? null : v.id)}
+                            data-testid={`shop-detail-variant-${v.id}`}
+                            title={unavailable ? `${v.name} is currently unavailable` : undefined}
+                            className={`px-3 py-2 rounded-lg text-[12px] font-bold border transition
+                                       ${selected ? "bg-shPrimary text-bgHeader border-shPrimary"
+                                         : unavailable ? "border-shBorder text-shTextMuted/50 cursor-not-allowed line-through"
+                                         : "border-shBorder text-shText hover:border-shPrimary/60"}`}>
+                      {v.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {isInternalPhysical && (
@@ -712,6 +774,10 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 </button>
                 <p className="text-[12px] text-shTextMuted mt-1">You already have the maximum available quantity ({cartQty}) in your cart.</p>
               </div>
+            ) : needsVariantChoice ? (
+              <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
+                Choose a Size to Continue
+              </PremiumButton>
             ) : (
               <PremiumButton variant="primary" onClick={handlePurchase} data-testid="shop-detail-purchase" className="w-full justify-center py-3">
                 {cartQty > 0 ? `${purchaseButtonLabel(item.kind)} (In Cart: ${cartQty})` : purchaseButtonLabel(item.kind)}

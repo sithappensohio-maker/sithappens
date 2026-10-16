@@ -42023,12 +42023,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     items = []
 
     products = await db.pos_products.find(
-        # Printify POD listings never appear in the client Shop — online
-        # ordering for this business goes entirely through Shopify (the
-        # existing shopify_external link-out card), never through this
-        # app's own cart/checkout. A printify listing is register-only, by
-        # design, not a gap waiting on size/variant support here.
-        {"show_online": True, "active": True, "archived": {"$ne": True}, "sales_destination": {"$ne": "printify"}},
+        {"show_online": True, "active": True, "archived": {"$ne": True}},
         {"_id": 0},
     ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None) if _section_visible["merch"] else []
     # One aggregation for every product on the shelf rather than one query
@@ -42084,6 +42079,50 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 **_rating_fields(p["id"]),
             })
             continue
+        if p.get("sales_destination") == "printify":
+            # Made to order — never resolve_client_price()'d against a
+            # single price (there isn't one: every real sale needs a size),
+            # and never a stock figure (Printify prints each one on
+            # demand). The base `price` here is a "from" display price
+            # only; _price_shop_cart requires a real variant_id to price
+            # an actual cart line, same rule the register already enforces.
+            list_price = round(float(p.get("price") or 0), 2)
+            variant_rows = [
+                {
+                    "id": v.get("id"), "name": v.get("name"),
+                    "price": round(float(v["price_override"]), 2) if v.get("price_override") is not None else list_price,
+                }
+                for v in (p.get("variants") or [])
+            ]
+            items.append({
+                "kind": "product",
+                "id": p["id"],
+                "name": p.get("name"),
+                "description": p.get("online_description") or p.get("description") or "",
+                "category": p.get("category") or "",
+                "sales_destination": "printify",
+                "featured": bool(p.get("featured")),
+                "listed_on": _listed_on(p),
+                "list_price": list_price,
+                "effective_price": list_price,
+                "price": list_price,
+                "from_price": True,
+                "variants": variant_rows,
+                "in_stock": len(variant_rows) > 0,
+                "image_id": p.get("image_id"),
+                "image_ids": shop_media_services.gallery_ids(p),
+                "sort_order": p.get("online_sort_order"),
+                "publicly_visible": p.get("publicly_visible"),
+                "guest_cart_allowed": bool(p.get("guest_cart_allowed", False)),
+                "show_public_price": bool(p.get("show_public_price", True)),
+                "requires_dog": False,
+                "requires_approval": bool(p.get("requires_approval", False)),
+                "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
+                "shippable": True,
+                **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
+                **_rating_fields(p["id"]),
+            })
+            continue
         track = bool(p.get("track_inventory"))
         stock = float(p.get("stock_on_hand") or 0)
         list_price = round(float(p.get("price") or 0), 2)
@@ -42097,6 +42136,19 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
         pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price)
         effective_price = round(float(pricing["effective_price"]), 2)
         has_override = pricing["pricing_source"] != "standard"
+        # Exposed so an internal product with real options (size, color…)
+        # can show them — per-variant price falls back to the product's
+        # own list price, same rule the register's own price_pos_cart
+        # already uses, never the client's grandfathered price (that
+        # system is keyed per-product, not per-variant).
+        variant_rows = [
+            {
+                "id": v.get("id"), "name": v.get("name"),
+                "price": round(float(v["price_override"]), 2) if v.get("price_override") is not None else list_price,
+                "in_stock": (not track) or (float(v.get("stock_on_hand") or 0) > 0.0005),
+            }
+            for v in (p.get("variants") or [])
+        ]
         items.append({
             "kind": "product",
             "id": p["id"],
@@ -42111,6 +42163,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "pricing_source": pricing["pricing_source"],
             "price_override_id": pricing["override_id"],
             "has_price_override": has_override,
+            "variants": variant_rows,
             "image_id": p.get("image_id"),
             # Every image, primary first. A product from before galleries
             # existed reads back as a one-image gallery, so the storefront
@@ -42961,24 +43014,47 @@ async def _price_shop_cart(
                     status_code=400,
                     detail="This item is Shopify merchandise and can't be added to the Sit Happens cart — use its Shopify link instead.",
                 )
-            if product.get("sales_destination") == "printify":
-                # Printify items are register-only by design — online
-                # ordering goes entirely through Shopify. _build_shop_catalog
-                # already keeps these off the catalog entirely; this is the
-                # same defense-in-depth refusal as the shopify_external
-                # branch above, for a stale catalog or a direct API call.
+            is_printify = product.get("sales_destination") == "printify"
+            if is_printify and not cart_item.variant_id:
+                # A Printify listing has no single sellable price of its own
+                # — it's made to order in whatever size/color is chosen, so
+                # the base product.price is only ever a display/"from"
+                # price, never something a cart line can be priced at.
                 raise HTTPException(
                     status_code=400,
-                    detail="This item isn't available in the online Shop — it can be sold at the register.",
+                    detail="Choose a size for this item before adding it to your cart.",
                 )
-            # Never trust a client-supplied price — resolve_client_price() is
-            # the SAME source of truth credit_pack lines (below) and
-            # GET /shop/catalog already use, so a grandfathered/tier-priced
-            # client is CHARGED their locked rate here, not just shown it.
-            list_unit_price = round(float(product.get("price") or 0), 2)
-            product_pricing = await resolve_client_price(client_id, "pos_product", product["id"], list_unit_price)
-            unit_price = round(float(product_pricing["effective_price"]), 2)
-            name = product.get("name") or "Product"
+            if cart_item.variant_id:
+                variant = next((v for v in (product.get("variants") or []) if v.get("id") == cart_item.variant_id), None)
+                if not variant:
+                    raise HTTPException(status_code=400, detail="That option is no longer available.")
+                # Variant pricing is deliberately simpler than the plain-
+                # product path below: no per-client grandfathered-price
+                # resolution (that system is keyed per-product, not per-
+                # variant) — just the variant's own override, falling back
+                # to the parent product's price. Same rule, same reasoning,
+                # as the register's own price_pos_cart.
+                unit_price = round(float(variant["price_override"]), 2) if variant.get("price_override") is not None else round(float(product.get("price") or 0), 2)
+                name = f"{product.get('name') or 'Product'} — {variant.get('name') or 'Option'}"
+                # No per-client resolution for a variant line (see above) —
+                # the immutable pricing snapshot below still needs these two
+                # names bound, just as a plain "standard" price: same shape
+                # resolve_client_price() itself returns when nothing overrides it.
+                list_unit_price = unit_price
+                product_pricing = {
+                    "effective_price": unit_price, "list_price": unit_price, "override_id": None,
+                    "override_row": None, "pricing_source": "standard", "tier_id": None, "tier_name": None,
+                }
+            else:
+                # Never trust a client-supplied price — resolve_client_price()
+                # is the SAME source of truth credit_pack lines (below) and
+                # GET /shop/catalog already use, so a grandfathered/tier-
+                # priced client is CHARGED their locked rate here, not just
+                # shown it.
+                list_unit_price = round(float(product.get("price") or 0), 2)
+                product_pricing = await resolve_client_price(client_id, "pos_product", product["id"], list_unit_price)
+                unit_price = round(float(product_pricing["effective_price"]), 2)
+                name = product.get("name") or "Product"
             org_source = product
         elif cart_item.kind == "gift_card":
             # Never taxed and never stocked — it is money, not goods. The
@@ -43021,6 +43097,7 @@ async def _price_shop_cart(
         org_snapshot = await _shop_org_snapshot(org_source.get("category_id"), org_source.get("subcategory_id"))
         line = {
             "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
+            "variant_id": getattr(cart_item, "variant_id", None) if cart_item.kind == "product" else None,
             "recipient_email": (getattr(cart_item, "recipient_email", None) or "").strip(),
             "recipient_name": (getattr(cart_item, "recipient_name", None) or "").strip(),
             "gift_message": (getattr(cart_item, "gift_message", None) or "").strip(),
