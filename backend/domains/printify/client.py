@@ -45,9 +45,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-PRINTIFY_API_KEY = os.environ.get("PRINTIFY_API_KEY", "")
-PRINTIFY_SHOP_ID = os.environ.get("PRINTIFY_SHOP_ID", "")
+PRINTIFY_API_KEY = os.environ.get("PRINTIFY_API_KEY", "").strip()
+PRINTIFY_SHOP_ID = os.environ.get("PRINTIFY_SHOP_ID", "").strip()
 PRINTIFY_ENABLED = bool(PRINTIFY_API_KEY and PRINTIFY_SHOP_ID)
+# A key with a stray non-ASCII character — a smart quote, a non-breaking
+# space, or some other invisible character picked up from copy-pasting —
+# passes the check above, but HTTP headers must be plain ASCII, so it then
+# fails deep inside httpx's own header encoding with a bare
+# UnicodeEncodeError on every single Printify call, with nothing in the
+# message to say WHY. _headers() below checks this once, with an
+# actionable message, instead.
+PRINTIFY_API_KEY_ASCII_SAFE = PRINTIFY_API_KEY.isascii()
 # Shared secret from the webhook's own subscription (see
 # ensure_webhooks_registered) — every delivery is signed with it. Separate
 # from PRINTIFY_API_KEY: this one never leaves the server, it only verifies
@@ -124,6 +132,12 @@ class PrintifyAddress:
 
 
 def _headers() -> Dict[str, str]:
+    if not PRINTIFY_API_KEY_ASCII_SAFE:
+        raise PrintifyNotConfigured(
+            "PRINTIFY_API_KEY has a non-ASCII character in it (often a stray "
+            "smart quote or invisible character from copy-pasting) — re-copy "
+            "it fresh from the Printify dashboard, reset the env var, and "
+            "restart the backend.")
     return {
         "Authorization": f"Bearer {PRINTIFY_API_KEY}",
         "Content-Type": "application/json",

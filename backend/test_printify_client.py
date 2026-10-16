@@ -54,6 +54,19 @@ def test_get_product_refuses_when_not_configured():
             _run(printify_client.get_product("pf-prod-1"))
 
 
+def test_get_product_refuses_clearly_when_the_api_key_has_a_non_ascii_character():
+    # A copy-pasted key can carry a stray smart quote or non-breaking space.
+    # HTTP headers must be plain ASCII, so without this guard the failure
+    # surfaces as a bare UnicodeEncodeError deep inside httpx on every call
+    # — this proves it's caught early with an actionable message instead.
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "bad-key’"), \
+         patch.object(printify_client, "PRINTIFY_API_KEY_ASCII_SAFE", False), \
+         patch.object(printify_client, "PRINTIFY_SHOP_ID", "shop-1"):
+        with pytest.raises(printify_client.PrintifyNotConfigured, match="non-ASCII"):
+            _run(printify_client.get_product("pf-prod-1"))
+
+
 def test_get_product_fetches_by_id_and_returns_the_parsed_body():
     fake_resp = _FakeResponse(200, json_body={"id": "pf-prod-1", "title": "Trail Dog Hoodie", "variants": []})
     mock_get = AsyncMock(return_value=fake_resp)
