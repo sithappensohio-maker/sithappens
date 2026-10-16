@@ -924,3 +924,53 @@ def test_guest_shop_checkout_with_ship_queues_outbox_row_using_the_guests_own_id
             run(server.db.shop_payment_attempts.delete_many({"shop_order_id": order["id"]}))
             run(server.db.printify_order_outbox.delete_many({"source_id": order["id"]}))
         _cleanup([p["id"]])
+
+
+# ── Admin "Fetch Sizes"/webhook errors must never be 502/504 — Cloudflare
+# silently replaces ANY 502/504 response body with its own generic
+# "origin misconfigured" page, so whatever detail we put in one never
+# reaches the admin. Confirmed live: a 401 from Printify (bad API key)
+# came back from this endpoint as a bare Cloudflare error page until this
+# was fixed. ──────────────────────────────────────────────────────────────
+
+def _printify_api_error(status_code, body="error"):
+    raise server.printify_client.PrintifyApiError(status_code, body)
+
+
+def test_fetch_sizes_refuses_with_400_not_502_when_printify_rejects_the_key():
+    with patch.object(server.printify_client, "get_product", side_effect=lambda pid: _printify_api_error(401, "Unauthorized")):
+        try:
+            run(server.get_printify_product_variants("pf-prod-1", ADMIN))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "PRINTIFY_API_KEY" in e.detail
+
+
+def test_fetch_sizes_is_404_when_printify_has_no_such_product():
+    with patch.object(server.printify_client, "get_product", side_effect=lambda pid: _printify_api_error(404, "not found")):
+        try:
+            run(server.get_printify_product_variants("pf-prod-1", ADMIN))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 404
+
+
+def test_fetch_sizes_other_printify_errors_are_400_not_502():
+    with patch.object(server.printify_client, "get_product", side_effect=lambda pid: _printify_api_error(500, "server error")):
+        try:
+            run(server.get_printify_product_variants("pf-prod-1", ADMIN))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+
+
+def test_register_webhooks_refuses_with_400_not_502_when_printify_rejects_it():
+    with patch.dict(server.os.environ, {"APP_PUBLIC_URL": "https://example.com"}), \
+         patch.object(server.printify_client, "ensure_webhooks_registered",
+                      side_effect=lambda url: _printify_api_error(401, "Unauthorized")):
+        try:
+            run(server.register_printify_webhooks(ADMIN))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400

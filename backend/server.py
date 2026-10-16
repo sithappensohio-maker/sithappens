@@ -45018,7 +45018,9 @@ async def register_printify_webhooks(user: dict = Depends(require_employee_or_ad
     except printify_client.PrintifyNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except printify_client.PrintifyApiError as exc:
-        raise HTTPException(status_code=502, detail=f"Printify rejected the webhook subscription: {exc}")
+        # Not 502 — Cloudflare replaces a 502/504 body with its own generic
+        # page, so this detail would never actually reach the admin.
+        raise HTTPException(status_code=400, detail=f"Printify rejected the webhook subscription: {exc}")
     return result
 
 
@@ -45038,8 +45040,18 @@ async def get_printify_product_variants(printify_product_id: str, user: dict = D
     except printify_client.PrintifyNotConfigured as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except printify_client.PrintifyApiError as exc:
-        status = 404 if exc.status_code == 404 else 502
-        raise HTTPException(status_code=status, detail=f"Printify couldn't find that product: {exc}")
+        # Never 502/504 here — Cloudflare replaces ANY 502/504 response body
+        # with its own generic "origin misconfigured" page, so whatever
+        # detail we put in one never actually reaches the admin. 400 is a
+        # normal application error Cloudflare passes straight through.
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Printify couldn't find that product: {exc}")
+        if exc.status_code in (401, 403):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Printify rejected this request ({exc.status_code}) — check PRINTIFY_API_KEY and "
+                       f"PRINTIFY_SHOP_ID in the backend environment: {exc}")
+        raise HTTPException(status_code=400, detail=f"Printify couldn't fetch that product: {exc}")
     # A Printify product carries every color/size combination its blueprint
     # supports (hundreds, typically) — is_enabled is the small subset this
     # SPECIFIC listing actually offers; the rest were never real options for
