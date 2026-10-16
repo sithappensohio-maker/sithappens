@@ -48,6 +48,19 @@ const SHIRT_INTERNAL = {
   ],
 };
 
+const MULTI_COLOR_SHIRT = {
+  kind: "product", id: "shirt-3", name: "Trail Dog Hoodie",
+  sales_destination: "printify", price: 19.99, effective_price: 19.99,
+  from_price: true, in_stock: true,
+  description: "", image_ids: [],
+  variants: [
+    { id: "v-black-s", name: "Black / S", price: 19.99, is_available: true },
+    { id: "v-black-m", name: "Black / M", price: 19.99, is_available: true },
+    { id: "v-purple-s", name: "Purple / S", price: 19.99, is_available: false },
+    { id: "v-purple-m", name: "Purple / M", price: 21.94, is_available: true },
+  ],
+};
+
 const PET_TAG = {
   kind: "product", id: "tag-1", name: "Pet ID Tag",
   sales_destination: "printify", price: 12.0, effective_price: 12.0,
@@ -216,5 +229,59 @@ describe("Printify product page — personalization required", () => {
   test("a plain item never shows a personalization form", async () => {
     await mountDetail(SHIRT_INTERNAL);
     expect(q("shop-detail-personalization")).toBeFalsy();
+  });
+});
+
+describe("Printify product page — many colors group into a color step then a size step", () => {
+  test("a single-color item (SHIRT) never shows a color picker — the flat size list as before", async () => {
+    await mountDetail(SHIRT);
+    expect(q("shop-detail-color-picker")).toBeFalsy();
+    expect(q("shop-detail-variant-v-s").textContent).toBe("Black / S");
+  });
+
+  test("a multi-color item shows colors first, no sizes until one is picked", async () => {
+    await mountDetail(MULTI_COLOR_SHIRT);
+    expect(q("shop-detail-color-picker")).toBeTruthy();
+    expect(q("shop-detail-color-Black").textContent).toBe("Black");
+    expect(q("shop-detail-color-Purple").textContent).toBe("Purple");
+    expect(q("shop-detail-variant-v-black-s")).toBeFalsy(); // no color picked yet
+    expect(q("shop-detail-purchase-disabled")).toBeTruthy();
+  });
+
+  test("picking a color reveals just that color's sizes, labeled by size alone", async () => {
+    await mountDetail(MULTI_COLOR_SHIRT);
+    await click(q("shop-detail-color-Black"));
+    expect(q("shop-detail-variant-v-black-s").textContent).toBe("S");
+    expect(q("shop-detail-variant-v-black-m").textContent).toBe("M");
+    expect(q("shop-detail-variant-v-purple-s")).toBeFalsy(); // a different color's size, not shown
+  });
+
+  test("a color whose every size is unavailable is disabled", async () => {
+    const allSoldOut = {
+      ...MULTI_COLOR_SHIRT, id: "shirt-4",
+      variants: MULTI_COLOR_SHIRT.variants.map((v) => (v.name.startsWith("Purple") ? { ...v, is_available: false } : v)),
+    };
+    await mountDetail(allSoldOut);
+    expect(q("shop-detail-color-Purple").disabled).toBe(true);
+  });
+
+  test("switching colors clears a size chosen under the old one", async () => {
+    await mountDetail(MULTI_COLOR_SHIRT);
+    await click(q("shop-detail-color-Black"));
+    await click(q("shop-detail-variant-v-black-s"));
+    expect(q("shop-detail-purchase")).toBeTruthy();
+    await click(q("shop-detail-color-Purple"));
+    expect(q("shop-detail-purchase-disabled")).toBeTruthy(); // size reset, must choose again
+    expect(q("shop-detail-variant-v-purple-m").textContent).toBe("M");
+  });
+
+  test("adding to cart after picking color then size hands the real variant id", async () => {
+    await mountDetail(MULTI_COLOR_SHIRT);
+    await click(q("shop-detail-color-Purple"));
+    await click(q("shop-detail-variant-v-purple-m"));
+    expect(q("shop-detail-variant-price").textContent).toBe("$21.94");
+    await click(q("shop-detail-purchase"));
+    expect(added).toHaveLength(1);
+    expect(added[0].variantId).toBe("v-purple-m");
   });
 });

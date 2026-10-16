@@ -8,7 +8,7 @@ import {
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
   creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
   creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget,
-  cartLineVariant, cartLineUnitPrice } from "./shopPolish";
+  cartLineVariant, cartLineUnitPrice, groupVariantsByColor } from "./shopPolish";
 
 const categories = [
   { id: "cat-merch", name: "Merch", subcategories: [{ id: "sub-collars", name: "Collars" }, { id: "sub-toys", name: "Toys" }] },
@@ -522,4 +522,43 @@ test("cartLineUnitPrice reads the variant's own price when one is chosen", () =>
 test("cartLineUnitPrice falls back to the item's own price with no variant chosen", () => {
   expect(cartLineUnitPrice(SHIRT, null)).toBe(19.99);
   expect(cartLineUnitPrice({ price: 8 }, undefined)).toBe(8);
+});
+
+// A real Printify hoodie's variants — every name is "Color / Size".
+const MANY_COLOR_VARIANTS = [
+  { id: "v1", name: "Black / S", price: 19.99, is_available: true },
+  { id: "v2", name: "Black / M", price: 19.99, is_available: true },
+  { id: "v3", name: "Purple / S", price: 19.99, is_available: false },
+  { id: "v4", name: "Purple / M", price: 19.99, is_available: true },
+];
+
+test("groupVariantsByColor groups Color / Size variants by their color, in first-seen order", () => {
+  const groups = groupVariantsByColor(MANY_COLOR_VARIANTS);
+  expect(groups.map((g) => g.color)).toEqual(["Black", "Purple"]);
+  expect(groups[0].variants.map((v) => v.size)).toEqual(["S", "M"]);
+  expect(groups[1].variants.map((v) => v.size)).toEqual(["S", "M"]);
+  // The original variant fields (id, price, is_available) survive untouched.
+  expect(groups[1].variants[0]).toEqual({ id: "v3", name: "Purple / S", price: 19.99, is_available: false, size: "S" });
+});
+
+test("groupVariantsByColor falls back to one ungrouped section with a single color", () => {
+  const oneColor = [
+    { id: "v1", name: "Black / S", price: 19.99 },
+    { id: "v2", name: "Black / M", price: 19.99 },
+  ];
+  expect(groupVariantsByColor(oneColor)).toEqual([{ color: null, variants: oneColor }]);
+});
+
+test("groupVariantsByColor falls back to one ungrouped section for plain (non Color/Size) option names", () => {
+  expect(groupVariantsByColor(SHIRT.variants)).toEqual([{ color: null, variants: SHIRT.variants }]);
+});
+
+test("groupVariantsByColor falls back to one ungrouped section for mixed/inconsistent name shapes", () => {
+  const mixed = [{ id: "v1", name: "Black / S" }, { id: "v2", name: "Just A Name" }];
+  expect(groupVariantsByColor(mixed)).toEqual([{ color: null, variants: mixed }]);
+});
+
+test("groupVariantsByColor returns an empty list for no variants", () => {
+  expect(groupVariantsByColor([])).toEqual([]);
+  expect(groupVariantsByColor(undefined)).toEqual([]);
 });

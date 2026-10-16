@@ -10,7 +10,7 @@ import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import { shopImageProps, galleryIds } from "../lib/shopImage";
-import { guestItemCta, creditPackDetailLine } from "../lib/shopPolish";
+import { guestItemCta, creditPackDetailLine, groupVariantsByColor } from "../lib/shopPolish";
 import ProductFacts from "./shop/ProductFacts";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -255,6 +255,11 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // price of its own); optional for a plain internal product that happens
   // to have options, same permissiveness the register already has.
   const [selectedVariantId, setSelectedVariantId] = useState(null);
+  // Which color's size row is showing — only meaningful once variantGroups
+  // actually has more than one color (see groupVariantsByColor); reset
+  // alongside the variant choice itself, both on a fresh item load and
+  // whenever a size picked under a different color is no longer valid.
+  const [selectedColor, setSelectedColor] = useState(null);
   // Free-text fields a personalized item needs filled in (e.g. a pet tag's
   // Name/Phone) — {fieldName: value}, reset along with everything else
   // whenever a different item loads.
@@ -263,7 +268,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null); setPersonalizationValues({});
+    setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null); setSelectedColor(null); setPersonalizationValues({});
     const url = isGuest
       ? `/public/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`
       : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
@@ -348,6 +353,12 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   const variants = item.kind === "product" ? (item.variants || []) : [];
   const hasVariants = variants.length > 0;
   const selectedVariant = hasVariants ? variants.find((v) => v.id === selectedVariantId) || null : null;
+  // A listing with many colors × sizes (a Printify hoodie easily has 70+
+  // variants) groups into a color step then a size step; anything else
+  // (a plain option list, or just one color) falls back to the flat list
+  // it's always had — see groupVariantsByColor.
+  const variantGroups = groupVariantsByColor(variants);
+  const isColorGrouped = variantGroups.length > 1;
   // A Printify item can never be added without a size — there's no base
   // price/SKU to fall back to (see PriceBlock and _price_shop_cart). A
   // plain internal product with options stays purchasable at its own base
@@ -474,7 +485,54 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             </p>
           )}
 
-          {hasVariants && (
+          {hasVariants && isColorGrouped && (
+            <div className="mt-4" data-testid="shop-detail-variant-picker">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">Choose a color</p>
+              <div className="flex flex-wrap gap-2" data-testid="shop-detail-color-picker">
+                {variantGroups.map((g) => {
+                  const selectedG = g.color === selectedColor;
+                  const colorUnavailable = g.variants.every((v) => v.is_available === false);
+                  return (
+                    <button key={g.color} type="button" disabled={colorUnavailable}
+                            onClick={() => { setSelectedColor(selectedG ? null : g.color); setSelectedVariantId(null); }}
+                            data-testid={`shop-detail-color-${g.color}`}
+                            title={colorUnavailable ? `${g.color} is currently unavailable` : undefined}
+                            className={`px-3 py-2 rounded-lg text-[12px] font-bold border transition
+                                       ${selectedG ? "bg-shPrimary text-bgHeader border-shPrimary"
+                                         : colorUnavailable ? "border-shBorder text-shTextMuted/50 cursor-not-allowed line-through"
+                                         : "border-shBorder text-shText hover:border-shPrimary/60"}`}>
+                      {g.color}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedColor && (
+                <>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5 mt-3">Choose a size</p>
+                  <div className="flex flex-wrap gap-2">
+                    {variantGroups.find((g) => g.color === selectedColor).variants.map((v) => {
+                      const selected = v.id === selectedVariantId;
+                      const unavailable = v.is_available === false;
+                      return (
+                        <button key={v.id} type="button" disabled={unavailable}
+                                onClick={() => setSelectedVariantId(selected ? null : v.id)}
+                                data-testid={`shop-detail-variant-${v.id}`}
+                                title={unavailable ? `${v.name} is currently unavailable` : undefined}
+                                className={`px-3 py-2 rounded-lg text-[12px] font-bold border transition
+                                           ${selected ? "bg-shPrimary text-bgHeader border-shPrimary"
+                                             : unavailable ? "border-shBorder text-shTextMuted/50 cursor-not-allowed line-through"
+                                             : "border-shBorder text-shText hover:border-shPrimary/60"}`}>
+                          {v.size}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {hasVariants && !isColorGrouped && (
             <div className="mt-4" data-testid="shop-detail-variant-picker">
               <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">
                 {isPrintify ? "Choose a size" : "Choose an option"}

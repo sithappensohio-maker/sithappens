@@ -44,7 +44,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { useOptionalPromptDialog } from "../lib/promptCtx";
 import { askRegisterPin } from "../lib/registerPin";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
-import { creditPackStaffLine, pickupActionToast } from "../lib/shopPolish";
+import { creditPackStaffLine, pickupActionToast, groupVariantsByColor } from "../lib/shopPolish";
 import {
   FrontDeskStatCard, FrontDeskQuickAction, FrontDeskToolButton, FrontDeskStatusChip,
   FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
@@ -368,6 +368,12 @@ export default function Pos({ onOpenShopManager } = {}) {
   // tile — tapping it opens this picker instead; addItem is then called
   // with the chosen variant. null when no picker is open.
   const [variantPickerItem, setVariantPickerItem] = useState(null);
+  // Which color's size list is showing in the picker below — only
+  // meaningful once that item's variants actually group by color (a
+  // Printify item can easily carry 70+ variants); reset every time the
+  // picker opens for a (possibly different) item.
+  const [variantPickerColor, setVariantPickerColor] = useState(null);
+  useEffect(() => { setVariantPickerColor(null); }, [variantPickerItem]);
 
   const addItem = (item, variant, personalization) => {
     const cartKind = CART_KIND[item.kind];
@@ -2463,33 +2469,63 @@ export default function Pos({ onOpenShopManager } = {}) {
           }}
         />
       )}
-      {variantPickerItem && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" data-testid="pos-variant-picker"
-             onClick={() => setVariantPickerItem(null)}>
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <p className="text-shText font-black text-sm mb-3">{variantPickerItem.name} — choose an option</p>
-            <div className="space-y-2">
-              {variantPickerItem.variants.map((v) => (
-                <button key={v.id} onClick={() => requestAdd(variantPickerItem, v)} disabled={!v.in_stock}
-                        data-testid={`pos-variant-${v.id}`}
-                        className="w-full flex items-center justify-between bg-black/10 border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40">
-                  <span className="text-shText font-bold text-sm">{v.name}</span>
-                  <span className="text-right">
-                    <span className="block text-shPrimary font-black text-sm">{money(v.price)}</span>
-                    <span className={`block text-[10px] font-black uppercase tracking-widest ${v.in_stock ? "text-shTextMuted" : "text-shDanger"}`}>
-                      {v.in_stock ? `${v.stock_on_hand} in stock` : "Out of Stock"}
-                    </span>
-                  </span>
-                </button>
-              ))}
+      {variantPickerItem && (() => {
+        const pickerGroups = groupVariantsByColor(variantPickerItem.variants);
+        const pickerColorGrouped = pickerGroups.length > 1;
+        const pickerSizeList = pickerColorGrouped
+          ? (pickerGroups.find((g) => g.color === variantPickerColor)?.variants || [])
+          : variantPickerItem.variants;
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" data-testid="pos-variant-picker"
+               onClick={() => setVariantPickerItem(null)}>
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <p className="text-shText font-black text-sm mb-3">
+                {variantPickerItem.name} — choose {pickerColorGrouped && !variantPickerColor ? "a color" : "an option"}
+              </p>
+              {pickerColorGrouped && (
+                <div className="flex flex-wrap gap-2 mb-3" data-testid="pos-variant-color-picker">
+                  {pickerGroups.map((g) => {
+                    const colorOutOfStock = g.variants.every((v) => !v.in_stock);
+                    const selectedColorBtn = g.color === variantPickerColor;
+                    return (
+                      <button key={g.color} type="button" disabled={colorOutOfStock}
+                              onClick={() => setVariantPickerColor(selectedColorBtn ? null : g.color)}
+                              data-testid={`pos-variant-color-${g.color}`}
+                              className={`px-3 py-2 rounded-lg text-[12px] font-bold border transition
+                                         ${selectedColorBtn ? "bg-shPrimary text-bgHeader border-shPrimary"
+                                           : colorOutOfStock ? "border-shBorder text-shTextMuted/50 cursor-not-allowed line-through"
+                                           : "border-shBorder text-shText hover:border-shPrimary/60"}`}>
+                        {g.color}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {(!pickerColorGrouped || variantPickerColor) && (
+                <div className="space-y-2">
+                  {pickerSizeList.map((v) => (
+                    <button key={v.id} onClick={() => requestAdd(variantPickerItem, v)} disabled={!v.in_stock}
+                            data-testid={`pos-variant-${v.id}`}
+                            className="w-full flex items-center justify-between bg-black/10 border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40">
+                      <span className="text-shText font-bold text-sm">{pickerColorGrouped ? v.size : v.name}</span>
+                      <span className="text-right">
+                        <span className="block text-shPrimary font-black text-sm">{money(v.price)}</span>
+                        <span className={`block text-[10px] font-black uppercase tracking-widest ${v.in_stock ? "text-shTextMuted" : "text-shDanger"}`}>
+                          {v.in_stock ? `${v.stock_on_hand} in stock` : "Out of Stock"}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => setVariantPickerItem(null)} data-testid="pos-variant-picker-cancel"
+                      className="w-full text-shTextMuted text-[12px] font-black uppercase tracking-widest mt-3 py-2">
+                Cancel
+              </button>
             </div>
-            <button onClick={() => setVariantPickerItem(null)} data-testid="pos-variant-picker-cancel"
-                    className="w-full text-shTextMuted text-[12px] font-black uppercase tracking-widest mt-3 py-2">
-              Cancel
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {personalizationItem && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" data-testid="pos-personalization-form"
              onClick={() => setPersonalizationItem(null)}>

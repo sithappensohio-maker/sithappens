@@ -195,6 +195,40 @@ export function cartLineUnitPrice(item, variantId) {
   return variant ? variant.price : (item?.price || 0);
 }
 
+// A Printify listing can easily carry 70+ variants (a dozen colors × 6
+// sizes) — every one of Printify's own variant titles is "Color / Size"
+// (e.g. "Purple / S"), so a flat list of all of them is an unscrollable
+// wall of near-duplicate buttons. Groups by the part before " / " when
+// EVERY variant shares that two-part shape; each group's own variants
+// carry their parsed `size` (the original object is otherwise untouched —
+// callers still read whichever availability field their own surface uses,
+// `in_stock` at the register vs `is_available` in the Shop).
+//
+// Falls back to a single ungrouped section — { color: null, variants } —
+// for anything that doesn't fit: a plain internal product's simple option
+// names ("Black", "Medium"), or a listing with only one color (where a
+// one-item "choose a color" step would be pure friction, not real
+// grouping). Callers render that case as the plain flat list they always
+// have; the grouped UI only kicks in when there's genuinely more than one
+// color to choose between.
+export function groupVariantsByColor(variants) {
+  const list = variants || [];
+  if (list.length === 0) return [];
+  const parts = list.map((v) => (v.name || "").split(" / "));
+  const allTwoPart = parts.every((p) => p.length === 2 && p[0].trim() && p[1].trim());
+  if (!allTwoPart) return [{ color: null, variants: list }];
+  const order = [];
+  const byColor = new Map();
+  list.forEach((v, i) => {
+    const color = parts[i][0].trim();
+    const size = parts[i][1].trim();
+    if (!byColor.has(color)) { byColor.set(color, []); order.push(color); }
+    byColor.get(color).push({ ...v, size });
+  });
+  const groups = order.map((color) => ({ color, variants: byColor.get(color) }));
+  return groups.length > 1 ? groups : [{ color: null, variants: list }];
+}
+
 // Shop Appearance & Organization — hardcoded fallback metadata for the 3
 // permanent section keys, used whenever shop_page settings are absent or
 // incomplete so the Shop always renders something sensible on a fresh
