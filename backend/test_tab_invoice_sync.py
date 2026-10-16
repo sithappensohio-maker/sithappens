@@ -479,7 +479,7 @@ def test_a_payment_being_refunded_can_never_also_be_recorded(monkeypatch):
     cid = _client()
     _bid, inv = _visit(cid, total=100.0, paid=40.0, tab=True)
     aid = _stuck(cid, inv, 60.0)
-    assert _refused(lambda: run(resolve.refund_payment(aid, OWNER))).status_code == 502
+    assert _refused(lambda: run(resolve.refund_payment(aid, OWNER))).status_code == 503  # never 502/504 — Cloudflare eats that body
     attempt = run(server.db.stripe_payment_attempts.find_one({"id": aid}, {"_id": 0}))
     assert attempt["status"] == "refunding"
     run(server._handle_checkout_session_paid_event({"id": "cs_audit7", "payment_status": "paid", "payment_intent": "pi_audit7"}))
@@ -569,7 +569,7 @@ def test_a_refund_stripe_reports_failed_puts_the_payment_back(monkeypatch):
     cid = _client()
     _bid, inv = _visit(cid, total=100.0, paid=40.0, tab=True)
     aid = _stuck(cid, inv, 60.0)
-    assert _refused(lambda: run(resolve.refund_payment(aid, OWNER))).status_code == 502
+    assert _refused(lambda: run(resolve.refund_payment(aid, OWNER))).status_code == 503  # never 502/504 — Cloudflare eats that body
     assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "reconciliation_required"
     assert _inv(inv["id"])["stripe_active_attempt_id"] == aid
     # And a refund Stripe accepted, then failed later (webhook).

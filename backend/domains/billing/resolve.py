@@ -313,11 +313,14 @@ async def refund_payment(attempt_id: str, user: dict) -> dict:
                 metadata={"sithappens_stuck_attempt_id": attempt_id})
         except Exception as exc:
             _g("logger").warning("Stuck-payment refund failed for %s: %s", attempt_id, exc)
-            raise HTTPException(status_code=502, detail="Stripe couldn't refund this right now. Press Refund again in a minute.")
+            # Never 502/504 — Cloudflare replaces ANY 502/504 response body
+            # with its own generic page, so this detail would never reach
+            # the admin. 503 is a normal app error Cloudflare passes through.
+            raise HTTPException(status_code=503, detail="Stripe couldn't refund this right now. Press Refund again in a minute.")
         refund_id = refund["id"]
         if (refund.get("status") if hasattr(refund, "get") else None) in ("failed", "canceled"):
             await _reopen_after_failed_refund(a)
-            raise HTTPException(status_code=502, detail="Stripe couldn't refund this payment. It's back in the list — try again or contact Stripe.")
+            raise HTTPException(status_code=503, detail="Stripe couldn't refund this payment. It's back in the list — try again or contact Stripe.")
     await _finish_closing(a, "refunded", user, refund_id)
     return {"ok": True, "refunded": True, "stripe_refund_id": refund_id}
 

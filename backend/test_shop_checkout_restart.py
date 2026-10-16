@@ -45,7 +45,7 @@ def test_a_payment_that_fails_to_start_tells_the_screen_to_start_fresh_and_a_fre
                 e = _refused(lambda: run(guest_checkout(_guest_body([_item("product", p["id"])], idem=key), _Req())))
             finally:
                 server.stripe.checkout.Session.create = real
-            assert e.status_code == 502
+            assert e.status_code == 503  # never 502/504 — Cloudflare replaces that body with its own generic page
             assert e.detail["error_code"] == shop_checkout.RESTART_CODE and "nothing was charged" in e.detail["msg"]
             claim = run(server.db.shop_checkout_claims.find_one({"idempotency_key": key}, {"_id": 0}))
             failed = run(server.db.shop_orders.find_one({"id": claim["shop_order_id"]}, {"_id": 0}))

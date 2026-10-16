@@ -199,7 +199,9 @@ async def start_topup(*, code: str, body: GiftCardTopupSessionIn, user: dict) ->
         await _db.gift_card_topup_attempts.update_one(
             {"id": attempt_id}, {"$set": {"status": "failed", "updated_at": _now_iso_fn()}})
         _logger.warning("Stripe session creation failed for gift card top-up %s: %s", attempt_id, exc)
-        raise HTTPException(status_code=502,
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the client.
+        raise HTTPException(status_code=503,
                             detail="Could not start the payment — please try again.")
 
     await _db.gift_card_topup_attempts.update_one(
@@ -261,7 +263,9 @@ async def start_purchase(*, body: GiftCardPurchaseIn, user: dict) -> dict:
             {"id": attempt_id}, {"$set": {"status": "failed", "updated_at": _now_iso_fn()}})
         _logger.warning("Stripe session creation failed for gift card purchase %s: %s",
                         attempt_id, exc)
-        raise HTTPException(status_code=502,
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the client.
+        raise HTTPException(status_code=503,
                             detail="Could not start the payment — please try again.")
 
     await _db.gift_card_topup_attempts.update_one(

@@ -183,7 +183,7 @@ def test_staff_can_refund_it_in_one_step():
 def test_a_failed_refund_puts_it_back_in_the_list():
     with _order(status="canceled", attempt_status="expired") as o, _stripe(refund_status="failed"):
         run(server._handle_shop_checkout_session_paid_event(_paid_event(o)))
-        assert _refused(lambda: run(resolve.refund_payment(o["attempt_id"], ADMIN))).status_code == 502
+        assert _refused(lambda: run(resolve.refund_payment(o["attempt_id"], ADMIN))).status_code == 503  # never 502/504 — Cloudflare eats that body
         assert _attempt(o)["status"] == "reconciliation_required"
         assert any(r["id"] == o["attempt_id"] for r in run(resolve.stuck_payments()))
 

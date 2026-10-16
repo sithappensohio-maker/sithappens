@@ -447,7 +447,11 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
         )
         await _s("_release_shop_order_inventory")(order_id)
         logger.warning("Stripe Checkout Session creation failed for shop attempt %s: %s", attempt_id, exc)
-        raise _restart(502, "Could not start the online payment — nothing was charged. Please try again.")
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, hiding this (and the checkout_restart
+        # error_code _restart() carries) from the browser. isCheckoutRestart
+        # keys off that error_code alone, never the status, so 503 is safe.
+        raise _restart(503, "Could not start the online payment — nothing was charged. Please try again.")
 
     written = await db.shop_payment_attempts.update_one(
         {"id": attempt_id, "status": "pending"},

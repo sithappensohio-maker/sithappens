@@ -367,7 +367,7 @@ def test_checkout_session_creation_failure_releases_reservation(admin_headers, f
     key = uuid.uuid4().hex
     r = requests.post(f"{API}/portal/invoices/{invoice['id']}/stripe-checkout-session",
                        headers=headers, json={"idempotency_key": key}, timeout=20)
-    assert r.status_code == 502, r.text  # deliberately-nonexistent Stripe customer id -> real Stripe error
+    assert r.status_code == 503, r.text  # never 502/504 — Cloudflare eats that body; deliberately-nonexistent Stripe customer id -> real Stripe error
 
     fresh = _get_invoice_raw(invoice["id"])
     assert fresh.get("stripe_active_attempt_id") is None, "reservation must be released after a session-creation failure"
@@ -730,7 +730,7 @@ def test_stripe_refund_create_failure_no_mutation(admin_headers, fresh_client_an
     r = requests.post(f"{API}/payments/{payment_id}/stripe-refund", headers=admin_headers, json={
         "amount": 50.0, "idempotency_key": uuid.uuid4().hex,
     }, timeout=20)
-    assert r.status_code == 502, r.text
+    assert r.status_code == 503, r.text  # never 502/504 — Cloudflare eats that body
 
     async def _fetch(db):
         p = await db.payments.find_one({"id": payment_id}, {"_id": 0})

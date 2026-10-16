@@ -345,7 +345,8 @@ def test_a_checkout_rejects_unavailable_product(admin_headers, fresh_client):
 
 
 def test_a_checkout_creates_order_snapshot_and_fails_stripe_call(admin_headers, fresh_client):
-    """The Session.create call itself is forced to fail for real (502) via
+    """The Session.create call itself is forced to fail for real (503 —
+    never 502/504, Cloudflare eats that body) via
     a deliberately-nonexistent Stripe customer id, but our own order
     snapshot + tax + inventory reservation logic runs for real before that
     point."""
@@ -357,7 +358,7 @@ def test_a_checkout_creates_order_snapshot_and_fails_stripe_call(admin_headers, 
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 2}],
         "idempotency_key": idem_key,
     }, timeout=15)
-    assert r.status_code == 502, r.text
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -379,7 +380,7 @@ def test_a_checkout_idempotent_retry_resumes_same_order(admin_headers, fresh_cli
     body = {"items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key}
 
     r1 = requests.post(f"{API}/shop/checkout", headers=headers, json=body, timeout=15)
-    assert r1.status_code == 502
+    assert r1.status_code == 503  # never 502/504 - Cloudflare eats that body
 
     async def _find_orders(db):
         return await db.shop_orders.find({"client_id": fresh_client["id"]}, {"_id": 0}).to_list(10)
@@ -387,7 +388,7 @@ def test_a_checkout_idempotent_retry_resumes_same_order(admin_headers, fresh_cli
     assert len(orders_after_first) == 1
 
     r2 = requests.post(f"{API}/shop/checkout", headers=headers, json=body, timeout=15)
-    assert r2.status_code in (409, 502), r2.text  # already resolved (failed) -> 409 on retry of a terminal attempt
+    assert r2.status_code in (409, 503), r2.text  # already resolved (failed) -> 409 on retry of a terminal attempt
 
     orders_after_second = _mongo_run(_find_orders)
     assert len(orders_after_second) == 1  # never a second order for the same idempotency_key
@@ -401,7 +402,7 @@ def test_a_checkout_same_key_different_cart_is_409(admin_headers, fresh_client):
     r1 = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key,
     }, timeout=15)
-    assert r1.status_code == 502
+    assert r1.status_code == 503  # never 502/504 - Cloudflare eats that body
 
     r2 = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 2}], "idempotency_key": idem_key,
@@ -446,7 +447,7 @@ def test_a_tax_allocated_only_to_physical_lines(admin_headers, fresh_client):
             ],
             "idempotency_key": str(uuid.uuid4()),
         }, timeout=15)
-        assert r.status_code == 502, r.text
+        assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body
 
         async def _find_order(db):
             return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -472,7 +473,7 @@ def test_a_no_tax_when_disabled(admin_headers, fresh_client):
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502
+    assert r.status_code == 503  # never 502/504 - Cloudflare eats that body
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -1228,7 +1229,7 @@ def test_h_checkout_ignores_client_id_in_request_body(admin_headers, fresh_clien
             "idempotency_key": str(uuid.uuid4()),
             "client_id": other_client["id"],  # attempted spoof — not a real field on ShopCheckoutIn
         }, timeout=15)
-        assert r.status_code == 502, r.text  # still fails at Stripe (forced failure), but the order itself...
+        assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body; still fails at Stripe (forced failure), but the order itself...
 
         async def _find_order(db):
             return await db.shop_orders.find_one({"total": 12.0}, {"_id": 0}, sort=[("created_at", -1)])
@@ -1288,7 +1289,7 @@ def test_f_legacy_product_first_reservation_succeeds_past_stripe(admin_headers, 
     way test_h_checkout_ignores_client_id_in_request_body proves order
     creation: Stripe Session.create is forced to fail deterministically (a
     nonexistent customer id), so a successful reservation is observed as a
-    502 — if the legacy-compatibility fix were missing, the request would
+    503 — if the legacy-compatibility fix were missing, the request would
     instead fail earlier with 409 ("Stock changed too many times
     concurrently"), since the reservation's atomic filter would never match
     a document missing the field."""
@@ -1305,7 +1306,7 @@ def test_f_legacy_product_first_reservation_succeeds_past_stripe(admin_headers, 
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text  # got PAST reservation — only Stripe itself failed
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body; got PAST reservation — only Stripe itself failed
     assert "concurrently" not in r.text.lower()
 
 
@@ -1326,7 +1327,7 @@ def test_f_legacy_first_reservation_creates_fields(admin_headers, fresh_client):
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body
 
     after = _get_product(product["id"])
     assert "stock_reserved" in after
@@ -1388,7 +1389,7 @@ def test_f_retry_same_idempotency_key_recovers_same_shop_order(admin_headers, fr
     Session creation itself fails, the existing (unchanged) code marks
     that order 'payment_failed' and releases its reservation by design —
     that order is then terminally dead, so a same-key retry correctly gets
-    a 409 ('start a new checkout') rather than a second 502. That is a
+    a 409 ('start a new checkout') rather than a second 503. That is a
     different, already-intentional failure mode from the bug this session
     fixed (which raised its 409 from the reservation step BEFORE the order
     was ever touched, leaving it recoverable). Either way, the key proof
@@ -1401,14 +1402,14 @@ def test_f_retry_same_idempotency_key_recovers_same_shop_order(admin_headers, fr
     cart = {"items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key}
 
     r1 = requests.post(f"{API}/shop/checkout", headers=headers, json=cart, timeout=15)
-    assert r1.status_code == 502, r1.text  # Stripe forced to fail deterministically
+    assert r1.status_code == 503, r1.text  # never 502/504 - Cloudflare eats that body; Stripe forced to fail deterministically
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0, "id": 1})
     order_id_1 = _mongo_run(_find_order)["id"]
 
     r2 = requests.post(f"{API}/shop/checkout", headers=headers, json=cart, timeout=15)
-    assert r2.status_code in (502, 409), r2.text  # never a fresh 2xx/order — see docstring
+    assert r2.status_code in (503, 409), r2.text  # never a fresh 2xx/order — see docstring
 
     async def _counts(db):
         orders = await db.shop_orders.find({"client_id": fresh_client["id"]}, {"_id": 0, "id": 1}).to_list(10)
@@ -1437,7 +1438,7 @@ def test_f_same_idempotency_key_different_cart_rejected(admin_headers, fresh_cli
         "items": [{"kind": "product", "ref_id": product_a["id"], "quantity": 1}],
         "idempotency_key": idem_key,
     }, timeout=15)
-    assert r1.status_code == 502, r1.text
+    assert r1.status_code == 503, r1.text  # never 502/504 - Cloudflare eats that body
 
     r2 = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product_b["id"], "quantity": 1}],  # different cart, same key
@@ -1853,7 +1854,7 @@ def test_j_new_order_has_admin_unseen_true_but_does_not_count_until_paid(admin_h
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text  # Stripe forced to fail deterministically — order still created first
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body; Stripe forced to fail deterministically — order still created first
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -2027,7 +2028,7 @@ def test_k_checkout_charges_override_price_not_catalog_price(admin_headers, fres
             "items": [{"kind": "credit_pack", "ref_id": pack["id"], "quantity": 1}],
             "idempotency_key": str(uuid.uuid4()),
         }, timeout=15)
-        assert r.status_code == 502, r.text  # Stripe forced to fail — order already frozen first
+        assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body; Stripe forced to fail — order already frozen first
 
         async def _find_order(db):
             return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -2058,7 +2059,7 @@ def test_k_checkout_ignores_browser_submitted_price(admin_headers, fresh_client)
                    "unit_price": 1.0, "price": 1.0}],  # attempted price tampering
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
@@ -2075,7 +2076,7 @@ def test_k_checkout_no_override_uses_standard_catalog_price(admin_headers, fresh
         "items": [{"kind": "credit_pack", "ref_id": pack["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text
+    assert r.status_code == 503, r.text  # never 502/504 - Cloudflare eats that body
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})

@@ -449,7 +449,7 @@ def test_shop_order_freezes_category_snapshot(admin_headers, fresh_client):
             "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
             "idempotency_key": str(uuid.uuid4()),
         }, timeout=20)
-        assert r.status_code == 502, r.text  # forced Stripe failure — order already frozen first
+        assert r.status_code == 503, r.text  # never 502/504 — Cloudflare eats that body; forced Stripe failure — order already frozen first
 
         async def _find_order(db):
             return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
