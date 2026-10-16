@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
@@ -104,6 +104,57 @@ function StatusPill({ active, label }) {
     }`}>
       <i className={`fas ${active ? "fa-circle-check" : "fa-circle-pause"}`} />{label || (active ? "Active" : "Inactive")}
     </span>
+  );
+}
+
+/* Owner: a row with inventory tracking could carry up to 7 action buttons
+ * (Edit, Duplicate, Print Label, Receive/Adjust Stock, Stock History,
+ * Delete) — wide enough that the table's horizontal scroll hid Delete
+ * entirely off-screen for shorter rows too, reading as "there's no delete".
+ * Edit and Delete/Hide stay inline (always reachable); everything else
+ * collapses behind this one "More" button so every row is the same fixed
+ * width. */
+function RowActionsMenu({ actions, testIdPrefix }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKeyDown = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (actions.length === 0) return null;
+
+  return (
+    <div className="relative inline-block" ref={containerRef}>
+      <button onClick={() => setOpen(o => !o)} data-testid={`${testIdPrefix}-more`}
+              aria-haspopup="menu" aria-expanded={open}
+              className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">
+        More <i className={`fas fa-caret-${open ? "up" : "down"} ml-0.5`} />
+      </button>
+      {open && (
+        <div role="menu" data-testid={`${testIdPrefix}-more-panel`}
+             className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-shBorder shadow-2xl overflow-hidden"
+             style={{ background: "var(--sh-card-base)" }}>
+          {actions.map((a) => (
+            <button key={a.key} role="menuitem" data-testid={a.testId} disabled={a.disabled}
+                    onClick={() => { setOpen(false); a.onClick(); }}
+                    className="w-full text-left px-3 py-2 text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText hover:bg-shSurfaceRaised disabled:opacity-40 transition">
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -450,23 +501,19 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                     ) : (
                       <>
                         <button onClick={() => onEditItem(it)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Edit</button>
-                        <button onClick={() => duplicateItem(it)} disabled={busyId === it.id} data-testid={`sm-duplicate-${it.id}`}
-                                className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Duplicate</button>
-                        {it.kind === "physical_product" && it.sales_destination !== "shopify_external" && (!it.variants || it.variants.length === 0) && (
-                          <button onClick={() => setPrintLabelTarget({ productId: it.id, itemName: it.name, initialSku: it.sku || "", price: it.list_price })}
-                                  data-testid={`sm-print-label-${it.id}`}
-                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Print Label</button>
-                        )}
-                        {it.kind === "physical_product" && it.track_inventory && (
-                          <>
-                            <button onClick={() => openReceiveStock(it)} data-testid={`sm-receive-stock-${it.id}`}
-                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Receive Stock</button>
-                            <button onClick={() => openAdjustStock(it)} data-testid={`sm-adjust-stock-${it.id}`}
-                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Adjust Stock</button>
-                            <button onClick={() => openStockHistory(it)} data-testid={`sm-stock-history-${it.id}`}
-                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Stock History</button>
-                          </>
-                        )}
+                        <RowActionsMenu testIdPrefix={`sm-row-${it.id}`} actions={[
+                          { key: "duplicate", label: "Duplicate", disabled: busyId === it.id,
+                            testId: `sm-duplicate-${it.id}`, onClick: () => duplicateItem(it) },
+                          ...(it.kind === "physical_product" && it.sales_destination !== "shopify_external" && (!it.variants || it.variants.length === 0) ? [
+                            { key: "print-label", label: "Print Label", testId: `sm-print-label-${it.id}`,
+                              onClick: () => setPrintLabelTarget({ productId: it.id, itemName: it.name, initialSku: it.sku || "", price: it.list_price }) },
+                          ] : []),
+                          ...(it.kind === "physical_product" && it.track_inventory ? [
+                            { key: "receive-stock", label: "Receive Stock", testId: `sm-receive-stock-${it.id}`, onClick: () => openReceiveStock(it) },
+                            { key: "adjust-stock", label: "Adjust Stock", testId: `sm-adjust-stock-${it.id}`, onClick: () => openAdjustStock(it) },
+                            { key: "stock-history", label: "Stock History", testId: `sm-stock-history-${it.id}`, onClick: () => openStockHistory(it) },
+                          ] : []),
+                        ]} />
                         {it.kind === "physical_product" ? (
                           <button onClick={() => openDeleteProduct(it)} data-testid={`sm-delete-${it.id}`}
                                   className="text-red-400 text-[11px] font-black uppercase tracking-widest">Delete</button>

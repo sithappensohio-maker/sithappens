@@ -143,9 +143,14 @@ describe("the Shop Manager survives being rendered", () => {
   });
 
   test("Print Label is offered for a plain physical product, never for a pack or a program", async () => {
+    // Row actions beyond Edit/Delete collapse behind a "More" menu (see
+    // RowActionsMenu) — each row's own menu must be opened first.
     await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-p1-more").click(); });
     expect(byTestId("sm-print-label-p1")).toBeTruthy();
+    await act(async () => { byTestId("sm-row-k1-more").click(); });
     expect(byTestId("sm-print-label-k1")).toBeFalsy();
+    await act(async () => { byTestId("sm-row-t1-more").click(); });
     expect(byTestId("sm-print-label-t1")).toBeFalsy();
   });
 
@@ -153,11 +158,28 @@ describe("the Shop Manager survives being rendered", () => {
     api.post.mockReset();
     api.post.mockResolvedValue({ data: { sku: "2000000000" } });
     await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-p1-more").click(); });
     await act(async () => { byTestId("sm-print-label-p1").click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     noReferenceErrors();
     expect(byTestId("print-labels-modal")).toBeTruthy();
     expect(api.post).toHaveBeenCalledWith("/pos/products/p1/generate-sku");
+  });
+
+  // Owner-reported bug: a row with several actions (Duplicate, Print
+  // Label, Receive/Adjust Stock, Stock History) pushed the row so wide
+  // that Delete scrolled off-screen — read as "there's no way to delete
+  // this". Edit and Delete must always be reachable with no "More" menu
+  // and no horizontal scrolling.
+  test("Edit and Delete are always inline, never hidden behind the More menu", async () => {
+    await mount(<ShopManager />);
+    const row = byTestId("sm-item-row-p1");
+    expect(row.querySelector('[data-testid="sm-delete-p1"]')).toBeTruthy();
+    expect([...row.querySelectorAll("button")].some((b) => b.textContent === "Edit")).toBe(true);
+    // Not yet opened — Duplicate lives inside the collapsed menu.
+    expect(byTestId("sm-duplicate-p1")).toBeFalsy();
+    await act(async () => { byTestId("sm-row-p1-more").click(); });
+    expect(byTestId("sm-duplicate-p1")).toBeTruthy();
   });
 });
 
