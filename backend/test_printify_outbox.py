@@ -13,12 +13,19 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
+import pytest
 import server
+from fastapi import HTTPException
+from starlette.requests import Request
 from _test_loop import run
 
 from domains.printify import client as printify_client
 
 TAG = "TEST_PRINTIFY_OUTBOX"
+ADMIN = {"id": f"{TAG}-admin", "name": f"{TAG} admin", "email": "printify-admin@test", "role": "admin"}
+# read_only has neither take_payments nor pricing by default — see
+# server.py's PERMISSIONS_BY_STAFF_ROLE.
+NO_PERMS = {"id": f"{TAG}-ro", "name": f"{TAG} read-only", "email": "printify-ro@test", "role": "employee", "staff_role": "read_only"}
 
 PICKUP_ENV = {
     "PRINTIFY_PICKUP_FIRST_NAME": "Sit Happens",
@@ -197,3 +204,217 @@ def test_a_row_not_yet_due_is_left_alone():
         assert _fetch(row["id"])["status"] == "pending"
     finally:
         _cleanup([row["id"]])
+
+
+# ── Admin screen: list + retry (Shop Manager → Printify Orders) ────────────
+
+def test_admin_list_returns_rows_newest_first_and_can_filter_by_status():
+    pending = _insert(_row())
+    stuck = _insert(_row(status="stuck"))
+    try:
+        result = run(server.list_printify_outbox(status=None, user=ADMIN))
+        ids = [r["id"] for r in result["rows"]]
+        assert pending["id"] in ids and stuck["id"] in ids
+        only_stuck = run(server.list_printify_outbox(status="stuck", user=ADMIN))
+        assert [r["id"] for r in only_stuck["rows"]] == [stuck["id"]]
+    finally:
+        _cleanup([pending["id"], stuck["id"]])
+
+
+def test_admin_list_refuses_a_user_without_take_payments():
+    with pytest.raises(HTTPException) as exc_info:
+        run(server.list_printify_outbox(status=None, user=NO_PERMS))
+    assert exc_info.value.status_code == 403
+
+
+def test_admin_retry_resets_a_stuck_row_to_pending():
+    row = _insert(_row(status="stuck", attempts=8, last_error="Printify API error 422: variant not found"))
+    try:
+        run(server.retry_printify_outbox_row(row["id"], user=ADMIN))
+        fresh = _fetch(row["id"])
+        assert fresh["status"] == "pending"
+        assert fresh["attempts"] == 0
+        assert fresh["last_error"] is None
+        assert fresh["next_attempt_at"] <= server.now_iso()
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_admin_retry_refuses_an_already_submitted_row():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-9"))
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.retry_printify_outbox_row(row["id"], user=ADMIN))
+        assert exc_info.value.status_code == 400
+        assert _fetch(row["id"])["status"] == "submitted"
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_admin_retry_404s_on_an_unknown_row():
+    with pytest.raises(HTTPException) as exc_info:
+        run(server.retry_printify_outbox_row("no-such-row", user=ADMIN))
+    assert exc_info.value.status_code == 404
+
+
+def test_admin_retry_refuses_a_user_without_take_payments():
+    row = _insert(_row(status="stuck"))
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.retry_printify_outbox_row(row["id"], user=NO_PERMS))
+        assert exc_info.value.status_code == 403
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_register_webhooks_refuses_without_app_public_url():
+    with patch.dict("os.environ", {"APP_PUBLIC_URL": ""}):
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.register_printify_webhooks(user=ADMIN))
+        assert exc_info.value.status_code == 400
+
+
+def test_register_webhooks_refuses_a_user_without_pricing_permission():
+    with pytest.raises(HTTPException) as exc_info:
+        run(server.register_printify_webhooks(user=NO_PERMS))
+    assert exc_info.value.status_code == 403
+
+
+# ── Webhook event application (domains/printify/client.apply_webhook_event) ─
+
+def _event(topic, printify_order_id, **data):
+    return {"id": f"evt-{uuid.uuid4().hex[:8]}", "type": topic, "created_at": server.now_iso(),
+            "resource": {"id": printify_order_id, "type": "order", "data": data}}
+
+
+def test_apply_webhook_event_ignores_an_order_id_it_doesnt_recognize():
+    result = run(printify_client.apply_webhook_event(server.db, _event("order:updated", "unknown-order", status="on-hold")))
+    assert result is None
+
+
+def test_apply_webhook_event_ignores_an_unrecognized_topic():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-1"))
+    try:
+        result = run(printify_client.apply_webhook_event(server.db, _event("some:other:topic", "pf-order-1")))
+        assert result is None
+        assert "printify_status" not in _fetch(row["id"])
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_apply_webhook_event_records_status_updates_without_touching_retry_state():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-2", attempts=0))
+    try:
+        updated_id = run(printify_client.apply_webhook_event(server.db, _event("order:updated", "pf-order-2", status="in-production")))
+        assert updated_id == row["id"]
+        fresh = _fetch(row["id"])
+        assert fresh["printify_status"] == "in-production"
+        # Never touches process_outbox's own state machine.
+        assert fresh["status"] == "submitted"
+        assert fresh["attempts"] == 0
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_apply_webhook_event_records_shipment_tracking():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-3"))
+    try:
+        carrier = {"code": "usps", "number": "9400111", "url": "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111"}
+        run(printify_client.apply_webhook_event(
+            server.db, _event("order:shipment:created", "pf-order-3", shipped_at="2026-10-16T12:00:00Z", carrier=carrier),
+        ))
+        fresh = _fetch(row["id"])
+        assert fresh["printify_status"] == "shipped"
+        assert fresh["shipped_at"] == "2026-10-16T12:00:00Z"
+        assert fresh["tracking"] == carrier
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_apply_webhook_event_records_delivery():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-4"))
+    try:
+        run(printify_client.apply_webhook_event(
+            server.db, _event("order:shipment:delivered", "pf-order-4", delivered_at="2026-10-18T09:00:00Z"),
+        ))
+        fresh = _fetch(row["id"])
+        assert fresh["printify_status"] == "delivered"
+        assert fresh["delivered_at"] == "2026-10-18T09:00:00Z"
+    finally:
+        _cleanup([row["id"]])
+
+
+# ── Webhook route: signature verification, parsing, dedup ──────────────────
+
+def _webhook_request(body: bytes, signature=None):
+    headers = [(b"content-type", b"application/json")]
+    if signature is not None:
+        headers.append((b"x-pfy-signature", signature.encode()))
+    scope = {
+        "type": "http", "method": "POST", "path": "/api/webhooks/printify",
+        "headers": headers, "client": ("127.0.0.1", 12345), "scheme": "http",
+        "server": ("test", 80), "query_string": b"",
+    }
+    sent = {"done": False}
+
+    async def receive():
+        if sent["done"]:
+            return {"type": "http.disconnect"}
+        sent["done"] = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(scope, receive=receive)
+
+
+def test_webhook_route_401s_on_a_bad_signature():
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        req = _webhook_request(b'{"id":"evt-1","type":"order:updated","resource":{"id":"x","data":{}}}', signature="sha256=wrong")
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.printify_webhook(req))
+        assert exc_info.value.status_code == 401
+
+
+def test_webhook_route_applies_a_correctly_signed_event_end_to_end():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-5"))
+    body = f'{{"id":"evt-{uuid.uuid4().hex[:8]}","type":"order:updated","resource":{{"id":"pf-order-5","type":"order","data":{{"status":"in-production"}}}}}}'.encode()
+    try:
+        with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+            sig = _sign_body("shh", body)
+            req = _webhook_request(body, signature=sig)
+            result = run(server.printify_webhook(req))
+        assert result == {"ok": True}
+        assert _fetch(row["id"])["printify_status"] == "in-production"
+    finally:
+        _cleanup([row["id"]])
+
+
+def test_webhook_route_malformed_body_400s_even_with_a_valid_signature():
+    body = b"not json"
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        sig = _sign_body("shh", body)
+        req = _webhook_request(body, signature=sig)
+        with pytest.raises(HTTPException) as exc_info:
+            run(server.printify_webhook(req))
+        assert exc_info.value.status_code == 400
+
+
+def test_webhook_route_dedups_a_replayed_event_id():
+    row = _insert(_row(status="submitted", printify_order_id="pf-order-6"))
+    event_id = f"evt-{uuid.uuid4().hex[:8]}"
+    body = f'{{"id":"{event_id}","type":"order:updated","resource":{{"id":"pf-order-6","type":"order","data":{{"status":"in-production"}}}}}}'.encode()
+    try:
+        with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+            sig = _sign_body("shh", body)
+            first = run(server.printify_webhook(_webhook_request(body, signature=sig)))
+            second = run(server.printify_webhook(_webhook_request(body, signature=sig)))
+        assert first == {"ok": True}
+        assert second == {"ok": True, "duplicate": True}
+    finally:
+        _cleanup([row["id"]])
+        run(server.db.printify_webhook_events.delete_one({"id": event_id}))
+
+
+def _sign_body(secret: str, body: bytes) -> str:
+    import hashlib
+    import hmac
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()

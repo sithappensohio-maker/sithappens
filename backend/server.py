@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import re
+import json
 import base64
 import socket
 import uuid
@@ -30258,6 +30259,12 @@ BACKUP_COLLECTIONS = [
     # Theme Gallery — saved/named theme presets (admin-created palettes).
     # Real, hand-crafted admin work; must survive a backup/restore cycle.
     "theme_presets",
+    # Printify print-on-demand — a stuck/held row represents a real
+    # production obligation (paid, not yet submitted); losing it on restore
+    # would mean no record the order still needs to go out. The webhook
+    # event log is dedup bookkeeping, same role as stripe_webhook_events
+    # above — kept for the same reason that one is.
+    "printify_order_outbox", "printify_webhook_events",
 ]
 # Every collection the app writes that is deliberately NOT backed up, and why.
 # A test (test_backup_coverage_guard.py) fails when code writes a collection
@@ -34274,6 +34281,15 @@ async def startup():
         (db.agreement_templates, "id", {"unique": True}),
         (db.agreement_signatures, [("client_id", 1), ("template_id", 1), ("template_version", 1)], {"unique": True}),
         (db.expenses, "stripe_balance_transaction_id", {"unique": True, "partialFilterExpression": {"stripe_balance_transaction_id": {"$type": "string"}}}),
+        # Printify print-on-demand — the outbox worker's own due-row scan
+        # (status + next_attempt_at), the webhook's own lookup back to a row
+        # by Printify's order id, and the admin list screen's own lookup by
+        # the sale that queued it.
+        (db.printify_order_outbox, "id", {"unique": True}),
+        (db.printify_order_outbox, [("status", 1), ("next_attempt_at", 1)], {}),
+        (db.printify_order_outbox, "printify_order_id", {}),
+        (db.printify_order_outbox, "source_id", {}),
+        (db.printify_webhook_events, "id", {"unique": True}),
         # Front-desk POS hardware integration.
         (db.pos_action_tokens, "jti", {"unique": True}),
         (db.pos_action_tokens, "invoice_id", {}),
@@ -39275,6 +39291,49 @@ async def stripe_webhook(request: Request):
         await _handle_stripe_reconciliation_event(event_type, obj)
     elif event_type == "terminal.reader.action_succeeded":
         await _handle_terminal_reader_action_succeeded(obj)
+    return {"ok": True}
+
+
+# ── Printify webhook — shipment/production status for register-only POD ────
+
+@api.post("/webhooks/printify")
+async def printify_webhook(request: Request):
+    """Printify's own order/shipment status callbacks (see
+    domains/printify/client.py's WEBHOOK_TOPICS and
+    ensure_webhooks_registered). Uses the RAW request body for signature
+    verification — never a Pydantic-typed body, never request.json()
+    beforehand, since either would reserialize the bytes Printify actually
+    signed — same discipline as /webhooks/stripe above. Always 200s once
+    the signature checks out, even for an event about an order this app
+    doesn't recognize (a different sales channel, a stale/deleted row):
+    Printify retries a non-200 up to 3 times, then blocks the whole
+    webhook for an hour, so a single unrecognized event must never cost
+    every OTHER event an hour of silence."""
+    raw_body = await request.body()
+    sig_header = request.headers.get("x-pfy-signature")
+    if not printify_client.verify_webhook_signature(raw_body, sig_header):
+        raise HTTPException(status_code=401, detail="Invalid Printify webhook signature")
+    try:
+        event = json.loads(raw_body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Malformed webhook body")
+
+    # Dedup is observability only here too — apply_webhook_event's own
+    # update_one is naturally idempotent, so a skipped duplicate changes
+    # nothing either way.
+    event_id = event.get("id")
+    if event_id:
+        try:
+            await db.printify_webhook_events.insert_one(
+                {"id": event_id, "type": event.get("type"), "received_at": now_iso()},
+            )
+        except DuplicateKeyError:
+            return {"ok": True, "duplicate": True}
+
+    try:
+        await printify_client.apply_webhook_event(db, event)
+    except Exception as exc:
+        logger.error("Printify webhook apply failed for event %s: %s", event_id, exc)
     return {"ok": True}
 
 
@@ -44642,6 +44701,68 @@ def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[
             "name": f"{product.get('name')} — {(variant or {}).get('name', '?')}",
         })
     return out
+
+
+@api.get("/admin/printify/outbox")
+async def list_printify_outbox(status: Optional[str] = None, user: dict = Depends(require_employee_or_admin)):
+    """Printify Orders admin screen (Shop Manager) — every row this app has
+    ever queued for production, newest first: pending (waiting on its next
+    attempt), stuck (exhausted retries, needs a human), or submitted
+    (already with Printify, tracking fills in via webhook as it ships).
+    `status` narrows to one of those; omitted returns everything."""
+    _require_take_payments(user)
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    cursor = db.printify_order_outbox.find(q, {"_id": 0}).sort("created_at", -1)
+    return {"rows": await cursor.to_list(500), "printify_enabled": printify_client.PRINTIFY_ENABLED}
+
+
+@api.post("/admin/printify/outbox/{row_id}/retry")
+async def retry_printify_outbox_row(row_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Forces one stuck row back to the front of the queue for the next
+    scheduler tick — for after an admin has actually fixed whatever was
+    blocking it (set the missing env vars, corrected a product's Printify
+    mapping). Resets the retry count to 0 rather than just nudging
+    next_attempt_at, since a deliberate fix deserves a fresh run of
+    automatic backoff if it fails again for some other reason."""
+    _require_take_payments(user)
+    row = await db.printify_order_outbox.find_one({"id": row_id}, {"_id": 0, "status": 1})
+    if not row:
+        raise HTTPException(status_code=404, detail="Printify order not found")
+    if row["status"] == "submitted":
+        raise HTTPException(status_code=400, detail="This order was already submitted to Printify.")
+    ts = now_iso()
+    await db.printify_order_outbox.update_one(
+        {"id": row_id},
+        {"$set": {"status": "pending", "attempts": 0, "last_error": None, "next_attempt_at": ts, "updated_at": ts}},
+    )
+    return {"ok": True}
+
+
+@api.post("/admin/printify/webhooks/register")
+async def register_printify_webhooks(user: dict = Depends(require_employee_or_admin)):
+    """One-time setup action (Shop Manager → Printify Orders) — idempotent,
+    safe to run again: subscribes this server's /api/webhooks/printify
+    endpoint to every order topic it understands, so Printify's own
+    shipment/production status starts reaching the outbox rows this
+    screen already shows. Needs APP_PUBLIC_URL and PRINTIFY_WEBHOOK_SECRET
+    set first (the latter is what makes every delivery verifiable).
+    Gated on "pricing" (same key product-config changes use) rather than
+    "take_payments" — this changes how an external account is wired up,
+    not just who can view/retry a queued order."""
+    if not _perms_for(user).get("pricing"):
+        raise HTTPException(status_code=403, detail="Missing permission: pricing")
+    base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    if not base:
+        raise HTTPException(status_code=400, detail="APP_PUBLIC_URL is not set — can't tell Printify where to send webhooks.")
+    try:
+        result = await printify_client.ensure_webhooks_registered(f"{base}/api/webhooks/printify")
+    except printify_client.PrintifyNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except printify_client.PrintifyApiError as exc:
+        raise HTTPException(status_code=502, detail=f"Printify rejected the webhook subscription: {exc}")
+    return result
 
 
 def _validate_printify_variants(variants: List[dict]) -> None:

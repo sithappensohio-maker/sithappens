@@ -1469,6 +1469,170 @@ function OnlineOrdersTab() {
 }
 
 /* ============================================================================
+ * PRINTIFY ORDERS TAB — register-only print-on-demand production status.
+ * Printify items are sold and paid for at the register (see Pos.jsx's
+ * scan-to-cart + PrintifyFulfillmentModal); this screen is read-only
+ * visibility into what happens AFTER that sale: the outbox worker
+ * (domains/printify/client.process_outbox) submits each queued row with
+ * retry/backoff, and Printify's own webhook fills in production/shipment
+ * status as it happens. A "stuck" row is a real paid order that hasn't
+ * reached Printify yet — the one thing on this screen that needs a human.
+ * ========================================================================== */
+const PRINTIFY_STATUS_FILTERS = [
+  ["", "All"], ["pending", "Queued"], ["stuck", "Stuck"], ["submitted", "Submitted"],
+];
+
+function printifyRowBadge(row) {
+  if (row.status === "stuck") return { label: "Stuck", className: "text-shAccent" };
+  if (row.status === "pending") return { label: "Queued", className: "text-shTextMuted" };
+  // Submitted — show Printify's own last-known status once the webhook (or
+  // a future reconciliation sweep) has reported one, not just "Submitted".
+  const sub = { created: "Created", "in-production": "In production", shipped: "Shipped", delivered: "Delivered" };
+  return { label: sub[row.printify_status] || "Submitted", className: "text-shPrimary" };
+}
+
+function PrintifyOrdersTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [printifyEnabled, setPrintifyEnabled] = useState(true);
+  const [registering, setRegistering] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.get("/admin/printify/outbox", { params: { status: filter || undefined } })
+      .then(({ data }) => {
+        setRows(data.rows || []);
+        setPrintifyEnabled(data.printify_enabled !== false);
+      })
+      .catch(() => toast.error("Could not load Printify orders"))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [filter]);
+
+  const retry = async (rowId) => {
+    setBusyId(rowId);
+    try {
+      await api.post(`/admin/printify/outbox/${rowId}/retry`);
+      toast.success("Queued for the next attempt.");
+      load();
+    } catch (e) {
+      toast.error(formatErr(e, "Could not retry this order"));
+    }
+    setBusyId(null);
+  };
+
+  const registerWebhooks = async () => {
+    setRegistering(true);
+    try {
+      const { data } = await api.post("/admin/printify/webhooks/register");
+      const created = data.created || [];
+      toast.success(created.length ? `Subscribed: ${created.join(", ")}` : "Already up to date — nothing new to subscribe.");
+    } catch (e) {
+      toast.error(formatErr(e, "Could not register Printify webhooks"));
+    }
+    setRegistering(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <NeonEdge accentRgb="0,169,224" intensity="subtle">
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shSecondary">Shop operations</p>
+              <h3 className="sh-display text-xl text-shText mt-0.5">Printify Orders</h3>
+              <p className="text-[11px] text-shTextMuted mt-1">Print-on-demand items sold at the register — production/shipment status, and any order that needs a retry.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={registerWebhooks} disabled={registering} data-testid="sm-printify-register-webhooks"
+                      className="rounded-xl border border-shBorder/70 bg-white/[0.025] px-3 py-2 text-[11px] font-black text-shTextMuted hover:text-shSecondary hover:border-shSecondary/30 transition disabled:opacity-50">
+                <i className="fas fa-tower-broadcast mr-1.5" />{registering ? "Registering…" : "Register Webhooks"}
+              </button>
+              <button onClick={load} className="rounded-xl border border-shBorder/70 bg-white/[0.025] px-3 py-2 text-[11px] font-black text-shTextMuted hover:text-shSecondary hover:border-shSecondary/30 transition">
+                <i className="fas fa-rotate-right mr-1.5" />Refresh
+              </button>
+            </div>
+          </div>
+          {!printifyEnabled && (
+            <div className="rounded-lg border border-shAccent/25 bg-shAccent/[0.06] px-3 py-2 text-[11px] text-shAccent mb-3" data-testid="sm-printify-not-configured">
+              <i className="fas fa-triangle-exclamation mr-1.5" />Printify isn't connected yet — set PRINTIFY_API_KEY/PRINTIFY_SHOP_ID (and the PRINTIFY_PICKUP_* address, for in-store pickup orders) in the backend environment. Queued orders will hold until then.
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {PRINTIFY_STATUS_FILTERS.map(([k, label]) => (
+              <button key={k || "all"} onClick={() => setFilter(k)} data-testid={`sm-printify-filter-${k || "all"}`}
+                      className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition ${filter === k ? "bg-shPrimary text-[#071018] shadow-[0_0_18px_rgba(140,198,63,0.10)]" : "bg-white/[0.025] border border-shBorder/60 text-shTextMuted hover:text-shText"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </NeonEdge>
+
+      {loading ? (
+        <div className="text-center text-shTextMuted py-10 text-sm">Loading…</div>
+      ) : rows.length === 0 ? (
+        <p className="text-shTextMuted text-sm py-6 text-center">No Printify orders match this filter.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => {
+            const busy = busyId === row.id;
+            const badge = printifyRowBadge(row);
+            const tracking = row.tracking || {};
+            return (
+              <NeonEdge key={row.id} accentRgb={row.status === "stuck" ? "242,101,34" : "0,169,224"} intensity={row.status === "stuck" ? "standard" : "subtle"} data-testid={`sm-printify-row-${row.id}`}>
+                <div className="p-4">
+                  <div className="flex items-start justify-between flex-wrap gap-3">
+                    <div className="min-w-0">
+                      <p className="text-shText font-bold text-sm">
+                        Sale #{(row.source_id || "").slice(0, 8).toUpperCase()} · {row.fulfillment_method === "ship" ? "Ship" : "Pickup"}
+                      </p>
+                      <p className="text-shTextMuted text-[12px]">
+                        {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                      </p>
+                      <p className="text-[11px] text-shTextMuted mt-1">
+                        {(row.line_items || []).map((li) => `${li.quantity}× ${li.name}`).join(", ")}
+                      </p>
+                      {row.status === "stuck" && row.last_error && (
+                        <div className="mt-2 rounded-lg border border-shAccent/25 bg-shAccent/[0.06] px-3 py-2 text-[11px] text-shAccent" data-testid={`sm-printify-error-${row.id}`}>
+                          <i className="fas fa-triangle-exclamation mr-1.5" />{row.last_error}
+                        </div>
+                      )}
+                      {tracking.number && (
+                        <p className="text-[11px] text-shTextMuted mt-1" data-testid={`sm-printify-tracking-${row.id}`}>
+                          <i className="fas fa-truck-fast mr-1.5" />
+                          {tracking.url ? (
+                            <a href={tracking.url} target="_blank" rel="noreferrer" className="text-shSecondary hover:underline">{tracking.code ? `${tracking.code.toUpperCase()} ` : ""}{tracking.number}</a>
+                          ) : (
+                            <>{tracking.code ? `${tracking.code.toUpperCase()} ` : ""}{tracking.number}</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-[11px] font-black uppercase tracking-widest ${badge.className}`}>{badge.label}</p>
+                      {row.status === "stuck" && (
+                        <button onClick={() => retry(row.id)} disabled={busy} data-testid={`sm-printify-retry-${row.id}`}
+                                className="mt-2 bg-shAccent text-[#080b12] px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] hover:brightness-110 transition disabled:opacity-50 shadow-[0_0_18px_rgba(242,101,34,0.10)]">
+                          {busy ? "Retrying…" : "Retry"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </NeonEdge>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
  * SHOP SETTINGS TAB — global shop appearance/organization settings + the
  * public no-account storefront toggles, all living on the same shop_page
  * sub-object of the one settings singleton (GET/PUT /settings). Reuses
@@ -2285,6 +2449,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           { key: "discounts", label: "Discount Codes", icon: "fa-tag", testid: "sm-tab-discounts", accent: "cyan" },
           { key: "reviews", label: "Reviews", icon: "fa-star", testid: "sm-tab-reviews", accent: "cyan" },
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
+          { key: "printify_orders", label: "Printify Orders", icon: "fa-shirt", testid: "sm-tab-printify_orders", accent: "orange" },
           { key: "preview", label: "Client Preview", icon: "fa-mobile-screen", testid: "sm-tab-preview", accent: "cyan" },
         ]}
       />
@@ -2297,6 +2462,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       {tab === "discounts" && <DiscountCodesTab key={`discounts-${refreshKey}`} />}
       {tab === "reviews" && <ReviewsTab key={`reviews-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
+      {tab === "printify_orders" && <PrintifyOrdersTab key={`printify-orders-${refreshKey}`} />}
       {tab === "preview" && <ClientPreviewTab key={`prev-${refreshKey}`} />}
 
       {pickerOpen && <TypePickerModal onClose={() => setPickerOpen(false)} onPick={pickType} />}

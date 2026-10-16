@@ -557,6 +557,97 @@ describe("Discount Codes tab", () => {
   });
 });
 
+describe("Printify Orders tab", () => {
+  const PENDING_ROW = {
+    id: "pfo-1", source: "pos_sale", source_id: "sale-12345678", status: "pending",
+    fulfillment_method: "pickup", printify_order_id: null, attempts: 0, last_error: null,
+    line_items: [{ name: "Trail Dog Hoodie — Small", quantity: 1 }],
+    created_at: "2026-10-14T12:00:00Z",
+  };
+  const STUCK_ROW = {
+    id: "pfo-2", source: "pos_sale", source_id: "sale-99999999", status: "stuck",
+    fulfillment_method: "ship", printify_order_id: null, attempts: 8,
+    last_error: "Printify API error 422: variant not found",
+    line_items: [{ name: "Trail Dog Hoodie — Medium", quantity: 2 }],
+    created_at: "2026-10-13T09:00:00Z",
+  };
+  const SHIPPED_ROW = {
+    id: "pfo-3", source: "pos_sale", source_id: "sale-55555555", status: "submitted",
+    fulfillment_method: "ship", printify_order_id: "pf-order-9", printify_status: "shipped",
+    tracking: { code: "usps", number: "9400111", url: "https://tools.usps.com/go/x" },
+    line_items: [{ name: "Trail Dog Hoodie — Large", quantity: 1 }],
+    created_at: "2026-10-12T09:00:00Z",
+  };
+
+  const mockOutbox = (rows, printifyEnabled = true) => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) =>
+      url.includes("/admin/printify/outbox")
+        ? Promise.resolve({ data: { rows, printify_enabled: printifyEnabled } })
+        : base(url, opts));
+  };
+
+  const openTab = async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-printify_orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  test("lists queued, stuck and shipped rows with their status and tracking", async () => {
+    mockOutbox([PENDING_ROW, STUCK_ROW, SHIPPED_ROW]);
+    await openTab();
+    noReferenceErrors();
+    expect(text()).toContain("SALE-123");
+    expect(text()).toContain("Trail Dog Hoodie — Small");
+    expect(text()).toContain("Queued");
+    expect(text()).toContain("Stuck");
+    expect(byTestId("sm-printify-error-pfo-2").textContent).toContain("variant not found");
+    expect(byTestId("sm-printify-tracking-pfo-3").textContent).toContain("9400111");
+  });
+
+  test("Retry posts to the retry endpoint and reloads the list", async () => {
+    mockOutbox([STUCK_ROW]);
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { ok: true } });
+    await openTab();
+    await act(async () => { byTestId("sm-printify-retry-pfo-2").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/printify/outbox/pfo-2/retry");
+    noReferenceErrors();
+  });
+
+  test("shows a setup banner when Printify isn't connected yet", async () => {
+    mockOutbox([], false);
+    await openTab();
+    expect(byTestId("sm-printify-not-configured")).toBeTruthy();
+    expect(text()).toContain("PRINTIFY_API_KEY");
+  });
+
+  test("a filter button re-requests the list with that status", async () => {
+    mockOutbox([PENDING_ROW]);
+    await openTab();
+    api.get.mockClear();
+    await act(async () => { byTestId("sm-printify-filter-stuck").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.get).toHaveBeenCalledWith("/admin/printify/outbox", { params: { status: "stuck" } });
+    noReferenceErrors();
+  });
+
+  test("Register Webhooks posts the setup action and reports what was subscribed", async () => {
+    mockOutbox([]);
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { created: ["order:shipment:created", "order:shipment:delivered"], already_registered: ["order:created"] } });
+    const { toast } = require("sonner");
+    toast.success.mockClear();
+    await openTab();
+    await act(async () => { byTestId("sm-printify-register-webhooks").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/printify/webhooks/register");
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("order:shipment:created"));
+    noReferenceErrors();
+  });
+});
+
 describe("Reviews tab", () => {
   const REVIEW = { id: "rv-1", product_id: "p1", product_name: "Rope Leash", client_name: "Sam Client",
                    rating: 2, text: "Not what I expected", status: "pending", created_at: "2026-10-10T12:00:00Z" };

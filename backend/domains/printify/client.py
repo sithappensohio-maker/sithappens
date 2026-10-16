@@ -24,6 +24,8 @@ names against the current API reference once PRINTIFY_API_KEY is set.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -34,8 +36,21 @@ import httpx
 PRINTIFY_API_KEY = os.environ.get("PRINTIFY_API_KEY", "")
 PRINTIFY_SHOP_ID = os.environ.get("PRINTIFY_SHOP_ID", "")
 PRINTIFY_ENABLED = bool(PRINTIFY_API_KEY and PRINTIFY_SHOP_ID)
+# Shared secret from the webhook's own subscription (see
+# ensure_webhooks_registered) — every delivery is signed with it. Separate
+# from PRINTIFY_API_KEY: this one never leaves the server, it only verifies
+# what comes IN.
+PRINTIFY_WEBHOOK_SECRET = os.environ.get("PRINTIFY_WEBHOOK_SECRET", "")
 API_BASE = "https://api.printify.com/v1"
 REQUEST_TIMEOUT_SECONDS = 20.0
+# Order topics this app understands (https://developers.printify.com/#events).
+# "order:created" and "order:sent-to-production" carry no data beyond the
+# order id — still worth subscribing to so the admin screen shows SOME
+# status before the first shipment, rather than nothing until it ships.
+WEBHOOK_TOPICS = (
+    "order:created", "order:updated", "order:sent-to-production",
+    "order:shipment:created", "order:shipment:delivered",
+)
 
 # The business's own ship-to address, for a "pickup" order — Printify always
 # ships somewhere; pickup just means "to us," not "nowhere." Configured once
@@ -251,3 +266,100 @@ async def process_outbox(db) -> Dict[str, int]:
         submitted += 1
 
     return {"skipped": 0, "submitted": submitted, "held": held, "checked": len(rows)}
+
+
+def verify_webhook_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
+    """Printify signs every webhook delivery with `X-Pfy-Signature:
+    sha256={hexdigest}`, an HMAC-SHA256 of the exact raw body using the
+    secret given at subscription time (see ensure_webhooks_registered).
+    Verified over the raw bytes as received — never a re-serialized/parsed
+    body, same discipline as server.py's Stripe webhook — and fails closed:
+    no secret configured, no header, or a bad prefix is never "verified"."""
+    if not PRINTIFY_WEBHOOK_SECRET or not signature_header:
+        return False
+    prefix = "sha256="
+    if not signature_header.startswith(prefix):
+        return False
+    expected = hmac.new(PRINTIFY_WEBHOOK_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header[len(prefix):])
+
+
+async def apply_webhook_event(db, event: dict) -> Optional[str]:
+    """Applies one already-verified webhook event to the outbox row it's
+    about, matched by Printify's own order id (`resource.id`) against the
+    `printify_order_id` process_outbox stamped on submission. Returns the
+    updated row's `id`, or None when nothing matches — an event about an
+    order this app never queued (a different Printify sales channel, a
+    replay after the row was deleted) is logged by the caller, not an
+    error. Deliberately never touches `status`/`attempts`/
+    `next_attempt_at` — those are process_outbox's own retry state machine;
+    this only records the production/shipment facts the admin screen and a
+    human want to see once an order has already been submitted."""
+    topic = event.get("type") or ""
+    if topic not in WEBHOOK_TOPICS:
+        return None
+    resource = event.get("resource") or {}
+    printify_order_id = resource.get("id")
+    if not printify_order_id:
+        return None
+    row = await db.printify_order_outbox.find_one({"printify_order_id": printify_order_id}, {"_id": 0, "id": 1})
+    if not row:
+        return None
+    data = resource.get("data") or {}
+    updates: Dict[str, Any] = {"updated_at": _now_iso()}
+    if topic == "order:created":
+        updates["printify_status"] = "created"
+    elif topic == "order:updated":
+        updates["printify_status"] = data.get("status")
+    elif topic == "order:sent-to-production":
+        updates["printify_status"] = "in-production"
+    elif topic == "order:shipment:created":
+        updates["printify_status"] = "shipped"
+        updates["shipped_at"] = data.get("shipped_at")
+        updates["tracking"] = data.get("carrier")
+    elif topic == "order:shipment:delivered":
+        updates["printify_status"] = "delivered"
+        updates["delivered_at"] = data.get("delivered_at")
+    await db.printify_order_outbox.update_one({"id": row["id"]}, {"$set": updates})
+    return row["id"]
+
+
+async def list_webhooks() -> List[Dict[str, Any]]:
+    """Every webhook currently subscribed for this shop."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.get(f"/shops/{PRINTIFY_SHOP_ID}/webhooks.json", headers=_headers())
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text)
+    return resp.json()
+
+
+async def ensure_webhooks_registered(callback_url: str) -> Dict[str, Any]:
+    """Idempotently subscribes `callback_url` to every topic in
+    WEBHOOK_TOPICS — safe to call repeatedly (an admin-triggered action,
+    never a scheduler job): skips a topic already pointed at this exact
+    URL, only creates what's missing. Requires PRINTIFY_WEBHOOK_SECRET to
+    already be set, so Printify is handed a real secret at subscription
+    time rather than an unsigned (unverifiable) webhook."""
+    if not PRINTIFY_ENABLED:
+        raise PrintifyNotConfigured("PRINTIFY_API_KEY/PRINTIFY_SHOP_ID are not set.")
+    if not PRINTIFY_WEBHOOK_SECRET:
+        raise PrintifyNotConfigured("PRINTIFY_WEBHOOK_SECRET is not set.")
+    existing = await list_webhooks()
+    have = {(w.get("topic"), w.get("url")) for w in existing}
+    created, already = [], []
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        for topic in WEBHOOK_TOPICS:
+            if (topic, callback_url) in have:
+                already.append(topic)
+                continue
+            resp = await http.post(
+                f"/shops/{PRINTIFY_SHOP_ID}/webhooks.json",
+                json={"topic": topic, "url": callback_url, "secret": PRINTIFY_WEBHOOK_SECRET},
+                headers=_headers(),
+            )
+            if resp.status_code >= 300:
+                raise PrintifyApiError(resp.status_code, resp.text)
+            created.append(topic)
+    return {"created": created, "already_registered": already}

@@ -6,6 +6,8 @@ create_order/get_order. The actual HTTP call is mocked; this has never
 been run against a live Printify account — see client.py's docstring.
 """
 import asyncio
+import hashlib
+import hmac
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -90,3 +92,79 @@ def test_create_order_raises_on_a_non_2xx_response():
                 ),
             ))
     assert exc_info.value.status_code == 422
+
+
+# ── Webhook signature verification ──────────────────────────────────────────
+
+def _sign(secret: str, body: bytes) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_webhook_signature_accepts_a_correctly_signed_body():
+    body = b'{"id":"evt-1","type":"order:updated"}'
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        assert printify_client.verify_webhook_signature(body, _sign("shh", body)) is True
+
+
+def test_webhook_signature_rejects_a_tampered_body():
+    body = b'{"id":"evt-1","type":"order:updated"}'
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        sig = _sign("shh", body)
+        assert printify_client.verify_webhook_signature(body + b"x", sig) is False
+
+
+def test_webhook_signature_rejects_the_wrong_secret():
+    body = b'{"id":"evt-1","type":"order:updated"}'
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        assert printify_client.verify_webhook_signature(body, _sign("wrong-secret", body)) is False
+
+
+def test_webhook_signature_rejects_a_missing_header():
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        assert printify_client.verify_webhook_signature(b"{}", None) is False
+
+
+def test_webhook_signature_rejects_a_bad_prefix():
+    body = b"{}"
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"):
+        digest = hmac.new(b"shh", body, hashlib.sha256).hexdigest()
+        assert printify_client.verify_webhook_signature(body, digest) is False  # missing "sha256=" prefix
+
+
+def test_webhook_signature_fails_closed_when_no_secret_is_configured():
+    body = b"{}"
+    with patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", ""):
+        # Even a signature that WOULD be valid under some secret must not pass —
+        # an unconfigured secret must never be treated as "anything goes".
+        assert printify_client.verify_webhook_signature(body, _sign("whatever", body)) is False
+
+
+# ── Webhook subscription management ─────────────────────────────────────────
+
+def test_ensure_webhooks_registered_refuses_without_a_secret():
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", ""):
+        with pytest.raises(printify_client.PrintifyNotConfigured):
+            _run(printify_client.ensure_webhooks_registered("https://example.com/api/webhooks/printify"))
+
+
+def test_ensure_webhooks_registered_creates_only_whats_missing():
+    url = "https://example.com/api/webhooks/printify"
+    # Already subscribed to one topic at this exact URL; the rest are new.
+    existing = _FakeResponse(200, json_body=[{"topic": "order:created", "url": url}])
+    created_resp = _FakeResponse(200, json_body={"id": "wh-1"})
+    mock_get = AsyncMock(return_value=existing)
+    mock_post = AsyncMock(return_value=created_resp)
+    with patch.object(printify_client, "PRINTIFY_ENABLED", True), \
+         patch.object(printify_client, "PRINTIFY_API_KEY", "test-key"), \
+         patch.object(printify_client, "PRINTIFY_SHOP_ID", "shop-1"), \
+         patch.object(printify_client, "PRINTIFY_WEBHOOK_SECRET", "shh"), \
+         patch("httpx.AsyncClient.get", mock_get), \
+         patch("httpx.AsyncClient.post", mock_post):
+        result = _run(printify_client.ensure_webhooks_registered(url))
+    assert result["already_registered"] == ["order:created"]
+    assert set(result["created"]) == set(printify_client.WEBHOOK_TOPICS) - {"order:created"}
+    assert mock_post.call_count == len(printify_client.WEBHOOK_TOPICS) - 1
+    first_call_body = mock_post.call_args_list[0].kwargs["json"]
+    assert first_call_body["secret"] == "shh"
+    assert first_call_body["url"] == url
