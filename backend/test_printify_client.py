@@ -16,10 +16,12 @@ from domains.printify import client as printify_client
 
 
 class _FakeResponse:
-    def __init__(self, status_code, json_body=None, text=""):
+    def __init__(self, status_code, json_body=None, text="", content=None, headers=None):
         self.status_code = status_code
         self._json_body = json_body or {}
         self.text = text or str(json_body)
+        self.content = content if content is not None else b""
+        self.headers = headers or {}
 
     def json(self):
         return self._json_body
@@ -370,3 +372,59 @@ def test_ensure_webhooks_registered_creates_only_whats_missing():
     first_call_body = mock_post.call_args_list[0].kwargs["json"]
     assert first_call_body["secret"] == "shh"
     assert first_call_body["url"] == url
+
+
+# ── "Import from Printify" — pull title/description/mockups, not just sizes ──
+
+def test_plain_text_description_strips_tags_and_keeps_paragraphs():
+    html = "<p>Soft and cozy.</p><p>Machine washable.<br>Line dry.</p>"
+    assert printify_client.plain_text_description(html) == "Soft and cozy.\n\nMachine washable.\nLine dry."
+
+
+def test_plain_text_description_decodes_entities_and_collapses_blank_runs():
+    html = "<p>Fits&nbsp;true to size &amp; runs small.</p>\n\n\n<p>Great gift!</p>"
+    out = printify_client.plain_text_description(html)
+    assert "&amp;" not in out and "&" in out
+    assert out == "Fits true to size & runs small.\n\nGreat gift!"
+
+
+def test_plain_text_description_empty_input():
+    assert printify_client.plain_text_description("") == ""
+    assert printify_client.plain_text_description(None) == ""
+
+
+def test_dedupe_product_images_keeps_first_seen_order_and_drops_repeats():
+    images = [
+        {"src": "https://img/a.jpg", "is_default": False},
+        {"src": "https://img/b.jpg", "is_default": True},
+        {"src": "https://img/a.jpg", "is_default": False},  # same variant, repeated mockup
+        {"src": None},  # no url at all — dropped
+    ]
+    assert printify_client.dedupe_product_images(images) == [
+        {"src": "https://img/a.jpg", "is_default": False},
+        {"src": "https://img/b.jpg", "is_default": True},
+    ]
+
+
+def test_dedupe_product_images_empty_input():
+    assert printify_client.dedupe_product_images([]) == []
+    assert printify_client.dedupe_product_images(None) == []
+
+
+def test_fetch_image_bytes_returns_content_and_mime():
+    fake_resp = _FakeResponse(200, content=b"\xff\xd8\xff fake jpeg bytes", headers={"content-type": "image/jpeg; charset=binary"})
+    mock_get = AsyncMock(return_value=fake_resp)
+    with patch("httpx.AsyncClient.get", mock_get):
+        blob, mime = _run(printify_client.fetch_image_bytes("https://images.printify.com/x.jpg"))
+    assert blob == b"\xff\xd8\xff fake jpeg bytes"
+    assert mime == "image/jpeg"
+    # A plain unauthenticated GET — no Printify Authorization header, no shop id in the URL.
+    assert mock_get.call_args.args == ("https://images.printify.com/x.jpg",)
+
+
+def test_fetch_image_bytes_raises_api_error_on_non_2xx():
+    fake_resp = _FakeResponse(404, text="not found")
+    mock_get = AsyncMock(return_value=fake_resp)
+    with patch("httpx.AsyncClient.get", mock_get):
+        with pytest.raises(printify_client.PrintifyApiError):
+            _run(printify_client.fetch_image_bytes("https://images.printify.com/gone.jpg"))

@@ -11,6 +11,7 @@ pricing and require a size choice before a Printify line can be priced.
 
 Disposable tag TEST_PRINTIFY_PRODUCTS.
 """
+import io
 import uuid
 from unittest.mock import patch
 
@@ -974,3 +975,111 @@ def test_register_webhooks_refuses_with_400_not_502_when_printify_rejects_it():
             assert False, "should have been refused"
         except HTTPException as e:
             assert e.status_code == 400
+
+
+# ── "Import from Printify" — title/description/mockups, not just sizes ─────
+
+def _tiny_jpeg_bytes() -> bytes:
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (120, 60, 200)).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+def test_fetch_sizes_response_includes_cleaned_description_and_deduped_images():
+    product = {
+        "id": "pf-prod-1", "title": "Trail Dog Hoodie",
+        "description": "<p>Soft &amp; cozy.</p><p>Machine washable.</p>",
+        "images": [
+            {"src": "https://img/front.jpg", "is_default": True},
+            {"src": "https://img/back.jpg", "is_default": False},
+            {"src": "https://img/front.jpg", "is_default": True},  # repeated
+        ],
+        "variants": [], "blueprint_id": 6, "print_provider_id": 99, "print_areas": [],
+    }
+    with patch.object(server.printify_client, "get_product", return_value=product):
+        result = run(server.get_printify_product_variants("pf-prod-1", ADMIN))
+    assert result["description"] == "Soft & cozy.\n\nMachine washable."
+    assert result["images"] == [
+        {"src": "https://img/front.jpg", "is_default": True},
+        {"src": "https://img/back.jpg", "is_default": False},
+    ]
+    assert result["image"] == "https://img/front.jpg"  # the default, for the picker's own small preview
+
+
+def test_import_images_only_imports_urls_that_are_really_this_products_own():
+    product = {
+        "id": "pf-prod-1", "title": "x", "description": "", "variants": [],
+        "blueprint_id": 6, "print_provider_id": 99, "print_areas": [],
+        "images": [{"src": "https://img/front.jpg", "is_default": True}],
+    }
+    jpeg = _tiny_jpeg_bytes()
+    media_ids = []
+    try:
+        with patch.object(server.printify_client, "get_product", return_value=product), \
+             patch.object(server.printify_client, "fetch_image_bytes",
+                          return_value=(jpeg, "image/jpeg")):
+            result = run(server.import_printify_product_images(
+                "pf-prod-1",
+                server.PrintifyImportImagesIn(urls=["https://img/front.jpg", "https://evil.example/payload.jpg"]),
+                ADMIN,
+            ))
+        media_ids = result["image_ids"]
+        assert len(media_ids) == 1  # only the real one — the other URL was never even fetched
+        assert result["errors"] == []  # the fake URL was silently dropped, not reported as a failed fetch
+        stored = run(server.db.shop_media.find_one({"id": media_ids[0]}, {"_id": 0}))
+        assert stored["mime"] == "image/jpeg"
+        assert stored["uploaded_by"] == ADMIN["id"]
+        assert set(stored["derivatives"].keys()) == {"thumb", "card", "pdp", "zoom"}
+    finally:
+        if media_ids:
+            run(server.db.shop_media.delete_many({"id": {"$in": media_ids}}))
+
+
+def test_import_images_refuses_when_none_of_the_urls_belong_to_the_product():
+    product = {
+        "id": "pf-prod-1", "title": "x", "description": "", "variants": [],
+        "blueprint_id": 6, "print_provider_id": 99, "print_areas": [],
+        "images": [{"src": "https://img/front.jpg", "is_default": True}],
+    }
+    with patch.object(server.printify_client, "get_product", return_value=product):
+        try:
+            run(server.import_printify_product_images(
+                "pf-prod-1", server.PrintifyImportImagesIn(urls=["https://evil.example/payload.jpg"]), ADMIN))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "belong" in e.detail
+
+
+def test_import_images_one_failure_never_blocks_the_others():
+    product = {
+        "id": "pf-prod-1", "title": "x", "description": "", "variants": [],
+        "blueprint_id": 6, "print_provider_id": 99, "print_areas": [],
+        "images": [
+            {"src": "https://img/good.jpg", "is_default": True},
+            {"src": "https://img/bad.jpg", "is_default": False},
+        ],
+    }
+    jpeg = _tiny_jpeg_bytes()
+
+    async def _fetch(url):
+        if "bad" in url:
+            raise server.printify_client.PrintifyApiError(404, "gone")
+        return jpeg, "image/jpeg"
+
+    media_ids = []
+    try:
+        with patch.object(server.printify_client, "get_product", return_value=product), \
+             patch.object(server.printify_client, "fetch_image_bytes", side_effect=_fetch):
+            result = run(server.import_printify_product_images(
+                "pf-prod-1",
+                server.PrintifyImportImagesIn(urls=["https://img/good.jpg", "https://img/bad.jpg"]),
+                ADMIN,
+            ))
+        media_ids = result["image_ids"]
+        assert len(media_ids) == 1
+        assert len(result["errors"]) == 1 and "bad.jpg" in result["errors"][0]
+    finally:
+        if media_ids:
+            run(server.db.shop_media.delete_many({"id": {"$in": media_ids}}))

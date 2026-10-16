@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -220,6 +222,24 @@ async def get_product(printify_product_id: str) -> Dict[str, Any]:
     if resp.status_code >= 300:
         raise PrintifyApiError(resp.status_code, resp.text)
     return resp.json()
+
+
+async def fetch_image_bytes(url: str) -> Tuple[bytes, str]:
+    """Downloads one mockup image's real bytes, for the admin "import
+    photos from Printify" action (server.py's product-image import
+    endpoint) — that caller only ever passes a URL it already confirmed is
+    one of THIS product's own images (re-checked against a fresh get_product
+    call there, never trusted as given), so this is a plain unauthenticated
+    GET, not a Printify API call — no shop id, no _headers().
+
+    Returns (bytes, content_type). Raises PrintifyApiError on a non-2xx
+    response, same as every other call in this module, so callers reuse the
+    same except blocks."""
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.get(url)
+    if resp.status_code >= 300:
+        raise PrintifyApiError(resp.status_code, resp.text[:200])
+    return resp.content, (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
 
 
 # Catalog shipping tables, keyed by (blueprint_id, print_provider_id) — see
@@ -511,6 +531,59 @@ async def ensure_webhooks_registered(callback_url: str) -> Dict[str, Any]:
 # on the first attempt. This trades pixel-perfect font matching (Printify's
 # own "Open Sans" vs. Pillow's bundled default font) for something that
 # reliably ships.
+
+_HTML_PARA_BREAK_RE = re.compile(r"</(p|div|li|h[1-6])\s*>", re.IGNORECASE)
+_HTML_LINE_BREAK_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def plain_text_description(raw_html: str) -> str:
+    """Printify product descriptions are typically light HTML (paragraphs,
+    line breaks, the occasional list) — a best-effort strip down to the
+    plain, blank-line-separated-paragraph text the rest of this app's own
+    Description field expects (see ShopItemDetail.jsx's FormattedDescription,
+    which renders plain text, not HTML). Not a real HTML parser and not
+    meant to be: the admin reviews/edits the import before saving either
+    way, so this only has to be a good starting point.
+
+    Pure — no network, testable on its own."""
+    if not raw_html:
+        return ""
+    text = _HTML_PARA_BREAK_RE.sub("\n\n", raw_html)  # a paragraph/block ends → blank line
+    text = _HTML_LINE_BREAK_RE.sub("\n", text)         # a <br> → just a line break
+    text = _HTML_TAG_RE.sub("", text)
+    # &nbsp; decodes to a literal U+00A0, not a plain space — indistinguishable
+    # to the eye but not to anything downstream that treats whitespace
+    # specially (word-wrap, the same ASCII-only trap PRINTIFY_API_KEY hit).
+    text = html.unescape(text).replace("\xa0", " ")
+    lines = [ln.strip() for ln in text.splitlines()]
+    out: List[str] = []
+    blank_run = False
+    for ln in lines:
+        if ln:
+            out.append(ln)
+            blank_run = False
+        elif not blank_run:
+            out.append("")
+            blank_run = True
+    return "\n".join(out).strip()
+
+
+def dedupe_product_images(images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A Printify product's own `images` list often repeats the exact same
+    mockup `src` across several entries (one per variant/position pairing
+    that happens to render identically) — this keeps one entry per unique
+    URL, in first-seen order, `is_default` preserved. Pure — no network."""
+    seen: set = set()
+    out: List[Dict[str, Any]] = []
+    for img in images or []:
+        src = img.get("src")
+        if not src or src in seen:
+            continue
+        seen.add(src)
+        out.append({"src": src, "is_default": bool(img.get("is_default"))})
+    return out
+
 
 def personalization_field_names(print_areas: List[Dict[str, Any]]) -> List[str]:
     """Every distinct variable-text layer name across a product's

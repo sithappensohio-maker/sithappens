@@ -170,17 +170,32 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
   const [product, setProduct] = useState(null);
   const [checked, setChecked] = useState(() => new Set());
   const [filter, setFilter] = useState("");
+  // This product's own mockup photos — see get_printify_product_variants'
+  // own `images` field (deduplicated server-side). Starts fully checked:
+  // "import everything, then uncheck what you don't want" is less friction
+  // than the reverse for the common case (a handful of clean mockups).
+  const [imagesChecked, setImagesChecked] = useState(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setErr("");
     api.get(`/admin/printify/products/${encodeURIComponent(printifyProductId)}`)
-      .then(({ data }) => { if (!cancelled) setProduct(data); })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setProduct(data);
+        setImagesChecked(new Set((data.images || []).map((img) => img.src)));
+      })
       .catch((e) => { if (!cancelled) setErr(e?.response?.data?.detail || "Could not fetch this product from Printify"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [printifyProductId]);
+
+  const toggleImage = (src) => setImagesChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(src)) next.delete(src); else next.add(src);
+    return next;
+  });
 
   const already = useMemo(() => new Set(existingVariantIds || []), [existingVariantIds]);
   const filtered = useMemo(() => {
@@ -202,7 +217,11 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
   const confirm = () => {
     const chosen = (product?.variants || []).filter((v) => checked.has(v.id) && !already.has(v.id));
     if (chosen.length === 0) return;
-    onAdd(chosen, { blueprintId: product.blueprint_id ?? null, printProviderId: product.print_provider_id ?? null });
+    onAdd(chosen, {
+      blueprintId: product.blueprint_id ?? null, printProviderId: product.print_provider_id ?? null,
+      title: product.title, description: product.description,
+      imageUrls: (product.images || []).map((img) => img.src).filter((src) => imagesChecked.has(src)),
+    });
     onClose();
   };
 
@@ -248,6 +267,31 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
                 );
               })}
             </div>
+            {(product.images || []).length > 0 && (
+              <div data-testid="printify-picker-images">
+                <div className="flex items-center justify-between text-[11px] mb-1">
+                  <span className="text-shTextMuted uppercase tracking-widest font-black">
+                    Photos ({imagesChecked.size} of {product.images.length} selected)
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto border border-shBorder rounded-lg p-2">
+                  {product.images.map((img) => {
+                    const on = imagesChecked.has(img.src);
+                    return (
+                      <button type="button" key={img.src} onClick={() => toggleImage(img.src)}
+                              data-testid={`printify-picker-image-${img.src}`}
+                              className={`relative rounded-lg overflow-hidden border-2 ${on ? "border-shPrimary" : "border-transparent opacity-50"}`}>
+                        <img src={img.src} alt="" className="w-full h-16 object-cover" />
+                        {on && <i className="fas fa-circle-check absolute top-1 right-1 text-shPrimary bg-bgHeader rounded-full text-xs" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-shTextMuted mt-1">
+                  Pulled into this product's own photo gallery below when you add sizes — uncheck any you don't want.
+                </p>
+              </div>
+            )}
           </>
         )}
         <div className="flex gap-2 pt-2">
@@ -316,7 +360,8 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
 
   // "Fetch from Printify" — see PrintifyVariantPickerModal above.
   const [showPrintifyPicker, setShowPrintifyPicker] = useState(false);
-  const addPrintifyVariants = (chosen, { blueprintId, printProviderId } = {}) => {
+  const [importingPrintifyImages, setImportingPrintifyImages] = useState(false);
+  const addPrintifyVariants = async (chosen, { blueprintId, printProviderId, title, description, imageUrls } = {}) => {
     setForm((f) => {
       const basePrice = f.price !== "" && f.price != null ? Number(f.price) : null;
       const rows = chosen.map((v, i) => ({
@@ -339,9 +384,36 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         // nobody ever has to type a blueprint/print-provider id by hand.
         printify_blueprint_id: blueprintId ?? f.printify_blueprint_id,
         printify_print_provider_id: printProviderId ?? f.printify_print_provider_id,
+        // Pull in Printify's own title/description too — but only to fill
+        // in a field the admin hasn't already typed something into. Never
+        // overwrites a name/description someone already wrote.
+        name: f.name.trim() ? f.name : (title || f.name),
+        description: f.description.trim() ? f.description : (description || f.description),
       };
     });
     toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
+
+    if (imageUrls && imageUrls.length > 0) {
+      setImportingPrintifyImages(true);
+      try {
+        const { data } = await api.post(`/admin/printify/products/${encodeURIComponent(form.printify_product_id.trim())}/import-images`,
+          { urls: imageUrls });
+        const newIds = data.image_ids || [];
+        if (newIds.length > 0) {
+          setForm((f) => ({
+            ...f, image_ids: [...(f.image_ids || []), ...newIds],
+            image_id: f.image_id || newIds[0],
+          }));
+          toast.success(`Imported ${newIds.length} photo${newIds.length === 1 ? "" : "s"} from Printify`);
+        }
+        if (data.errors && data.errors.length > 0) {
+          toast.error(`${data.errors.length} photo${data.errors.length === 1 ? "" : "s"} couldn't be imported`);
+        }
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Could not import photos from Printify");
+      }
+      setImportingPrintifyImages(false);
+    }
   };
 
   // Inline Receive/Adjust for an EXISTING variant's stock — the one place
@@ -499,6 +571,11 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             Shop both render it, so it must never require Show Online. */}
         <div className="col-span-2">
           <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo (shown at the register and in the client Shop)</label>
+          {importingPrintifyImages && (
+            <p className="text-[11px] text-shTextMuted mb-1.5" data-testid="printify-images-importing">
+              <i className="fas fa-circle-notch fa-spin mr-1.5" />Importing photos from Printify…
+            </p>
+          )}
           <ShopGalleryUpload imageIds={form.image_ids} originalImageIds={originalImageIds}
                              onChange={(ids) => setForm((f) => ({ ...f, image_ids: ids, image_id: ids[0] || null }))} />
         </div>

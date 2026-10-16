@@ -184,4 +184,107 @@ describe("Fetch Sizes from Printify", () => {
     expect(w.q('[data-testid="printify-picker-row-pf-var-s"]')).toBeFalsy();
     w.cleanup();
   });
+
+  const PRODUCT_WITH_IMAGES = {
+    ...PRODUCT,
+    description: "Soft and cozy.",
+    images: [
+      { src: "https://img/front.jpg", is_default: true },
+      { src: "https://img/back.jpg", is_default: false },
+    ],
+  };
+
+  test("mockup photos show checked by default; unchecking one leaves it out of the import", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { image_ids: ["m1"], errors: [] } });
+    let current = { ...BASE_FORM, variants: [], name: "" };
+    const setForm = jest.fn((updater) => { current = updater(current); });
+    const w = mount(editor(current, setForm));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    expect(w.q('[data-testid="printify-picker-images"]')).toBeTruthy();
+    expect(w.text()).toContain("2 of 2 selected");
+    await act(async () => { w.q('[data-testid="printify-picker-image-https://img/back.jpg"]').click(); });
+    expect(w.text()).toContain("1 of 2 selected");
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-s"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    await flush();
+    expect(api.post).toHaveBeenCalledWith(
+      "/admin/printify/products/pf-prod-1/import-images", { urls: ["https://img/front.jpg"] });
+    w.cleanup();
+  });
+
+  test("imported photo ids land in form.image_ids, and a blank name/description get filled from Printify's own", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { image_ids: ["m1", "m2"], errors: [] } });
+    let current = { ...BASE_FORM, variants: [], name: "", description: "", image_ids: [] };
+    const setForm = jest.fn((updater) => { current = updater(current); });
+    const w = mount(editor(current, setForm));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-s"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    await flush();
+    expect(current.name).toBe("Trail Dog Hoodie");
+    expect(current.description).toBe("Soft and cozy.");
+    expect(current.image_ids).toEqual(["m1", "m2"]);
+    expect(current.image_id).toBe("m1");
+    w.cleanup();
+  });
+
+  test("a name/description the admin already typed is never overwritten by the import", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { image_ids: [], errors: [] } });
+    let current = { ...BASE_FORM, variants: [], name: "My Own Name", description: "My own description" };
+    const setForm = jest.fn((updater) => { current = updater(current); });
+    const w = mount(editor(current, setForm));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-s"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    await flush();
+    expect(current.name).toBe("My Own Name");
+    expect(current.description).toBe("My own description");
+    w.cleanup();
+  });
+
+  test("a product with no mockup photos shows no photo picker and never calls import-images", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT }); // no `images` field at all
+    api.post.mockReset();
+    const w = mount(editor({ ...BASE_FORM, variants: [] }, () => {}));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    expect(w.q('[data-testid="printify-picker-images"]')).toBeFalsy();
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-s"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    await flush();
+    expect(api.post).not.toHaveBeenCalled();
+    w.cleanup();
+  });
+
+  test("a partial image-import failure still keeps the ones that worked and tells the admin", async () => {
+    api.get.mockReset();
+    api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { image_ids: ["m1"], errors: ["back.jpg: too large"] } });
+    toast.error.mockClear();
+    let current = { ...BASE_FORM, variants: [], image_ids: [] };
+    const setForm = jest.fn((updater) => { current = updater(current); });
+    const w = mount(editor(current, setForm));
+    await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+    await flush();
+    await act(async () => { w.q('[data-testid="printify-picker-row-pf-var-m"] input[type=checkbox]').click(); });
+    await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+    await flush();
+    expect(current.image_ids).toEqual(["m1"]);
+    expect(toast.error).toHaveBeenCalled();
+    w.cleanup();
+  });
 });

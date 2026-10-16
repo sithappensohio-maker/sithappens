@@ -39194,7 +39194,9 @@ async def create_stripe_checkout_session(invoice_id: str, body: StripeCheckoutSe
         await db.stripe_payment_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
         await _release_stripe_reservation_if_owned(invoice_id, attempt_id)
         logger.warning("Stripe Checkout Session creation failed for attempt %s: %s", attempt_id, exc)
-        raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the client.
+        raise HTTPException(status_code=503, detail="Could not start the online payment — please try again.")
 
     await db.stripe_payment_attempts.update_one(
         {"id": attempt_id},
@@ -39785,7 +39787,9 @@ async def create_shop_stripe_refund(
     except Exception as exc:
         await db.stripe_refund_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
         logger.warning("Stripe Shop Refund.create failed for attempt %s: %s", attempt_id, exc)
-        raise HTTPException(status_code=502, detail="Could not create the Stripe shop refund — please try again.")
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the client.
+        raise HTTPException(status_code=503, detail="Could not create the Stripe shop refund — please try again.")
 
     await db.stripe_refund_attempts.update_one({"id": attempt_id}, {"$set": {"stripe_refund_id": refund["id"], "updated_at": now_iso()}})
     stripe_status = refund.get("status") or "pending"
@@ -39852,7 +39856,9 @@ async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict
     except Exception as exc:
         await db.stripe_refund_attempts.update_one({"id": refund_attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
         logger.warning("Stripe Refund.create failed for attempt %s: %s", refund_attempt_id, exc)
-        raise HTTPException(status_code=502, detail="Could not create the Stripe refund — please try again.")
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the client.
+        raise HTTPException(status_code=503, detail="Could not create the Stripe refund — please try again.")
 
     stripe_status = refund.get("status") or "pending"
     # stripe_refund_id is always safe to record directly. status is NOT —
@@ -45068,13 +45074,23 @@ async def get_printify_product_variants(printify_product_id: str, user: dict = D
         for v in (product.get("variants") or [])
         if v.get("is_enabled")
     ]
-    images = product.get("images") or []
-    default_image = next((img.get("src") for img in images if img.get("is_default") and img.get("src")), None)
-    any_image = next((img.get("src") for img in images if img.get("src")), None)
+    images = printify_client.dedupe_product_images(product.get("images") or [])
+    default_image = next((img["src"] for img in images if img["is_default"]), None)
+    any_image = images[0]["src"] if images else None
     return {
         "id": product.get("id"),
         "title": product.get("title") or "",
         "image": default_image or any_image,
+        # Own-Shop "import from Printify" — every one of this product's own
+        # mockup photos, deduplicated, for the admin to pick which ones to
+        # pull into this product's own Shop gallery (see
+        # /admin/printify/products/{id}/import-images below). `image` above
+        # (one picked src) is kept for the picker's own small preview.
+        "images": images,
+        # Lightly cleaned to plain text (see plain_text_description) — a
+        # starting point for the admin's own Description field, not a
+        # faithful HTML re-render; reviewed/edited before saving either way.
+        "description": printify_client.plain_text_description(product.get("description") or ""),
         "variants": variants,
         # Identifies the print method this listing uses (blueprint = the
         # blank garment, print_provider = who prints it) — needed to look
@@ -45094,6 +45110,81 @@ async def get_printify_product_variants(printify_product_id: str, user: dict = D
         "print_areas": product.get("print_areas") or [],
         "personalization_fields": printify_client.personalization_field_names(product.get("print_areas") or []),
     }
+
+
+class PrintifyImportImagesIn(BaseModel):
+    urls: List[str] = Field(min_length=1, max_length=20)
+
+
+@api.post("/admin/printify/products/{printify_product_id}/import-images")
+async def import_printify_product_images(
+    printify_product_id: str, body: PrintifyImportImagesIn,
+    user: dict = Depends(require_admin_and_permission("manage_shop_media")),
+):
+    """Own-Shop "import from Printify" — pulls the admin-chosen subset of a
+    Printify product's own mockup photos straight into this app's own Shop
+    media library (same storage, same derivatives, same resulting
+    `image_ids` a manually-uploaded photo gets — see domains/shop/media.py)
+    instead of the admin re-downloading and re-uploading each one by hand.
+    Gated on "manage_shop_media", same as every other Shop photo write
+    (/shop/media above) — this IS that action, just sourced from Printify.
+
+    Re-fetches the product from Printify and only ever imports a URL that
+    is ACTUALLY one of ITS own real mockup images — `body.urls` is never
+    trusted as given. That's not just defensive: without it, this endpoint
+    would be an open "fetch any URL an admin session names" proxy."""
+    try:
+        product = await printify_client.get_product(printify_product_id)
+    except printify_client.PrintifyNotConfigured as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except printify_client.PrintifyApiError as exc:
+        # Never 502/504 — Cloudflare replaces ANY 502/504 response body with
+        # its own generic page, so this detail would never reach the admin.
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Printify couldn't find that product: {exc}")
+        raise HTTPException(status_code=400, detail=f"Printify couldn't fetch that product: {exc}")
+
+    real_urls = {img["src"] for img in printify_client.dedupe_product_images(product.get("images") or [])}
+    wanted = [u for u in body.urls if u in real_urls]
+    if not wanted:
+        raise HTTPException(status_code=400, detail="None of those images belong to this Printify product.")
+
+    media_ids: List[str] = []
+    errors: List[str] = []
+    for url in wanted:
+        label = url.rsplit("/", 1)[-1][:60]
+        try:
+            blob, content_type = await printify_client.fetch_image_bytes(url)
+        except printify_client.PrintifyApiError as exc:
+            errors.append(f"{label}: {exc}")
+            continue
+        if len(blob) > shop_media_services.MAX_BYTES:
+            errors.append(f"{label}: too large ({len(blob) // (1024 * 1024)} MB)")
+            continue
+        try:
+            # Opens and validates it's a real, decodable image — a response
+            # that merely claims to be one (wrong content_type, a CDN error
+            # page) is refused here rather than stored.
+            derivatives = shop_media_services.build_derivatives(blob)
+        except HTTPException as exc:
+            errors.append(f"{label}: {exc.detail}")
+            continue
+        mime = content_type if content_type in shop_media_services.ALLOWED_MIME else "image/jpeg"
+        media_id = str(uuid.uuid4())
+        ts = now_iso()
+        await db.shop_media.insert_one({
+            "id": media_id, "mime": mime,
+            "data": f"data:{mime};base64,{base64.b64encode(blob).decode()}",
+            "filename": f"printify-{printify_product_id}-{media_id[:8]}",
+            "size_bytes": len(blob),
+            "derivatives": derivatives,
+            "derivatives_built_at": ts,
+            "uploaded_at": ts, "uploaded_by": user.get("id"),
+        })
+        media_ids.append(media_id)
+    if not media_ids:
+        raise HTTPException(status_code=400, detail=f"Could not import any images: {'; '.join(errors)}")
+    return {"image_ids": media_ids, "errors": errors}
 
 
 def _validate_printify_variants(variants: List[dict]) -> None:
