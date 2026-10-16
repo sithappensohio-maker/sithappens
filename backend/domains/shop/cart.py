@@ -55,6 +55,19 @@ class ShopCartItemIn(BaseModel):
     gift_message: Optional[str] = Field(default=None, max_length=300)
 
 
+class ShopPrintifyFulfillmentIn(BaseModel):
+    """The pickup-or-ship choice for a cart's Printify line(s) — same
+    concept and requirement as the register's own PrintifyFulfillmentIn
+    (domains.pos.models), but asks only for the physical address: the
+    name/email/phone Printify puts on the shipping label are the buyer's
+    own (see server._queue_printify_shop_lines), never re-typed here.
+    Required whenever the cart has a Printify line (checked against the
+    line's own frozen `printify_fulfilled` snapshot, never re-derived from
+    a client-supplied flag) — see domains.shop.checkout.create_checkout."""
+    method: Literal["pickup", "ship"]
+    shipping_address: Optional[ShopShippingAddressIn] = None
+
+
 class ShopCheckoutIn(BaseModel):
     items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
     idempotency_key: str = Field(min_length=8, max_length=128)
@@ -66,6 +79,13 @@ class ShopCheckoutIn(BaseModel):
     # omitted or null means pickup, exactly as every cart worked before
     # this field existed.
     shipping_address: Optional[ShopShippingAddressIn] = None
+    # The SEPARATE pickup-vs-ship choice for a Printify line, if any — see
+    # ShopPrintifyFulfillmentIn. Independent of `shipping_address` above:
+    # a cart with a Printify item is never FedEx-shippable (cart_shippable
+    # requires every physical line be admin-flagged shippable, and a
+    # Printify line never is), so the two fields are never both meaningful
+    # on the same order.
+    printify_fulfillment: Optional[ShopPrintifyFulfillmentIn] = None
 
 
 def _gift_identity(item) -> Tuple[Optional[str], Optional[str], Optional[str]]:

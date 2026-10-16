@@ -167,7 +167,7 @@ def _restart(status_code: int, msg: str) -> HTTPException:
 
 
 async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount_code: Optional[str] = None,
-                           shipping_address=None) -> dict:
+                           shipping_address=None, printify_fulfillment=None) -> dict:
     """Price, reserve, and start paying for a cart. Returns
     {url, order_id, guest_token?}.
 
@@ -181,6 +181,13 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
     first time this idempotency key creates the order; a resumed/retried
     claim reuses the order's already-frozen lines/total exactly as before,
     same as every other price input.
+
+    `printify_fulfillment` is the SEPARATE pickup-or-ship choice for a cart
+    with a Printify line (see ShopPrintifyFulfillmentIn) — required
+    whenever any priced line carries `printify_fulfilled` (same requirement,
+    same reasoning, as the register's own _create_pos_sale_impl), and only
+    actually checked/frozen onto the order the first time this idempotency
+    key creates it; a resumed claim reuses what was frozen then.
     """
     db = _s("db")
     now_iso = _s("now_iso")
@@ -243,6 +250,21 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
                 status_code=422,
                 detail="Please add your name so we know who to hand your order to.")
 
+        # Printify POD — a cart with one of these lines needs the pickup-or-
+        # ship choice before anything is charged, same requirement as the
+        # register's own _create_pos_sale_impl. Checked against the line's
+        # own frozen `printify_fulfilled` snapshot (never a client-supplied
+        # flag) so this can never be bypassed by a cart that merely claims
+        # to have none.
+        cart_has_printify = any(l.get("printify_fulfilled") for l in priced["lines"])
+        if cart_has_printify:
+            if not printify_fulfillment:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This cart includes a Printify item — choose pickup or shipping before checking out.")
+            if printify_fulfillment.method == "ship" and not printify_fulfillment.shipping_address:
+                raise HTTPException(status_code=400, detail="A shipping address is required to ship a Printify item.")
+
         order_doc = {
             "id": order_id,
             # None, not a stand-in. Every downstream reader already uses
@@ -264,6 +286,9 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str, discount
             "loyalty_discount_pct": priced.get("loyalty_discount_pct"),
             "shipping_amount": priced.get("shipping_amount") or 0.0,
             "shipping_address": priced.get("shipping_address"),
+            # See ShopPrintifyFulfillmentIn — None whenever the cart has no
+            # Printify line, even if one was somehow passed in.
+            "printify_fulfillment": printify_fulfillment.model_dump() if (cart_has_printify and printify_fulfillment) else None,
             "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
             "shop_last_applied_attempt_id": None,
             "admin_unseen": True,

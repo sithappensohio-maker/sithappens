@@ -23,7 +23,7 @@ offers sales it cannot complete.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -33,7 +33,7 @@ from domains.shop import abandon as shop_abandon
 from domains.shop import checkout as shop_checkout
 from domains.shop import orders as shop_orders_view
 from domains.shop import guest as shop_guest
-from domains.shop.cart import ShopCartItemIn, _normalize_cart_lines
+from domains.shop.cart import ShopCartItemIn, ShopPrintifyFulfillmentIn, _normalize_cart_lines
 
 
 class GuestCartIn(BaseModel):
@@ -55,6 +55,9 @@ class GuestCheckoutIn(BaseModel):
     # Optional, always. Useful when a collection order sits uncollected;
     # never required, and never used to look anybody up.
     phone: str = Field(default="", max_length=40)
+    # Required whenever the cart has a Printify line — see
+    # ShopPrintifyFulfillmentIn and domains.shop.checkout.create_checkout.
+    printify_fulfillment: Optional[ShopPrintifyFulfillmentIn] = None
 
 
 def register_guest_shop_routes(*, api, server_globals: dict) -> None:
@@ -187,6 +190,7 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
                 phone=(body.phone or "").strip()),
             items=body.items,
             idempotency_key=body.idempotency_key,
+            printify_fulfillment=body.printify_fulfillment,
         )
 
     @api.post("/public/shop/orders/{order_id}/cancel-checkout")

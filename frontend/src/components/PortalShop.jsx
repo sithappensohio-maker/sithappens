@@ -11,7 +11,7 @@ import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
 import GuestCheckoutPanel from "./GuestCheckoutPanel";
 import ShopLanding from "./shop/ShopLanding";
-import CartPanel, { cartShippable } from "./shop/ShopCart";
+import CartPanel, { cartShippable, hasPrintifyLine } from "./shop/ShopCart";
 import {
   DepartmentNav, ShopSearch, SortSelect, FilterControls, ProductGrid,
 } from "./shop/ShopBrowse";
@@ -906,6 +906,18 @@ export default function PortalShop({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cartLines]);
 
+  // ── Printify pickup-or-ship — the SEPARATE choice for a cart with a
+  // print-on-demand line (owner request: ship-to-home for an online
+  // Printify order). null means "not yet chosen"; submitCheckout defaults
+  // it to pickup if the customer never touches the toggle. Cleared the
+  // moment the cart stops having a Printify line, same reasoning as
+  // shippingAddress above.
+  const [printifyFulfillment, setPrintifyFulfillment] = useState(null);
+  useEffect(() => {
+    if (!hasPrintifyLine(cartLines)) setPrintifyFulfillment(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartLines]);
+
   const submitCheckout = async () => {
     if (cart.length === 0) return;
     if (mode === "guest") {
@@ -944,6 +956,13 @@ export default function PortalShop({
         idempotency_key: idemKeyRef.current,
         discount_code: appliedDiscount?.code || null,
         shipping_address: shippingAddress,
+        // The choice itself is required server-side whenever the cart has
+        // a Printify line — default to an explicit "pickup" so a customer
+        // who never touches the toggle still checks out (see CartPanel's
+        // PrintifyShipChoice: it starts unselected-but-pickup-styled).
+        printify_fulfillment: hasPrintifyLine(cartLines)
+          ? (printifyFulfillment || { method: "pickup", shipping_address: null })
+          : null,
       });
       window.location.href = data.url; // plain navigation — no Stripe SDK involved
     } catch (e) {
@@ -1402,6 +1421,7 @@ export default function PortalShop({
       {guestCheckoutOpen && (
         <GuestCheckoutPanel
           cart={cart}
+          items={items}
           onClose={() => setGuestCheckoutOpen(false)}
           onSignIn={() => { setGuestCheckoutOpen(false); onRequireAccount?.(null, null); }}
           onRemoveLines={(lines) => {
@@ -1433,6 +1453,8 @@ export default function PortalShop({
           loyaltyDiscount={loyaltyDiscount}
           shippingAddress={shippingAddress}
           onShippingAddressChange={setShippingAddress}
+          printifyFulfillment={printifyFulfillment}
+          onPrintifyFulfillmentChange={setPrintifyFulfillment}
         />
       )}
 

@@ -671,13 +671,14 @@ def _shop_client():
     return cid, {"id": str(uuid.uuid4()), "role": "client", "client_id": cid, "name": f"{TAG} Shop Client"}
 
 
-def _shop_pay(user, items):
+def _shop_pay(user, items, printify_fulfillment=None):
     """The real online path: checkout (Stripe mocked), then the same
     _apply_shop_payment the webhook calls, with the authoritative session
     the webhook would carry — mirrors test_shop_income_split.py's _pay()."""
     with _StripeMocked():
         out = run(server.create_shop_checkout(
-            server.ShopCheckoutIn(items=items, idempotency_key=f"{TAG}-{uuid.uuid4().hex}"), user))
+            server.ShopCheckoutIn(items=items, idempotency_key=f"{TAG}-{uuid.uuid4().hex}",
+                                   printify_fulfillment=printify_fulfillment), user))
     order = run(server.db.shop_orders.find_one({"id": out["order_id"]}, {"_id": 0}))
     attempt = run(server.db.shop_payment_attempts.find_one({"shop_order_id": order["id"]}, {"_id": 0}))
     session = _FakeStripeObj(
@@ -697,13 +698,14 @@ def _cleanup_shop_order(cid, order_id):
     run(server.db.clients.delete_one({"id": cid}))
 
 
-def test_shop_order_with_a_printify_variant_queues_a_pickup_only_outbox_row():
+def test_shop_order_with_a_printify_variant_queues_a_pickup_outbox_row():
     p = _create(show_online=True)
     cid, user = _shop_client()
     order = None
     try:
         variant_id = p["variants"][0]["id"]
-        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)])
+        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                           printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
         assert row is not None
         assert row["status"] == "pending"
@@ -731,7 +733,8 @@ def test_shop_order_with_personalization_queues_the_template_and_price():
         variant_id = next(v["id"] for v in p["variants"] if v["name"] == "Small")
         order = _shop_pay(user, [server.ShopCartItemIn(
             kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id,
-            personalization={"Name": "Rex", "Phone": "330-555-0101"})])
+            personalization={"Name": "Rex", "Phone": "330-555-0101"})],
+            printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
         li = row["line_items"][0]
         assert li["personalization"] == {"Name": "Rex", "Phone": "330-555-0101"}
@@ -770,7 +773,8 @@ def test_shop_order_payment_replay_queues_only_one_outbox_row():
     order = None
     try:
         variant_id = p["variants"][0]["id"]
-        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)])
+        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                           printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         attempt = run(server.db.shop_payment_attempts.find_one({"shop_order_id": order["id"]}, {"_id": 0}))
         session = _FakeStripeObj(
             id=attempt["stripe_checkout_session_id"], payment_status="paid", currency="usd",
@@ -784,4 +788,139 @@ def test_shop_order_payment_replay_queues_only_one_outbox_row():
             _cleanup_shop_order(cid, order["id"])
         else:
             run(server.db.clients.delete_one({"id": cid}))
+        _cleanup([p["id"]])
+
+
+# ── Phase 3.1 — ship-to-home for an online Printify order (owner request:
+# "this should be fixed", in response to the pickup-only limitation above) ──
+
+SHOP_SHIP_ADDRESS = {"address1": "1 Main St", "address2": "", "city": "Columbus", "region": "OH", "zip": "43215"}
+
+
+def test_shop_checkout_requires_a_printify_fulfillment_choice():
+    p = _create(show_online=True)
+    cid, user = _shop_client()
+    try:
+        variant_id = p["variants"][0]["id"]
+        try:
+            with _StripeMocked():
+                run(server.create_shop_checkout(server.ShopCheckoutIn(
+                    items=[server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                    idempotency_key=f"{TAG}-{uuid.uuid4().hex}"), user))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "pickup or shipping" in e.detail
+    finally:
+        run(server.db.clients.delete_one({"id": cid}))
+        _cleanup([p["id"]])
+
+
+def test_shop_checkout_refuses_ship_with_no_address():
+    p = _create(show_online=True)
+    cid, user = _shop_client()
+    try:
+        variant_id = p["variants"][0]["id"]
+        try:
+            with _StripeMocked():
+                run(server.create_shop_checkout(server.ShopCheckoutIn(
+                    items=[server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                    idempotency_key=f"{TAG}-{uuid.uuid4().hex}",
+                    printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="ship")), user))
+            assert False, "should have been refused"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert "shipping address" in e.detail
+    finally:
+        run(server.db.clients.delete_one({"id": cid}))
+        _cleanup([p["id"]])
+
+
+def test_shop_order_with_no_printify_line_never_requires_the_choice():
+    # A cart whose only physical lines are plain (non-Printify) products
+    # must check out exactly as it always did — this choice is gated on the
+    # line's own frozen printify_fulfilled snapshot, never on kind=="product" alone.
+    internal = run(server.create_pos_product(server.PosProductCreateIn(
+        name=f"{TAG} Plain Shop Item 2", price=10.0, show_online=True, track_inventory=False), ADMIN))
+    cid, user = _shop_client()
+    order = None
+    try:
+        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=internal["id"], quantity=1)])
+        assert order["status"] == "paid"
+    finally:
+        if order:
+            _cleanup_shop_order(cid, order["id"])
+        else:
+            run(server.db.clients.delete_one({"id": cid}))
+        run(server.db.pos_products.delete_one({"id": internal["id"]}))
+
+
+def test_shop_order_with_ship_queues_outbox_row_using_the_buyers_own_identity():
+    # The physical address is what the buyer entered at checkout; the
+    # name/email/phone a Printify label also needs come from the order's
+    # own buyer identity (client account), never re-typed in this form.
+    p = _create(show_online=True)
+    cid, user = _shop_client()
+    run(server.db.clients.update_one({"id": cid}, {"$set": {"phone": "330-555-9999"}}))
+    order = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        order = _shop_pay(
+            user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+            printify_fulfillment=server.ShopPrintifyFulfillmentIn(
+                method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS)))
+        row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
+        assert row["fulfillment_method"] == "ship"
+        addr = row["shipping_address"]
+        assert addr["address1"] == "1 Main St"
+        assert addr["city"] == "Columbus"
+        assert addr["region"] == "OH"
+        assert addr["zip"] == "43215"
+        assert addr["country"] == "US"
+        assert addr["first_name"] == TAG and addr["last_name"] == "Shop Client"
+        assert addr["email"] == order["client_email"]
+        assert addr["phone"] == "330-555-9999"
+    finally:
+        if order:
+            _cleanup_shop_order(cid, order["id"])
+        else:
+            run(server.db.clients.delete_one({"id": cid}))
+        _cleanup([p["id"]])
+
+
+def test_guest_shop_checkout_with_ship_queues_outbox_row_using_the_guests_own_identity():
+    p = _create(show_online=True, guest_cart_allowed=True)
+    order = None
+    try:
+        variant_id = p["variants"][0]["id"]
+        buyer = server.shop_checkout.guest_buyer(email="rex.guest@example.com", name="Rex Guest", phone="330-555-1234")
+        with _StripeMocked():
+            out = run(server.shop_checkout.create_checkout(
+                buyer=buyer,
+                items=[server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                idempotency_key=f"{TAG}-{uuid.uuid4().hex}",
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(
+                    method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS)),
+            ))
+        order = run(server.db.shop_orders.find_one({"id": out["order_id"]}, {"_id": 0}))
+        attempt = run(server.db.shop_payment_attempts.find_one({"shop_order_id": order["id"]}, {"_id": 0}))
+        session = _FakeStripeObj(
+            id=attempt["stripe_checkout_session_id"], payment_status="paid", currency="usd",
+            amount_total=server._stripe_amount_cents(order["total"]),
+            metadata={"sithappens_shop_order_id": order["id"], "sithappens_attempt_id": attempt["id"]})
+        run(server._apply_shop_payment(attempt, session))
+        row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
+        addr = row["shipping_address"]
+        assert addr["first_name"] == "Rex" and addr["last_name"] == "Guest"
+        assert addr["email"] == "rex.guest@example.com"
+        assert addr["phone"] == "330-555-1234"
+        assert addr["city"] == "Columbus"
+    finally:
+        if order:
+            run(server.db.payments.delete_many({"shop_order_id": order["id"]}))
+            run(server.db.retail_sales.delete_many({"shop_order_id": order["id"]}))
+            run(server.db.shop_orders.delete_many({"id": order["id"]}))
+            run(server.db.shop_checkout_claims.delete_many({"shop_order_id": order["id"]}))
+            run(server.db.shop_payment_attempts.delete_many({"shop_order_id": order["id"]}))
+            run(server.db.printify_order_outbox.delete_many({"source_id": order["id"]}))
         _cleanup([p["id"]])

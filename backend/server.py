@@ -42844,7 +42844,7 @@ SHOP_SHIPPING_INITIALIZED_STATES = ("preparing", "shipped", "not_applicable")
 # The Shop cart lives with the Shop; imported back so every existing
 # reference to these names in server.py keeps resolving.
 from domains.shop.cart import (  # noqa: E402
-    ShopCartItemIn, ShopCheckoutIn, _normalize_cart_lines)
+    ShopCartItemIn, ShopCheckoutIn, ShopPrintifyFulfillmentIn, _normalize_cart_lines)
 
 
 
@@ -43176,6 +43176,12 @@ async def _price_shop_cart(
                 # and change what an already-priced cart can ship as.
                 "shippable": bool(product.get("shippable", False)),
                 "shipping_weight_lbs": product.get("shipping_weight_lbs"),
+                # Own-Shop Phase 3.1 — whether this line needs the Printify
+                # pickup-or-ship choice (domains.shop.checkout.create_checkout),
+                # frozen the same way: a product's sales_destination changing
+                # later must never reach back and change what an already-
+                # placed order required.
+                "printify_fulfilled": is_printify,
             })
         lines.append(line)
 
@@ -44193,6 +44199,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
         idempotency_key=body.idempotency_key,
         discount_code=body.discount_code,
         shipping_address=body.shipping_address,
+        printify_fulfillment=body.printify_fulfillment,
     )
 
 
@@ -44849,6 +44856,46 @@ def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[
     return out
 
 
+def _split_buyer_name(name: str) -> tuple:
+    """A Printify shipping label needs first_name AND last_name; the Shop
+    only ever asks the buyer for one "name" field (client account name, or
+    the name typed at guest checkout) — see ShopPrintifyFulfillmentIn's
+    docstring for why it's never asked twice. Split on the first space;
+    a single-word name (or none at all) repeats as both fields rather than
+    leaving one blank, since Printify's own address validation needs both
+    non-empty."""
+    parts = (name or "").strip().split(None, 1)
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], parts[0]
+    return parts[0], parts[1]
+
+
+async def _printify_ship_to_address(order: dict, shipping_address: dict) -> dict:
+    """Builds the full domains.printify.client.PrintifyAddress shape for an
+    online Shop order's Printify ship choice: the physical address is what
+    the buyer entered at checkout (ShopPrintifyFulfillmentIn.shipping_address
+    — city/region/zip etc.), and the name/email/phone a label also needs
+    come from the order's own buyer identity, never re-collected. A client's
+    phone isn't on the order itself (order.client_phone is a guest-only
+    field — see checkout.Buyer's docstring), so it falls back to the
+    client's own account."""
+    first_name, last_name = _split_buyer_name(order.get("client_name") or "")
+    phone = order.get("client_phone") or ""
+    if not phone and order.get("client_id"):
+        client = await db.clients.find_one({"id": order["client_id"]}, {"_id": 0, "phone": 1})
+        phone = (client or {}).get("phone") or ""
+    addr = shipping_address or {}
+    return {
+        "first_name": first_name, "last_name": last_name,
+        "email": order.get("client_email") or "", "phone": phone,
+        "address1": addr.get("address1") or "", "address2": addr.get("address2") or "",
+        "city": addr.get("city") or "", "region": addr.get("region") or "",
+        "zip": addr.get("zip") or "", "country": addr.get("country") or "US",
+    }
+
+
 async def _queue_printify_shop_lines(order: dict) -> None:
     """Online-Shop counterpart to the register's own Printify POD queuing
     (right above, in _create_pos_sale_impl) — called once per order, from
@@ -44864,17 +44911,12 @@ async def _queue_printify_shop_lines(order: dict) -> None:
     fulfillment_status, so a retried/replayed webhook can never queue the
     same order twice.
 
-    The online Shop has no pickup-or-ship choice for a Printify line the
-    way the register's own checkout does (ShopItemDetail/PortalShop never
-    collect one) — a Printify-destined cart also can never carry the
-    Shop's own FedEx shipping_address, since cart_shippable() requires
-    EVERY physical line be admin-flagged shippable, and a Printify line
-    never is. So every online Printify order is queued "pickup": produced
-    and picked up at the business, same as the register's own default when
-    staff don't ask for shipping. A customer-facing ship-to-home choice for
-    an online Printify order is a real gap, deliberately left for later —
-    this is the minimum needed to make online personalization actually
-    reach Printify for the event."""
+    The pickup-or-ship choice itself was already decided and validated at
+    checkout time (domains.shop.checkout.create_checkout, via
+    ShopPrintifyFulfillmentIn) and frozen onto order["printify_fulfillment"]
+    — this function only reads it. A legacy order placed before that
+    choice existed has no such field; it defaults to "pickup", exactly the
+    behavior every such order already got."""
     order_id = order["id"]
     if await db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order_id}, {"_id": 0, "id": 1}):
         return  # already queued by an earlier (crashed) run or a replayed webhook
@@ -44899,12 +44941,18 @@ async def _queue_printify_shop_lines(order: dict) -> None:
     if not printify_lines:
         return
 
+    printify_fulfillment = order.get("printify_fulfillment") or {}
+    fulfillment_method = printify_fulfillment.get("method") or "pickup"
+    shipping_address = None
+    if fulfillment_method == "ship":
+        shipping_address = await _printify_ship_to_address(order, printify_fulfillment.get("shipping_address"))
+
     ts = now_iso()
     await db.printify_order_outbox.insert_one({
         "id": str(uuid.uuid4()), "source": "shop_order", "source_id": order_id,
         "external_id": order_id, "status": "pending",
-        "fulfillment_method": "pickup",
-        "shipping_address": None,
+        "fulfillment_method": fulfillment_method,
+        "shipping_address": shipping_address,
         "line_items": _printify_outbox_line_items(printify_lines, product_cache),
         "printify_order_id": None,
         "attempts": 0, "last_error": None, "next_attempt_at": ts,

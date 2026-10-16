@@ -336,6 +336,74 @@ function ShippingChoice({ address, onChange }) {
 }
 
 /**
+ * Whether the cart has a Printify (print-on-demand) line — mirrors
+ * server._price_shop_cart's own `printify_fulfilled` snapshot exactly, so
+ * this never disagrees with what checkout will actually require. A cart
+ * with one of these needs the pickup-or-ship choice below before checkout,
+ * same requirement the register's own PrintifyFulfillmentModal enforces.
+ */
+export function hasPrintifyLine(lines) {
+  return (lines || []).some((l) => l.item?.sales_destination === "printify");
+}
+
+const BLANK_PRINTIFY_ADDRESS = { address1: "", address2: "", city: "", region: "", zip: "" };
+
+/**
+ * Pickup vs ship for a Printify line — same shape and fields as
+ * ShippingChoice, deliberately NOT asking for a name, email or phone:
+ * Printify's shipping label uses the buyer's own identity (account name/
+ * email, or what a guest typed at checkout), never collected twice. See
+ * server._printify_ship_to_address.
+ */
+export function PrintifyShipChoice({ fulfillment, onChange }) {
+  const shipping = fulfillment?.method === "ship";
+  const address = fulfillment?.shipping_address || BLANK_PRINTIFY_ADDRESS;
+  const setField = (field, value) => onChange({ method: "ship", shipping_address: { ...address, [field]: value } });
+  const fieldCls = "w-full rounded-lg border border-shBorder bg-transparent px-3 py-2 text-[13px] text-shText "
+    + "placeholder:text-shTextMuted focus-visible:outline focus-visible:outline-2 focus-visible:outline-shPrimary";
+
+  return (
+    <div className="space-y-2" data-testid="shop-printify-fulfillment">
+      <p className="text-[11px] text-shTextMuted">
+        <i className="fas fa-shirt mr-1.5" aria-hidden="true" />
+        This order includes a made-to-order item — how should it reach you?
+      </p>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => onChange({ method: "pickup", shipping_address: null })}
+                data-testid="shop-printify-pickup"
+                className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest border transition
+                           ${!shipping ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50"}`}>
+          Pick up in store
+        </button>
+        <button type="button" onClick={() => onChange({ method: "ship", shipping_address: address })}
+                data-testid="shop-printify-ship"
+                className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest border transition
+                           ${shipping ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50"}`}>
+          Ship to me
+        </button>
+      </div>
+      {shipping && (
+        <div className="space-y-2" data-testid="shop-printify-address-form">
+          <input value={address.address1} onChange={(e) => setField("address1", e.target.value)}
+                 placeholder="Street address" data-testid="shop-printify-address1" className={fieldCls} />
+          <input value={address.address2} onChange={(e) => setField("address2", e.target.value)}
+                 placeholder="Apt / suite (optional)" data-testid="shop-printify-address2" className={fieldCls} />
+          <div className="grid grid-cols-3 gap-2">
+            <input value={address.city} onChange={(e) => setField("city", e.target.value)}
+                   placeholder="City" data-testid="shop-printify-city" className={`col-span-1 ${fieldCls}`} />
+            <input value={address.region} onChange={(e) => setField("region", e.target.value.toUpperCase())}
+                   placeholder="State" maxLength={2} data-testid="shop-printify-region" className={fieldCls} />
+            <input value={address.zip} onChange={(e) => setField("zip", e.target.value)}
+                   placeholder="ZIP" data-testid="shop-printify-zip" className={fieldCls} />
+          </div>
+          <p className="text-[11px] text-shTextMuted">Made after you check out — Printify ships it straight to this address.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The cart itself. A dialog, with the focus handling a dialog owes you:
  * Escape closes it, focus moves in on open and back to whatever opened it
  * on close.
@@ -346,6 +414,7 @@ export default function CartPanel({
   appliedDiscount, onApplyDiscountCode, onRemoveDiscountCode, discountBusy,
   loyaltyDiscount,
   shippingAddress, onShippingAddressChange,
+  printifyFulfillment, onPrintifyFulfillmentChange,
 }) {
   const panelRef = useRef(null);
   const returnFocusRef = useRef(null);
@@ -366,7 +435,14 @@ export default function CartPanel({
   // Shipping V1 is clients only (not guest checkout or preview).
   const canShip = !guestMode && !previewMode && cartShippable(lines);
   const shippingIncomplete = shippingAddress != null && !shippingAddressComplete(shippingAddress);
-  const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0) && !shippingIncomplete;
+  // Printify's own ship-or-pickup choice — client cart view only; a guest
+  // makes this same choice inside GuestCheckoutPanel instead, where their
+  // identity (name/email/phone) already lives.
+  const showPrintifyChoice = !guestMode && !previewMode && hasPrintifyLine(lines) && onPrintifyFulfillmentChange;
+  const printifyIncomplete = showPrintifyChoice && printifyFulfillment?.method === "ship"
+    && !shippingAddressComplete(printifyFulfillment.shipping_address);
+  const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0)
+    && !shippingIncomplete && !printifyIncomplete;
 
   // Every code today is clients_only — gift cards never count (money, not
   // a purchase, same rule the server applies). Estimate only; see
@@ -458,6 +534,10 @@ export default function CartPanel({
 
             {canShip && onShippingAddressChange && (
               <ShippingChoice address={shippingAddress} onChange={onShippingAddressChange} />
+            )}
+
+            {showPrintifyChoice && (
+              <PrintifyShipChoice fulfillment={printifyFulfillment} onChange={onPrintifyFulfillmentChange} />
             )}
 
             <CartSummary subtotal={subtotal} discountLabel={discountLabel} discountEstimate={discountEstimate} />

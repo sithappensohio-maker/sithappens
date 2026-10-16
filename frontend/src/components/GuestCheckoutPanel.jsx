@@ -5,6 +5,7 @@ import PremiumButton from "./premium/PremiumButton";
 import { goTo } from "../lib/goTo";
 import { rememberGuestOrderToken } from "../lib/shopGuestCart";
 import { isCheckoutRestart } from "../lib/shopPolish";
+import { hasPrintifyLine, PrintifyShipChoice, shippingAddressComplete } from "./shop/ShopCart";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -27,7 +28,7 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
  * this panel offers the two honest ways forward: sign in, or take those
  * lines out. It never silently drops them and charges for the rest.
  */
-export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLines }) {
+export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onRemoveLines }) {
   const [priced, setPriced] = useState(null);      // null = still asking
   const [blocked, setBlocked] = useState(null);
   const [err, setErr] = useState("");
@@ -35,6 +36,16 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
+  // Printify pickup-or-ship — same choice the signed-in cart offers
+  // (CartPanel's PrintifyShipChoice), just without re-asking for a name/
+  // email/phone: this panel already collects those below, and that's what
+  // goes on the shipping label (see server._printify_ship_to_address).
+  const [printifyFulfillment, setPrintifyFulfillment] = useState(null);
+  const cartLines = useMemo(
+    () => (cart || []).map((c) => ({ ...c, item: (items || []).find((i) => i.kind === c.kind && i.id === c.ref_id) })),
+    [cart, items],
+  );
+  const cartHasPrintify = hasPrintifyLine(cartLines);
   // One idempotency key per basket, not per click. Minting a fresh one
   // inside the handler means an impatient double-tap is two different
   // requests to the server, which is two orders and two Stripe sessions —
@@ -80,7 +91,9 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
   // A gift card is emailed and nobody comes to the counter, so it does not.
   // The server enforces this too — the form only says so earlier.
   const needsPickupName = (cart || []).some((c) => c.kind === "product");
-  const ready = emailLooksReal && (!needsPickupName || name.trim().length > 0);
+  const printifyShipIncomplete = cartHasPrintify && printifyFulfillment?.method === "ship"
+    && !shippingAddressComplete(printifyFulfillment.shipping_address);
+  const ready = emailLooksReal && (!needsPickupName || name.trim().length > 0) && !printifyShipIncomplete;
 
   const pay = async () => {
     if (!ready || busy) return;
@@ -93,6 +106,12 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
         email: email.trim(),
         name: name.trim(),
         phone: phone.trim(),
+        // Required server-side whenever the cart has a Printify line —
+        // defaults to pickup if the toggle was never touched, same as the
+        // signed-in cart.
+        printify_fulfillment: cartHasPrintify
+          ? (printifyFulfillment || { method: "pickup", shipping_address: null })
+          : null,
       });
       // Kept before the redirect, never after: once the browser leaves for
       // Stripe there is no "after".
@@ -208,6 +227,9 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
                     we need a name to hand it over, and a number in case we need to reach you.
                   </p>
                 </>
+              )}
+              {cartHasPrintify && (
+                <PrintifyShipChoice fulfillment={printifyFulfillment} onChange={setPrintifyFulfillment} />
               )}
               <p className="text-[11px] text-shTextMuted">
                 No account is created. We use this for your order, and, if you bought one, the gift
