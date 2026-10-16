@@ -42151,7 +42151,17 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "requires_dog": False,
                 "requires_approval": bool(p.get("requires_approval", False)),
                 "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
-                "shippable": True,
+                # NEVER True here. A Printify line already gets its own
+                # pickup-or-ship choice (PrintifyShipChoice/hasPrintifyLine,
+                # ShopCart.jsx) entirely separately from the generic FedEx
+                # ShippingChoice — cartShippable() reads THIS field to decide
+                # whether to show that second, unrelated choice too. This was
+                # hardcoded True (likely predating PrintifyShipChoice) and is
+                # the real cause of the live "pick shipping is there twice"
+                # bug — a DB-level `pos_products.shippable` fix/backfill
+                # cannot touch it, since this catalog entry never reads that
+                # field for a Printify item at all.
+                "shippable": False,
                 **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
                 **_rating_fields(p["id"]),
             })

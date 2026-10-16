@@ -328,6 +328,24 @@ def test_client_shop_catalog_includes_it_with_its_real_variants():
         _cleanup([p["id"]])
 
 
+# Real live bug (owner screenshot, persisted even after the shippable-field
+# DB fix/backfill above): the catalog itself hardcoded shippable=True for
+# EVERY Printify item, regardless of what's actually stored on the product.
+# cartShippable() (frontend) reads this catalog field directly to decide
+# whether to show the generic FedEx ShippingChoice — so a Printify-only
+# cart always showed it, stacked on top of the Printify-specific
+# PrintifyShipChoice, no matter what the stored `shippable` field says.
+def test_catalog_never_claims_a_printify_item_is_fedex_shippable():
+    p = _create(show_online=True)
+    try:
+        run(server.db.pos_products.update_one({"id": p["id"]}, {"$set": {"shippable": True}}))
+        catalog = run(server._build_shop_catalog(None))
+        item = next(i for i in catalog["items"] if i["id"] == p["id"])
+        assert item["shippable"] is False
+    finally:
+        _cleanup([p["id"]])
+
+
 def test_client_shop_checkout_requires_a_size_choice():
     p = _create(show_online=True)
     try:
