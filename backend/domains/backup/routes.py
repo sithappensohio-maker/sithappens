@@ -462,6 +462,12 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 "error": "Another backup is already running",
             }
         temp_path: Optional[str] = None
+        # Only ever assigned once the main JSON backup has already gzipped
+        # successfully (see below) — a failure before that point (e.g. the
+        # PermissionError this guards) must not let the except block's own
+        # `if media_archive_path and ...` check crash with an UnboundLocalError
+        # and mask the real error that was actually being reported.
+        media_archive_path: Optional[str] = None
         try:
             # Checked after taking the lease (a restore checks the lease after
             # taking its lock), so the two can never both go ahead.
