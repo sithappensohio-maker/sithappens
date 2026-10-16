@@ -43941,6 +43941,17 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 {"$set": {"lines.$.fulfillment_status": "failed", "lines.$.fulfillment_error": str(exc)[:500], "updated_at": now_iso()}},
             )
 
+    # ── Step B3.5 — Printify POD queuing, once for the whole order. A
+    # Printify-fulfilled product line has no stock to commit
+    # (_commit_shop_inventory_line already no-ops for it — untracked), so
+    # without this nothing would ever submit that paid line to Printify for
+    # production. See _queue_printify_shop_lines for the idempotency and
+    # pickup-only rationale. ──
+    try:
+        await _queue_printify_shop_lines(order)
+    except Exception as exc:
+        logger.error("Printify outbox write failed for shop order %s: %s", order_id, exc)
+
     # ── Step B4 — order-level fulfillment status, always safe to rerun (a
     # pure function of the order's current line states). ──
     fresh_order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
@@ -44836,6 +44847,69 @@ def _printify_outbox_line_items(printify_lines: List[dict], product_cache: Dict[
             row["unit_price_cents"] = round(float(li.get("unit_price") or 0) * 100)
         out.append(row)
     return out
+
+
+async def _queue_printify_shop_lines(order: dict) -> None:
+    """Online-Shop counterpart to the register's own Printify POD queuing
+    (right above, in _create_pos_sale_impl) — called once per order, from
+    the same per-line fulfillment step in _apply_shop_payment that commits
+    inventory for a plain product line. A Printify-fulfilled Shop line has
+    no stock to commit (_commit_shop_inventory_line already no-ops for it,
+    untracked), so without this nothing would ever submit that paid line
+    to Printify for production — it would just sit "fulfilled" forever.
+
+    Idempotent per ORDER (one outbox row covers every Printify line on it,
+    exactly like one register sale's outbox row covers all of its), keyed
+    on (source, source_id) rather than inferred from the order's own
+    fulfillment_status, so a retried/replayed webhook can never queue the
+    same order twice.
+
+    The online Shop has no pickup-or-ship choice for a Printify line the
+    way the register's own checkout does (ShopItemDetail/PortalShop never
+    collect one) — a Printify-destined cart also can never carry the
+    Shop's own FedEx shipping_address, since cart_shippable() requires
+    EVERY physical line be admin-flagged shippable, and a Printify line
+    never is. So every online Printify order is queued "pickup": produced
+    and picked up at the business, same as the register's own default when
+    staff don't ask for shipping. A customer-facing ship-to-home choice for
+    an online Printify order is a real gap, deliberately left for later —
+    this is the minimum needed to make online personalization actually
+    reach Printify for the event."""
+    order_id = order["id"]
+    if await db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order_id}, {"_id": 0, "id": 1}):
+        return  # already queued by an earlier (crashed) run or a replayed webhook
+
+    product_cache: Dict[str, dict] = {}
+    printify_lines = []
+    for line in order.get("lines") or []:
+        if line.get("kind") != "product":
+            continue
+        product_id = line["ref_id"]
+        if product_id not in product_cache:
+            product_cache[product_id] = await db.pos_products.find_one({"id": product_id}, {"_id": 0}) or {}
+        product = product_cache[product_id]
+        if product.get("sales_destination") != "printify":
+            continue
+        printify_lines.append({
+            "product_id": product_id, "variant_id": line.get("variant_id"),
+            "qty": line["quantity"], "unit_price": line.get("unit_price"),
+            "personalization": line.get("personalization"),
+        })
+
+    if not printify_lines:
+        return
+
+    ts = now_iso()
+    await db.printify_order_outbox.insert_one({
+        "id": str(uuid.uuid4()), "source": "shop_order", "source_id": order_id,
+        "external_id": order_id, "status": "pending",
+        "fulfillment_method": "pickup",
+        "shipping_address": None,
+        "line_items": _printify_outbox_line_items(printify_lines, product_cache),
+        "printify_order_id": None,
+        "attempts": 0, "last_error": None, "next_attempt_at": ts,
+        "created_at": ts, "updated_at": ts,
+    })
 
 
 @api.get("/admin/printify/outbox")

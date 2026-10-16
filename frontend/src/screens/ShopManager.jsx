@@ -1469,14 +1469,16 @@ function OnlineOrdersTab() {
 }
 
 /* ============================================================================
- * PRINTIFY ORDERS TAB — register-only print-on-demand production status.
- * Printify items are sold and paid for at the register (see Pos.jsx's
- * scan-to-cart + PrintifyFulfillmentModal); this screen is read-only
- * visibility into what happens AFTER that sale: the outbox worker
- * (domains/printify/client.process_outbox) submits each queued row with
- * retry/backoff, and Printify's own webhook fills in production/shipment
- * status as it happens. A "stuck" row is a real paid order that hasn't
- * reached Printify yet — the one thing on this screen that needs a human.
+ * PRINTIFY ORDERS TAB — print-on-demand production status for every paid
+ * Printify line, from the register (Pos.jsx's scan-to-cart +
+ * PrintifyFulfillmentModal) OR the online Shop (ShopItemDetail.jsx's size/
+ * personalization form) — one shared outbox, one shared screen. This
+ * screen is read-only visibility into what happens AFTER that sale: the
+ * outbox worker (domains/printify/client.process_outbox) submits each
+ * queued row with retry/backoff, and Printify's own webhook fills in
+ * production/shipment status as it happens. A "stuck" row is a real paid
+ * order that hasn't reached Printify yet — the one thing on this screen
+ * that needs a human.
  * ========================================================================== */
 const PRINTIFY_STATUS_FILTERS = [
   ["", "All"], ["pending", "Queued"], ["stuck", "Stuck"], ["submitted", "Submitted"],
@@ -1544,7 +1546,7 @@ function PrintifyOrdersTab() {
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shSecondary">Shop operations</p>
               <h3 className="sh-display text-xl text-shText mt-0.5">Printify Orders</h3>
-              <p className="text-[11px] text-shTextMuted mt-1">Print-on-demand items sold at the register — production/shipment status, and any order that needs a retry.</p>
+              <p className="text-[11px] text-shTextMuted mt-1">Print-on-demand items sold at the register or online — production/shipment status, and any order that needs a retry.</p>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={registerWebhooks} disabled={registering} data-testid="sm-printify-register-webhooks"
@@ -1588,7 +1590,7 @@ function PrintifyOrdersTab() {
                   <div className="flex items-start justify-between flex-wrap gap-3">
                     <div className="min-w-0">
                       <p className="text-shText font-bold text-sm">
-                        Sale #{(row.source_id || "").slice(0, 8).toUpperCase()} · {row.fulfillment_method === "ship" ? "Ship" : "Pickup"}
+                        {row.source === "shop_order" ? "Online Order" : "Sale"} #{(row.source_id || "").slice(0, 8).toUpperCase()} · {row.fulfillment_method === "ship" ? "Ship" : "Pickup"}
                       </p>
                       <p className="text-shTextMuted text-[12px]">
                         {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
