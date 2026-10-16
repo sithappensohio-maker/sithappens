@@ -34522,6 +34522,14 @@ async def startup():
         await _migrate_shop_manager_fields_if_needed()
     except Exception as exc:
         logger.warning("Shop Manager field migration failed: %s", exc)
+    # Printify/Shopify listings must never be shippable=True (duplicate
+    # pickup-or-ship prompt bug, see create/update_pos_product) — but that
+    # fix only guards NEW saves. A product already shippable=True from
+    # before the fix stays that way forever without this backfill.
+    try:
+        await _migrate_clear_shippable_on_non_internal_products()
+    except Exception as exc:
+        logger.warning("Non-internal shippable-field migration failed: %s", exc)
 
 
 async def _migrate_shop_manager_fields_if_needed() -> None:
@@ -34579,6 +34587,24 @@ async def _migrate_shop_manager_fields_if_needed() -> None:
         )
         if res2.modified_count:
             logger.info("Shop Manager migration: set featured=False on %d existing %s", res2.modified_count, coll_name)
+
+
+async def _migrate_clear_shippable_on_non_internal_products() -> None:
+    """One-time, idempotent backfill: a Printify/Shopify product saved
+    before create/update_pos_product started forcing shippable off stayed
+    shippable=True forever, which made cartShippable() show BOTH the
+    FedEx ShippingChoice and the Printify ship/pickup choice for the same
+    cart item (the real bug: "pick shipping is there twice"). The query
+    only ever matches a document the code-level fix hasn't already
+    corrected, so a rerun on every restart is a no-op once caught up."""
+    res = await db.pos_products.update_many(
+        {"sales_destination": {"$ne": "internal"}, "shippable": True},
+        {"$set": {"shippable": False, "shipping_weight_lbs": None}},
+    )
+    if res.modified_count:
+        logger.info(
+            "Shippable-field migration: cleared shippable on %d existing non-internal product(s)",
+            res.modified_count)
 
 
 @app.on_event("shutdown")

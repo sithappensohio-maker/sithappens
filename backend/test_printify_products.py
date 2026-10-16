@@ -248,6 +248,37 @@ def test_update_clears_shippable_when_switching_a_product_away_from_internal():
         _cleanup([p["id"]])
 
 
+# The create/update fix above only guards NEW saves — a product already
+# shippable=True in the database from before that fix (simulated here by
+# writing straight to the collection, bypassing create_pos_product
+# entirely) needs its own one-time backfill on every backend restart.
+def test_startup_migration_clears_shippable_on_a_pre_existing_printify_product():
+    p = _create()
+    try:
+        run(server.db.pos_products.update_one(
+            {"id": p["id"]}, {"$set": {"shippable": True, "shipping_weight_lbs": 2.5}}))
+        run(server._migrate_clear_shippable_on_non_internal_products())
+        fixed = run(server.db.pos_products.find_one({"id": p["id"]}, {"_id": 0}))
+        assert fixed["shippable"] is False
+        assert fixed["shipping_weight_lbs"] is None
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_startup_migration_never_touches_a_shippable_internal_product():
+    internal = run(server.create_pos_product(server.PosProductCreateIn(
+        name=f"{TAG} Internal Shippable", sales_destination="internal", price=10.0,
+        shippable=True, shipping_weight_lbs=1.0,
+    ), ADMIN))
+    try:
+        run(server._migrate_clear_shippable_on_non_internal_products())
+        unchanged = run(server.db.pos_products.find_one({"id": internal["id"]}, {"_id": 0}))
+        assert unchanged["shippable"] is True
+        assert unchanged["shipping_weight_lbs"] == 1.0
+    finally:
+        _cleanup([internal["id"]])
+
+
 def test_register_catalog_includes_it_with_every_size_always_in_stock():
     p = _create()
     try:
