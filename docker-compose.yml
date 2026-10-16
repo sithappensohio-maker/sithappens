@@ -59,6 +59,23 @@ services:
       STRIPE_ONLINE_ENABLED: "${STRIPE_ONLINE_ENABLED:-}"
       STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
       STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+      # Printify print-on-demand (register-only) — same optional convention
+      # as Stripe above: a safe no-op until PRINTIFY_API_KEY/SHOP_ID are both
+      # set. PRINTIFY_PICKUP_* is the business's own ship-to address for an
+      # in-store "pickup" order; every field but ADDRESS2/EMAIL/PHONE is
+      # required before a pickup order can actually submit.
+      PRINTIFY_API_KEY: "${PRINTIFY_API_KEY:-}"
+      PRINTIFY_SHOP_ID: "${PRINTIFY_SHOP_ID:-}"
+      PRINTIFY_WEBHOOK_SECRET: "${PRINTIFY_WEBHOOK_SECRET:-}"
+      PRINTIFY_PICKUP_FIRST_NAME: "${PRINTIFY_PICKUP_FIRST_NAME:-}"
+      PRINTIFY_PICKUP_LAST_NAME: "${PRINTIFY_PICKUP_LAST_NAME:-}"
+      PRINTIFY_PICKUP_EMAIL: "${PRINTIFY_PICKUP_EMAIL:-}"
+      PRINTIFY_PICKUP_PHONE: "${PRINTIFY_PICKUP_PHONE:-}"
+      PRINTIFY_PICKUP_ADDRESS1: "${PRINTIFY_PICKUP_ADDRESS1:-}"
+      PRINTIFY_PICKUP_ADDRESS2: "${PRINTIFY_PICKUP_ADDRESS2:-}"
+      PRINTIFY_PICKUP_CITY: "${PRINTIFY_PICKUP_CITY:-}"
+      PRINTIFY_PICKUP_REGION: "${PRINTIFY_PICKUP_REGION:-}"
+      PRINTIFY_PICKUP_ZIP: "${PRINTIFY_PICKUP_ZIP:-}"
     volumes:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
       # NOTE: ./backups is deliberately UNLABELLED - it is shared with the mongo
