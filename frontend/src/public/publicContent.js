@@ -75,3 +75,20 @@ export const CATEGORY_META = {
   online_school: { label: "Online School", icon: "fa-laptop-file", color: "var(--sh-blue)", blurb: "Step-by-step Sit Happens lessons from home, with a free starter course." },
   photography: { label: "Photography", icon: "fa-camera-retro", color: "#f97316", blurb: "Custom canine portraits and action shots that capture your dog's personality." },
 };
+
+/**
+ * The homepage's "What we do" headline, built from the same
+ * showSchool/showPhotography flags the category cards below it already
+ * use — a product that can be toggled off in Settings must never still be
+ * named in a sentence above a grid that correctly stopped showing its card
+ * (owner screenshot, 2026-10-17: Online School turned off, its card was
+ * gone, but this used to be a separate hardcoded string that still said
+ * "...School...").
+ */
+export function whatWeDoHeadline(showSchool, showPhotography) {
+  const parts = ["Training", "daycare", "boarding", showSchool && "School", showPhotography && "portraits"].filter(Boolean);
+  const sentence = parts.length > 1
+    ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+    : parts.join("");
+  return `${sentence}. One team that knows your dog.`;
+}

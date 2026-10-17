@@ -6,7 +6,7 @@ import PublicSiteShell from "./PublicSiteShell";
 import { Eyebrow, Title, Section, Cta, usePublicDoors, ContactStrip, ProgramCard, FreeCourseCard, FinalCta } from "./PublicBits";
 import { UpcomingEventBanner } from "./PublicEventBits";
 import { usePublicSite, bookingHref, hoursRows, money, ONLINE_SCHOOL_HREF } from "./publicSite";
-import { PROBLEMS, PROMISE, PILLARS, HOW_TO_BOOK, FALLBACK_PROGRAMS, CATEGORY_META } from "./publicContent";
+import { PROBLEMS, PROMISE, PILLARS, HOW_TO_BOOK, FALLBACK_PROGRAMS, CATEGORY_META, whatWeDoHeadline } from "./publicContent";
 
 /**
  * The public Sit Happens homepage — what a logged-out visitor sees at `/`.
@@ -148,7 +148,7 @@ export default function PublicHome() {
       {/* ===== What we do ===== */}
       <Section tone="panel" testid="site-services">
         <Eyebrow icon="fa-list-check" color="text-shBlue">What we do</Eyebrow>
-        <Title>Training, daycare, boarding, School and portraits. One team that knows your dog.</Title>
+        <Title>{whatWeDoHeadline(showSchool, showPhotography)}</Title>
         <div className={`mt-8 grid grid-cols-1 sm:grid-cols-2 ${({ 3: "lg:grid-cols-3", 4: "lg:grid-cols-4" })[categories.length] || "lg:grid-cols-5"} gap-4`}>
           {categories.map((c) => {
             const m = CATEGORY_META[c.key];

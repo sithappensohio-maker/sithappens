@@ -374,7 +374,7 @@ export default function Login({ focus = false }) {
               <span className="sh-pop-green">finds their happy.</span>
             </h1>
             <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-5 max-w-2xl">
-              Training, Online School, daycare, boarding &amp; photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
+              Training{showSchool ? ", Online School" : ""}, daycare, boarding &amp; photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
             </p>
 
             {/* Two clear entry paths. Local/in-person services keep the free

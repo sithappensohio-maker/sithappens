@@ -25,3 +25,12 @@ test("Online School also appears in the What we do category grid", () => {
   expect(source).toContain('data-testid={c.key === "online_school" ? "landing-category-online-school-cta" : undefined}');
   expect(source).toContain("Five ways we help your pup.");
 });
+
+// Owner, 2026-10-17: the hero subtitle right under "finds their happy." was
+// a separate hardcoded string that always said "Online School" — the SAME
+// bug class as PublicHome.jsx's own headline (see publicContent.test.js),
+// just on this page's own landing hero.
+test("the hero subtitle names Online School conditionally, not as a hardcoded string", () => {
+  expect(source).not.toContain("Training, Online School, daycare, boarding &amp; photography");
+  expect(source).toContain('Training{showSchool ? ", Online School" : ""}, daycare, boarding');
+});
