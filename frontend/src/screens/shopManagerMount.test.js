@@ -197,6 +197,27 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
     expect(byTestId("sm-delete-t1")).toBeTruthy();
   });
 
+  // Owner-reported, live: Delete was in the DOM but invisible — the Items
+  // table's overflow-x-auto wrapper (for horizontal scroll on mobile) also
+  // clips the Y axis per the CSS overflow spec, so a 2-item dropdown
+  // (Duplicate + Delete) got cut off after the first item. jsdom doesn't
+  // lay out or clip anything, so it can't reproduce the visual bug — but it
+  // CAN prove the fix's actual mechanism: the panel must render outside the
+  // row's DOM subtree (portaled to document.body with fixed positioning),
+  // not nested inside the clipping ancestor. If this regresses back to an
+  // inline/absolute panel, this is the test that catches it.
+  test("the More menu panel escapes the row via portal, not nested inside the scrollable table wrapper", async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-k1-more").click(); });
+    const panel = byTestId("sm-row-k1-more-panel");
+    const row = byTestId("sm-item-row-k1");
+    expect(panel).toBeTruthy();
+    expect(row.contains(panel)).toBe(false);
+    expect(document.body.contains(panel)).toBe(true);
+    expect(byTestId("sm-duplicate-k1")).toBeTruthy();
+    expect(byTestId("sm-delete-k1")).toBeTruthy();
+  });
+
   test("confirming delete on a program with no history calls the real hard-delete endpoint", async () => {
     api.delete.mockReset();
     api.delete.mockResolvedValue({ data: { ok: true, action: "deleted" } });

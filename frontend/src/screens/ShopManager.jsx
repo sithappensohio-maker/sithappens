@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
@@ -120,37 +121,69 @@ function StatusPill({ active, label }) {
  * Edit and Delete/Hide stay inline (always reachable); everything else
  * collapses behind this one "More" button so every row is the same fixed
  * width. */
+// Rendered via portal at document.body: the Items table sits inside an
+// overflow-x-auto wrapper (for horizontal scrolling on mobile), and per the
+// CSS overflow spec that also forces the Y axis to clip — any dropdown
+// positioned inside it gets cut off after its first item. That's why a row
+// with only one menu item ("Duplicate") looked fine but adding a second
+// ("Delete", for packs/programs) rendered invisibly. Portal + fixed
+// positioning (computed from the trigger's own bounding rect) escapes the
+// clipping ancestor entirely — same fix, same root cause, as
+// ClientActionsMenu in screens/Clients.jsx (a different clipping ancestor
+// there — card `isolation: isolate` — but the identical bug shape).
 function RowActionsMenu({ actions, testIdPrefix }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef(null);
+  const [pos, setPos] = useState({ left: 0, top: 0, bottom: undefined });
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const MENU_WIDTH = 176; // w-44
 
   useEffect(() => {
     if (!open) return;
+    const reposition = () => {
+      const btn = triggerRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - r.bottom;
+      const openUp = spaceBelow < 160 && r.top > spaceBelow;
+      setPos({
+        left: Math.min(r.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
+        top: openUp ? undefined : r.bottom + 4,
+        bottom: openUp ? window.innerHeight - r.top + 4 : undefined,
+      });
+    };
+    reposition();
     const onDocClick = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      setOpen(false);
     };
     const onKeyDown = (e) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
     };
   }, [open]);
 
   if (actions.length === 0) return null;
 
   return (
-    <div className="relative inline-block" ref={containerRef}>
-      <button onClick={() => setOpen(o => !o)} data-testid={`${testIdPrefix}-more`}
+    <div className="inline-block">
+      <button ref={triggerRef} onClick={() => setOpen(o => !o)} data-testid={`${testIdPrefix}-more`}
               aria-haspopup="menu" aria-expanded={open}
               className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">
         More <i className={`fas fa-caret-${open ? "up" : "down"} ml-0.5`} />
       </button>
-      {open && (
-        <div role="menu" data-testid={`${testIdPrefix}-more-panel`}
-             className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-shBorder shadow-2xl overflow-hidden"
-             style={{ background: "var(--sh-card-base)" }}>
+      {open && createPortal((
+        <div ref={menuRef} role="menu" data-testid={`${testIdPrefix}-more-panel`}
+             style={{ position: "fixed", left: pos.left, top: pos.top, bottom: pos.bottom, width: MENU_WIDTH, background: "var(--sh-card-base)" }}
+             className="z-[9999] rounded-xl border border-shBorder shadow-2xl overflow-hidden">
           {actions.map((a) => (
             <button key={a.key} role="menuitem" data-testid={a.testId} disabled={a.disabled}
                     onClick={() => { setOpen(false); a.onClick(); }}
@@ -159,7 +192,7 @@ function RowActionsMenu({ actions, testIdPrefix }) {
             </button>
           ))}
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
