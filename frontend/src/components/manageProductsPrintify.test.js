@@ -287,6 +287,63 @@ describe("Fetch Sizes from Printify", () => {
     expect(toast.error).toHaveBeenCalled();
     w.cleanup();
   });
+
+  // Owner: a product that already has every size added used to dead-end
+  // here — "doesnt let me refetch sizes this should be a thing for when i
+  // change something in printify i can update it here by re pulling".
+  // BASE_FORM already has pf-var-s added, so this is exactly that case.
+  describe("re-fetching on a product that already has every size (owner report)", () => {
+    const PRODUCT_WITH_IMAGES_ALL_ADDED = {
+      ...PRODUCT, variants: [PRODUCT.variants[0]], // only pf-var-s exists on Printify's side too
+      images: [{ src: "https://img/front.jpg", is_default: true }, { src: "https://img/back.jpg", is_default: false }],
+    };
+
+    test("photos default to NONE checked, unlike a first-time import", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES_ALL_ADDED });
+      const w = mount(editor(BASE_FORM, () => {}));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      expect(w.text()).toContain("0 of 2 selected");
+      w.cleanup();
+    });
+
+    test("the confirm button is disabled until a photo is checked, then reads Update Photos", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES_ALL_ADDED });
+      const w = mount(editor(BASE_FORM, () => {}));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      const btn = w.q('[data-testid="printify-picker-add"]');
+      expect(btn.disabled).toBe(true);
+      await act(async () => { w.q('[data-testid="printify-picker-image-https://img/front.jpg"]').click(); });
+      expect(btn.disabled).toBe(false);
+      expect(btn.textContent).toBe("Update Photos");
+      w.cleanup();
+    });
+
+    test("confirming with only a photo checked imports it, adds no sizes, and never says \"Added 0 sizes\"", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES_ALL_ADDED });
+      api.post.mockReset();
+      api.post.mockResolvedValue({ data: { image_ids: ["m9"], errors: [] } });
+      toast.success.mockClear();
+      let current = { ...BASE_FORM };
+      const setForm = jest.fn((updater) => { current = updater(current); });
+      const w = mount(editor(current, setForm));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      await act(async () => { w.q('[data-testid="printify-picker-image-https://img/back.jpg"]').click(); });
+      await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+      await flush();
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/printify/products/pf-prod-1/import-images", { urls: ["https://img/back.jpg"] });
+      expect(current.variants).toEqual(BASE_FORM.variants); // no new size rows added
+      expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining("0 sizes"));
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("1 photo"));
+      w.cleanup();
+    });
+  });
 });
 
 // Owner: "we could just dump shopify all together" — now that Printify

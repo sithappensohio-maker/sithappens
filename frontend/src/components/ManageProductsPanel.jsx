@@ -171,10 +171,17 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
   const [checked, setChecked] = useState(() => new Set());
   const [filter, setFilter] = useState("");
   // This product's own mockup photos — see get_printify_product_variants'
-  // own `images` field (deduplicated server-side). Starts fully checked:
-  // "import everything, then uncheck what you don't want" is less friction
-  // than the reverse for the common case (a handful of clean mockups).
+  // own `images` field (deduplicated server-side). Starts fully checked
+  // for a genuinely first import: "import everything, then uncheck what
+  // you don't want" is less friction than the reverse for the common case
+  // (a handful of clean mockups). A RE-fetch on a product that already has
+  // sizes starts with none checked instead — import-images has no idea a
+  // photo was already pulled in before (it just downloads+re-hosts
+  // whatever URL it's given), so defaulting to "everything" here would
+  // silently duplicate every photo already in the gallery the moment the
+  // admin confirms.
   const [imagesChecked, setImagesChecked] = useState(() => new Set());
+  const isRefetch = (existingVariantIds || []).length > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -184,7 +191,7 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
       .then(({ data }) => {
         if (cancelled) return;
         setProduct(data);
-        setImagesChecked(new Set((data.images || []).map((img) => img.src)));
+        setImagesChecked(isRefetch ? new Set() : new Set((data.images || []).map((img) => img.src)));
       })
       .catch((e) => { if (!cancelled) setErr(e?.response?.data?.detail || "Could not fetch this product from Printify"); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -216,11 +223,17 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
   });
   const confirm = () => {
     const chosen = (product?.variants || []).filter((v) => checked.has(v.id) && !already.has(v.id));
-    if (chosen.length === 0) return;
+    const imageUrls = (product.images || []).map((img) => img.src).filter((src) => imagesChecked.has(src));
+    // A product with every size already added (owner: "this should be a
+    // thing for when i change something in printify i can update it here
+    // by re pulling") used to dead-end here — nothing new to check, so
+    // nothing ever happened, not even the photos just picked. Sizes and
+    // photos are independent reasons to confirm; either alone is enough.
+    if (chosen.length === 0 && imageUrls.length === 0) return;
     onAdd(chosen, {
       blueprintId: product.blueprint_id ?? null, printProviderId: product.print_provider_id ?? null,
       title: product.title, description: product.description,
-      imageUrls: (product.images || []).map((img) => img.src).filter((src) => imagesChecked.has(src)),
+      imageUrls,
     });
     onClose();
   };
@@ -288,7 +301,9 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
                   })}
                 </div>
                 <p className="text-[11px] text-shTextMuted mt-1">
-                  Pulled into this product's own photo gallery below when you add sizes — uncheck any you don't want.
+                  {isRefetch
+                    ? "Check any you want pulled into this product's own photo gallery — nothing already there is re-added automatically."
+                    : "Pulled into this product's own photo gallery below — uncheck any you don't want."}
                 </p>
               </div>
             )}
@@ -298,9 +313,10 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
           <button onClick={onClose} className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-2.5 font-black uppercase tracking-widest text-shTextMuted">
             Cancel
           </button>
-          <button onClick={confirm} disabled={loading || !!err || checked.size === 0} data-testid="printify-picker-add"
+          <button onClick={confirm} disabled={loading || !!err || (checked.size === 0 && imagesChecked.size === 0)}
+                  data-testid="printify-picker-add"
                   className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-2.5 font-black uppercase tracking-widest disabled:opacity-40">
-            Add {checked.size || ""} {checked.size === 1 ? "Size" : "Sizes"}
+            {checked.size > 0 ? `Add ${checked.size} ${checked.size === 1 ? "Size" : "Sizes"}` : "Update Photos"}
           </button>
         </div>
       </div>
@@ -391,7 +407,9 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         description: f.description.trim() ? f.description : (description || f.description),
       };
     });
-    toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
+    if (chosen.length > 0) {
+      toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
+    }
 
     if (imageUrls && imageUrls.length > 0) {
       setImportingPrintifyImages(true);
