@@ -15,6 +15,7 @@
  */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { ConfirmProvider } from "../lib/useConfirm";
 import { ProductEditor } from "./ManageProductsPanel";
 
 jest.mock("../lib/api", () => ({
@@ -58,8 +59,10 @@ function mount(ui) {
 }
 
 const editor = (extra = {}) => (
-  <ProductEditor form={FORM} setForm={() => {}} editingId="prod-1" originalImageId="img-1"
-                 saving={false} onSave={() => {}} onClose={() => {}} {...extra} />
+  <ConfirmProvider>
+    <ProductEditor form={FORM} setForm={() => {}} editingId="prod-1" originalImageId="img-1"
+                   saving={false} onSave={() => {}} onClose={() => {}} {...extra} />
+  </ConfirmProvider>
 );
 
 describe("the editor mounts from every screen that opens it", () => {
@@ -86,9 +89,11 @@ describe("the editor mounts from every screen that opens it", () => {
 
   test("a brand-new product with no photos yet", () => {
     const w = mount(
-      <ProductEditor form={{ ...FORM, image_id: null, image_ids: [] }} setForm={() => {}}
-                     editingId={null} originalImageId={null} originalImageIds={[]}
-                     saving={false} onSave={() => {}} onClose={() => {}} />
+      <ConfirmProvider>
+        <ProductEditor form={{ ...FORM, image_id: null, image_ids: [] }} setForm={() => {}}
+                       editingId={null} originalImageId={null} originalImageIds={[]}
+                       saving={false} onSave={() => {}} onClose={() => {}} />
+      </ConfirmProvider>
     );
     expect(w.text()).toMatch(/product photo/i);
     w.cleanup();

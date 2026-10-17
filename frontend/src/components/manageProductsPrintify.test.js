@@ -6,6 +6,7 @@
  */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { ConfirmProvider } from "../lib/useConfirm";
 import { ProductEditor } from "./ManageProductsPanel";
 
 jest.mock("../lib/api", () => ({
@@ -49,8 +50,10 @@ function mount(ui) {
 }
 
 const editor = (form, setForm, extra = {}) => (
-  <ProductEditor form={form} setForm={setForm} editingId="prod-1" originalImageId={null}
-                 saving={false} onSave={() => {}} onClose={() => {}} {...extra} />
+  <ConfirmProvider>
+    <ProductEditor form={form} setForm={setForm} editingId="prod-1" originalImageId={null}
+                   saving={false} onSave={() => {}} onClose={() => {}} {...extra} />
+  </ConfirmProvider>
 );
 
 test("shows the Printify Product ID field and a per-size Printify Variant ID, never barcode/stock", () => {

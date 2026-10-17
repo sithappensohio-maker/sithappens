@@ -119,6 +119,15 @@ describe("search", () => {
     expect(searchItems([sneaky], "secret-id")).toEqual([]);
   });
 
+  // A description can now be real HTML (RichTextEditor — see
+  // ManageProductsPanel.jsx): a search for "strong" must still find the
+  // real bolded word, but the tag name itself must never be searchable.
+  test("HTML tags in a description never become searchable text, but the real words still match", () => {
+    const rich = { ...leash, id: "rich-1", description: "<p>Soft and <strong>strong</strong> nylon.</p>" };
+    expect(searchItems([rich], "strong").map((i) => i.id)).toEqual(["rich-1"]);
+    expect(searchItems([rich], "<strong>")).toEqual([]);
+  });
+
   test("an empty query changes nothing", () => {
     expect(searchItems(ALL, "")).toHaveLength(ALL.length);
     expect(searchItems(ALL, "   ")).toHaveLength(ALL.length);

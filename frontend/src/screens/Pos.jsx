@@ -44,7 +44,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { useOptionalPromptDialog } from "../lib/promptCtx";
 import { askRegisterPin } from "../lib/registerPin";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
-import { creditPackStaffLine, pickupActionToast, groupVariantsByColor } from "../lib/shopPolish";
+import { creditPackStaffLine, pickupActionToast, groupVariantsByColor, stripHtmlTags } from "../lib/shopPolish";
 import {
   FrontDeskStatCard, FrontDeskQuickAction, FrontDeskToolButton, FrontDeskStatusChip,
   FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
@@ -319,7 +319,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       if (activeCategory && p.category_id !== activeCategory) return false;
       if (!q) return true;
       const variantText = (p.variants || []).flatMap((v) => [v.name, v.sku]);
-      const haystack = [p.name, p.description, p.sku, p.category_name, p.category, p.service_type, p.program_type, ...variantText]
+      const haystack = [p.name, stripHtmlTags(p.description), p.sku, p.category_name, p.category, p.service_type, p.program_type, ...variantText]
         .filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);
     });

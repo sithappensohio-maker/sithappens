@@ -134,12 +134,21 @@ export function sortShopItems(list) {
 // everything, so callers can always run this unconditionally instead of
 // branching on "is there a search term". Extracted from PortalShop.jsx's
 // inline filter so it's covered by these unit tests without rendering.
+// A product description can now be real HTML (RichTextEditor — see
+// ManageProductsPanel.jsx); every search haystack that includes it needs
+// this first, or typing "strong" matches every item whose description
+// has a single bolded word, and the tag names themselves become
+// searchable text nobody meant to expose.
+export function stripHtmlTags(value) {
+  return (value || "").replace(/<[^>]+>/g, " ");
+}
+
 export function matchesSearchQuery(item, query) {
   const q = (query || "").trim().toLowerCase();
   if (!q) return true;
   return (
     (item.name || "").toLowerCase().includes(q)
-    || (item.description || "").toLowerCase().includes(q)
+    || stripHtmlTags(item.description).toLowerCase().includes(q)
     || (item.category_name || "").toLowerCase().includes(q)
     || (item.subcategory_name || "").toLowerCase().includes(q)
   );

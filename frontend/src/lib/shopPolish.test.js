@@ -2,7 +2,7 @@ import {
   itemsForTab,
   categoryOptionsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
-  categoryGroupsForTab, uncategorizedItemsForTab, categoryCoverItem, matchesSearchQuery,
+  categoryGroupsForTab, uncategorizedItemsForTab, categoryCoverItem, matchesSearchQuery, stripHtmlTags,
   OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
@@ -222,6 +222,23 @@ test("matchesSearchQuery matches on name, description, category name, and subcat
   expect(matchesSearchQuery(item, "collars")).toBe(true); // category_name
   expect(matchesSearchQuery(item, "leashes")).toBe(true); // subcategory_name
   expect(matchesSearchQuery(item, "mugs")).toBe(false);
+});
+
+test("stripHtmlTags removes tags but keeps the real words", () => {
+  expect(stripHtmlTags("<h2>Durable</h2><p>Soft and <strong>strong</strong>.</p>")).toBe(" Durable  Soft and  strong . ");
+  expect(stripHtmlTags("plain text")).toBe("plain text");
+  expect(stripHtmlTags(null)).toBe("");
+  expect(stripHtmlTags(undefined)).toBe("");
+});
+
+// Owner's description editor now produces real HTML (RichTextEditor) — a
+// search for "strong" must not match every item with one bolded word,
+// and the tag name itself must never become searchable text.
+test("matchesSearchQuery strips HTML tags from the description before matching", () => {
+  const item = { name: "Rope Leash", description: "<p>Soft and <strong>strong</strong> nylon.</p>" };
+  expect(matchesSearchQuery(item, "strong")).toBe(true); // the real bolded word still matches
+  expect(matchesSearchQuery(item, "nylon")).toBe(true);
+  expect(matchesSearchQuery(item, "<strong>")).toBe(false); // the tag itself is never searchable text
 });
 
 test("matchesSearchQuery treats a blank/empty query as matching everything", () => {

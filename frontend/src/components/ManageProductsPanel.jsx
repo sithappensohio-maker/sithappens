@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import RelatedItemsEditor from "./shop/RelatedItemsEditor";
+import RichTextEditor from "./RichTextEditor";
 import ShopGalleryUpload from "./ShopGalleryUpload";
 import { galleryIds as productGallery } from "../lib/shopImage";
 import ShopCategoryFields from "./ShopCategoryFields";
@@ -597,9 +598,9 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         )}
 
         <div className="col-span-2">
-          <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Description (optional)</label>
-          <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Description (optional)</label>
+          <RichTextEditor value={form.description} onChange={(html) => setForm((f) => ({ ...f, description: html }))}
+                          testId="product-description" rows={4} placeholder="What is it, who's it for, what's it made of…" />
         </div>
 
         {/* Photo is channel-independent: the register grid and the client
@@ -891,10 +892,9 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         {form.show_online && (
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
-              <input value={form.online_description} onChange={(e) => setForm((f) => ({ ...f, online_description: e.target.value }))}
-                     data-testid="product-online-description"
-                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Online Description (optional — falls back to Description)</label>
+              <RichTextEditor value={form.online_description} onChange={(html) => setForm((f) => ({ ...f, online_description: html }))}
+                              testId="product-online-description" rows={4} />
             </div>
             <div>
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sort Order (optional)</label>

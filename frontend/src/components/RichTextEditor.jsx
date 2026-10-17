@@ -23,6 +23,28 @@ export default function RichTextEditor({
   const promptDialog = usePromptDialog();
   const ref = useRef(null);
   const lastEmittedRef = useRef("");
+  const savedRangeRef = useRef(null);
+
+  // A <select> (Heading) or <input type="color"> needs its OWN focus to
+  // work at all — opening either one clears whatever text was selected in
+  // the contentEditable body, so by the time its change handler runs
+  // there is nothing left for execCommand to act on. A plain <button>
+  // (Bold, Italic, the rest of this toolbar) does not have this problem —
+  // it never takes over the page's selection the way a native form
+  // control opening its own picker does. Saved on mousedown, which fires
+  // before the browser moves focus; restored right before the command runs.
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+  const restoreSelection = () => {
+    if (!savedRangeRef.current) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRangeRef.current);
+  };
 
   // Sync external value → DOM (only when it differs to avoid caret jumping)
   useEffect(() => {
@@ -58,6 +80,16 @@ export default function RichTextEditor({
     });
     if (url?.trim()) fmt("createLink", url.trim());
   };
+  const setHeading = (e) => {
+    const tag = e.target.value; // "p" | "h2" | "h3"
+    restoreSelection();
+    fmt("formatBlock", tag === "p" ? "div" : tag);
+    e.target.value = "p"; // the dropdown is a one-shot action, not a persistent mode indicator
+  };
+  const setColor = (e) => {
+    restoreSelection();
+    fmt("foreColor", e.target.value);
+  };
   const insertVar = (v) => {
     document.execCommand("insertText", false, `{{${v}}}`);
     ref.current?.focus();
@@ -68,9 +100,24 @@ export default function RichTextEditor({
     <div className="bg-bgBase border border-bgHover rounded">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-1 px-2 py-1.5 border-b border-bgHover bg-bgPanel/40">
+        <select onMouseDown={saveSelection} onChange={setHeading} defaultValue="p"
+                data-testid={testId ? `${testId}-heading` : undefined}
+                title="Heading" aria-label="Heading"
+                className="bg-bgPanel border border-bgHover rounded px-1.5 py-1 text-xs text-gray-300">
+          <option value="p">Paragraph</option>
+          <option value="h2">Heading</option>
+          <option value="h3">Subheading</option>
+        </select>
         <ToolbarBtn icon="fa-bold" label="Bold" onClick={() => fmt("bold")} />
         <ToolbarBtn icon="fa-italic" label="Italic" onClick={() => fmt("italic")} />
         <ToolbarBtn icon="fa-underline" label="Underline" onClick={() => fmt("underline")} />
+        <label title="Text color" className="relative w-7 h-7 grid place-items-center text-gray-400 hover:text-white hover:bg-bgHover rounded cursor-pointer">
+          <i className="fas fa-palette text-xs" aria-hidden="true" />
+          <input type="color" onMouseDown={saveSelection} onChange={setColor}
+                 data-testid={testId ? `${testId}-color` : undefined}
+                 aria-label="Text color"
+                 className="absolute inset-0 opacity-0 cursor-pointer" />
+        </label>
         <span className="text-gray-700 mx-1">·</span>
         <ToolbarBtn icon="fa-list-ul" label="Bullet list" onClick={() => fmt("insertUnorderedList")} />
         <ToolbarBtn icon="fa-list-ol" label="Numbered list" onClick={() => fmt("insertOrderedList")} />
@@ -108,6 +155,8 @@ export default function RichTextEditor({
         .rte-body a { color: #00a9e0; text-decoration: underline; }
         .rte-body ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0; }
         .rte-body ol { list-style: decimal; padding-left: 1.5rem; margin: 0.25rem 0; }
+        .rte-body h2 { font-size: 1.15em; font-weight: 900; margin: 0.5rem 0 0.25rem; }
+        .rte-body h3 { font-size: 1.05em; font-weight: 700; margin: 0.4rem 0 0.2rem; }
       `}</style>
 
       {/* Variable chips with plain-English labels */}

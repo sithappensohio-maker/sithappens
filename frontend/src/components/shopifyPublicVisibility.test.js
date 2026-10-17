@@ -13,6 +13,7 @@
  */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { ConfirmProvider } from "../lib/useConfirm";
 import { ProductEditor } from "./ManageProductsPanel";
 
 jest.mock("../lib/api", () => ({
@@ -41,8 +42,12 @@ function mount(form) {
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => {
-    root.render(<ProductEditor form={form} setForm={() => {}} editingId="p1" originalImageId={null}
-                               originalImageIds={[]} saving={false} onSave={() => {}} onClose={() => {}} />);
+    root.render(
+      <ConfirmProvider>
+        <ProductEditor form={form} setForm={() => {}} editingId="p1" originalImageId={null}
+                       originalImageIds={[]} saving={false} onSave={() => {}} onClose={() => {}} />
+      </ConfirmProvider>,
+    );
   });
   return {
     text: () => host.textContent || "",

@@ -44640,7 +44640,13 @@ class PosProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     sku: Optional[str] = Field(default=None, max_length=100)
     category: Optional[str] = Field(default="", max_length=100)
-    description: Optional[str] = Field(default=None, max_length=1000)
+    # Edited as real rich text (RichTextEditor, ManageProductsPanel.jsx) —
+    # the stored value is sanitized HTML, so the old 1000-char plain-text
+    # budget is eaten fast by a handful of <p>/<strong> wrappers around
+    # what used to be a short paragraph. 1000 chars of real prose is
+    # already a long product description; this just stops markup
+    # overhead from refusing a save a plain-text admin would never hit.
+    description: Optional[str] = Field(default=None, max_length=20000)
     # Required for internal products; ignored for shopify_external listings
     # (see _resolve_pos_product_destination_fields), which use
     # shopify_display_price instead — so this defaults to 0 rather than
@@ -44654,7 +44660,7 @@ class PosProductIn(BaseModel):
     # the one authoritative product name shown everywhere (POS and Shop);
     # only the description may differ per-context.
     show_online: bool = False
-    online_description: Optional[str] = Field(default=None, max_length=1000)
+    online_description: Optional[str] = Field(default=None, max_length=20000)
     image_id: Optional[str] = None
     # A gallery, primary first. Additive: a caller that only knows about
     # image_id keeps working, and image_id is kept in step below so every

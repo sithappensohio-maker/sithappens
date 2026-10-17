@@ -148,6 +148,13 @@ const SEARCH_FIELDS = [
 ];
 
 const norm = (s) => String(s == null ? "" : s).toLowerCase();
+// description/online_description can now be real HTML (RichTextEditor —
+// see ManageProductsPanel.jsx) — tags stripped from the ITEM'S fields
+// (never the typed query itself, which a shopper never writes HTML into,
+// and never helps_with entries, which never contain markup) so a search
+// for "strong" doesn't match every item with one bolded word, and the
+// tag names themselves never become searchable text.
+const normField = (s) => norm(s).replace(/<[^>]+>/g, " ");
 
 export function searchItems(items, query) {
   const q = norm(query).trim();
@@ -155,7 +162,7 @@ export function searchItems(items, query) {
   const terms = q.split(/\s+/).filter(Boolean);
   return (items || []).filter((item) => {
     const hay = [
-      ...SEARCH_FIELDS.map((f) => norm(item[f])),
+      ...SEARCH_FIELDS.map((f) => normField(item[f])),
       ...(item.helps_with || []).map(norm),
     ].join(" ");
     // Every term must appear, so a second word narrows rather than widens.

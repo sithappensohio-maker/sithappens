@@ -12,18 +12,24 @@ import HuskyDogImage from "./brand/HuskyDogImage";
 import { shopImageProps, galleryIds } from "../lib/shopImage";
 import { guestItemCta, creditPackDetailLine, groupVariantsByColor, swatchHexFor, compareSizes } from "../lib/shopPolish";
 import ProductFacts from "./shop/ProductFacts";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+
+// A description written in RichTextEditor (products — see
+// ManageProductsPanel.jsx) always contains a real tag; one typed before
+// that existed, or a credit_pack/training_program (this component is
+// shared across all three kinds — see _build_shop_catalog's merged
+// `description` key), never does. That one signal decides which renderer
+// below applies, so nothing has to migrate and nothing new has to opt in.
+const HAS_HTML_TAG_RE = /<[a-z][\s\S]*>/i;
 
 /* Plain-text formatter — paragraphs (blank line), line breaks, and short
  * "- "/"• " bullet lists. Built from split()/JSX, never dangerouslySetInnerHTML,
  * so there is no HTML-injection surface no matter what an admin types into a
- * description field. */
-function FormattedDescription({ text }) {
-  const trimmed = (text || "").trim();
-  if (!trimmed) {
-    return <p className="text-shTextMuted text-[14px] italic">Additional information is not available yet.</p>;
-  }
+ * description field. Still the ONLY renderer for anything that isn't real
+ * HTML (see HAS_HTML_TAG_RE above). */
+function PlainTextDescription({ trimmed }) {
   const blocks = trimmed.split(/\n\s*\n/);
   return (
     <div className="space-y-3">
@@ -44,6 +50,35 @@ function FormattedDescription({ text }) {
         );
       })}
     </div>
+  );
+}
+
+function FormattedDescription({ text }) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) {
+    return <p className="text-shTextMuted text-[14px] italic">Additional information is not available yet.</p>;
+  }
+  if (!HAS_HTML_TAG_RE.test(trimmed)) {
+    return <PlainTextDescription trimmed={trimmed} />;
+  }
+  // Real rich text, admin-authored in RichTextEditor — sanitized before it
+  // ever reaches dangerouslySetInnerHTML, same rule every other rich-text
+  // surface in this app already follows (payment-plan agreements, email
+  // templates — see sanitizeHtml.js's own doc comment and use sites).
+  return (
+    <>
+      <div className="shop-rich-description text-shText text-[14px] leading-relaxed"
+           dangerouslySetInnerHTML={{ __html: sanitizeHtml(trimmed) }} />
+      <style>{`
+        .shop-rich-description p { margin: 0 0 0.75rem; }
+        .shop-rich-description p:last-child { margin-bottom: 0; }
+        .shop-rich-description a { color: #00a9e0; text-decoration: underline; }
+        .shop-rich-description ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0 0.75rem; }
+        .shop-rich-description ol { list-style: decimal; padding-left: 1.5rem; margin: 0.25rem 0 0.75rem; }
+        .shop-rich-description h2 { font-size: 1.15em; font-weight: 900; margin: 0.5rem 0 0.25rem; }
+        .shop-rich-description h3 { font-size: 1.05em; font-weight: 700; margin: 0.4rem 0 0.2rem; }
+      `}</style>
+    </>
   );
 }
 
