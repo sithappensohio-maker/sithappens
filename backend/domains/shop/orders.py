@@ -125,14 +125,43 @@ def summary(order: dict, items_by_ref: Optional[Dict[tuple, dict]] = None) -> Di
     }
 
 
+def _tracking(order: dict, printify_tracking: Optional[dict]) -> Optional[Dict[str, Any]]:
+    """One shape for the customer regardless of WHO actually shipped it.
+
+    Self-fulfilled (FedEx, see mark_shop_order_shipped) only ever stores a
+    bare tracking number an admin typed in — never a carrier or a URL — so
+    the link is built here, the one real carrier this business ships
+    self-fulfilled orders through. A Printify line already carries a real
+    {code, number, url} from Printify's own shipment webhook
+    (domains.printify.client.apply_webhook_event); that row lives on
+    printify_order_outbox, not on the order itself, so the caller fetches
+    it and hands it in — same "caller reads once, this just shapes it"
+    rule every other field on this receipt already follows.
+    """
+    number = (order.get("tracking_number") or "").strip()
+    if number:
+        return {"number": number, "carrier": "FedEx",
+                "url": f"https://www.fedex.com/fedextrack/?trknbr={number}"}
+    if printify_tracking and printify_tracking.get("number"):
+        return {
+            "number": printify_tracking["number"],
+            "carrier": (printify_tracking.get("code") or "").upper() or None,
+            "url": printify_tracking.get("url") or None,
+        }
+    return None
+
+
 def detail(order: dict, *, items_by_ref: Dict[tuple, dict],
            actions_by_item_id: Dict[str, List[dict]],
-           gift_cards_by_item_id: Optional[Dict[str, List[dict]]] = None) -> Dict[str, Any]:
+           gift_cards_by_item_id: Optional[Dict[str, List[dict]]] = None,
+           printify_tracking: Optional[dict] = None) -> Dict[str, Any]:
     """The full receipt.
 
     `items_by_ref` and `actions_by_item_id` are computed by the caller in
     ONE pass each and handed in, so a ten-line order is still one catalogue
-    read and one enrolment read — not ten of each.
+    read and one enrolment read — not ten of each. `printify_tracking` is
+    the matching printify_order_outbox row's own `tracking` field, when
+    there is one — see `_tracking` above.
     """
     lines = order.get("lines") or []
     out = {
@@ -147,6 +176,9 @@ def detail(order: dict, *, items_by_ref: Dict[tuple, dict],
         "tax_amount": _money(order.get("tax_amount")),
         "total": _money(order.get("total")),
         "currency": order.get("currency") or "USD",
+        "shipping_status": order.get("shipping_status"),
+        "shipped_at": order.get("shipped_at"),
+        "tracking": _tracking(order, printify_tracking),
         "lines": [
             _line_detail(
                 l,

@@ -44338,9 +44338,12 @@ async def portal_shop_order_status(order_id: str, user: dict = Depends(get_curre
             item=items_by_ref.get((line.get("kind"), line.get("ref_id"))),
             viewer_client_id=user.get("client_id"), enrollment_by_key=enrollments,
         )
+    printify_row = await db.printify_order_outbox.find_one(
+        {"source": "shop_order", "source_id": order_id}, {"_id": 0, "tracking": 1})
     return shop_orders_view.detail(
         order, items_by_ref=items_by_ref, actions_by_item_id=actions_by_item_id,
-        gift_cards_by_item_id=await gift_card_shop.buyer_cards(order))
+        gift_cards_by_item_id=await gift_card_shop.buyer_cards(order),
+        printify_tracking=(printify_row or {}).get("tracking"))
 
 
 # ── Front Desk — Online Orders surface ──────────────────────────────────────

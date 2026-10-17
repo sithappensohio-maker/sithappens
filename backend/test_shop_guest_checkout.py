@@ -30,6 +30,7 @@ from fastapi import HTTPException
 from domains.shop import checkout as shop_checkout
 from domains.shop import guest as shop_guest
 from domains.shop import guest_routes
+from domains.printify import client as printify_client
 
 TAG = "TEST_GUEST_SHOP"
 SHOP_SHIP_ADDRESS = {"address1": "1 Main St", "address2": "", "city": "Columbus", "region": "OH", "zip": "43215"}
@@ -563,6 +564,40 @@ def test_the_preview_includes_printifys_real_shipping_once_ship_is_chosen():
             ), _Req()))
         assert out["printify_shipping_amount"] == 5.5
         assert out["total"] == round(out["subtotal"] + out["tax_amount"] + 5.5, 2)
+
+
+def test_a_guest_sees_real_printify_tracking_once_printify_ships_it():
+    # The end of the chain the owner asked for (2026-10-17): Printify's own
+    # shipment webhook reaches printify_order_outbox (domains.printify.
+    # client.apply_webhook_event) — this proves it then actually reaches
+    # the guest's own order page, not just the admin screen.
+    with _public_shop_open(), _guest_orders(), _printify_product() as p:
+        variant_id = p["variants"][0]["id"]
+        with _stripe_mocked():
+            result = run(guest_checkout(guest_routes.GuestCheckoutIn(
+                items=[_item("product", p["id"], 1, variant_id=variant_id)],
+                idempotency_key=f"g-{uuid.uuid4().hex}", email="buyer@example.com", name="Sam Guest",
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup", shipping_address=None),
+            ), _Req()))
+        oid, token = result["order_id"], result["guest_token"]
+        _pay(oid)
+        before = run(guest_order_status(oid, _Req(), token=token))
+        assert before["tracking"] is None
+
+        row = run(server.db.printify_order_outbox.find_one(
+            {"source": "shop_order", "source_id": oid}, {"_id": 0, "id": 1}))
+        run(server.db.printify_order_outbox.update_one(
+            {"id": row["id"]}, {"$set": {"printify_order_id": "pf-order-shipped-1"}}))
+        carrier = {"code": "usps", "number": "9400111", "url": "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111"}
+        run(printify_client.apply_webhook_event(server.db, {
+            "id": "evt-1", "type": "order:shipment:created", "created_at": server.now_iso(),
+            "resource": {"id": "pf-order-shipped-1", "type": "order",
+                         "data": {"shipped_at": server.now_iso(), "carrier": carrier}},
+        }))
+
+        after = run(guest_order_status(oid, _Req(), token=token))
+        assert after["tracking"] == {"number": "9400111", "carrier": "USPS",
+                                      "url": "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111"}
 
 
 def test_the_preview_charges_no_shipping_for_pickup_or_no_choice_yet():

@@ -279,7 +279,10 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
         except HTTPException:
             public_items = []
         items_by_ref = {(i["kind"], i["id"]): i for i in public_items}
+        printify_row = await db.printify_order_outbox.find_one(
+            {"source": "shop_order", "source_id": order_id}, {"_id": 0, "tracking": 1})
         view = shop_orders_view.detail(order, items_by_ref=items_by_ref, actions_by_item_id={},
-                                       gift_cards_by_item_id=await gift_card_shop.buyer_cards(order))
+                                       gift_cards_by_item_id=await gift_card_shop.buyer_cards(order),
+                                       printify_tracking=(printify_row or {}).get("tracking"))
         view["email"] = order.get("client_email")
         return view

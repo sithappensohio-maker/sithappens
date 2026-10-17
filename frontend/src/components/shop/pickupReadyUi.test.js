@@ -85,6 +85,43 @@ describe("the order page", () => {
   });
 });
 
+// Owner request (2026-10-17): "tracking would be nice" — the shipped email
+// is a one-time thing; this is the permanent record in the order itself.
+describe("shipment tracking on the order page", () => {
+  const tracking = () => document.querySelector('[data-testid="shop-order-tracking"]');
+  const trackingLink = () => document.querySelector('[data-testid="shop-order-tracking-link"]');
+
+  test("nothing has shipped — no tracking block at all", () => {
+    mount(<OrderDetail order={{ ...ORDER, tracking: null }} onBack={() => {}} />);
+    expect(tracking()).toBeNull();
+  });
+
+  test("a self-fulfilled FedEx order shows the carrier, number and a real link", () => {
+    mount(<OrderDetail order={{ ...ORDER, tracking: {
+      number: "9400111", carrier: "FedEx", url: "https://www.fedex.com/fedextrack/?trknbr=9400111",
+    } }} onBack={() => {}} />);
+    expect(tracking().textContent).toContain("Shipped via FedEx");
+    expect(tracking().textContent).toContain("9400111");
+    expect(trackingLink().getAttribute("href")).toBe("https://www.fedex.com/fedextrack/?trknbr=9400111");
+    expect(trackingLink().getAttribute("target")).toBe("_blank");
+  });
+
+  test("a Printify order shows Printify's own real carrier and URL", () => {
+    mount(<OrderDetail order={{ ...ORDER, tracking: {
+      number: "EZ1234", carrier: "USPS", url: "https://tools.usps.com/go/x",
+    } }} onBack={() => {}} />);
+    expect(tracking().textContent).toContain("Shipped via USPS");
+    expect(trackingLink().getAttribute("href")).toBe("https://tools.usps.com/go/x");
+  });
+
+  test("a number with no URL yet still shows, just with nothing to click", () => {
+    mount(<OrderDetail order={{ ...ORDER, tracking: { number: "9400111", carrier: null, url: null } }} onBack={() => {}} />);
+    expect(tracking().textContent).toContain("9400111");
+    expect(tracking().textContent).not.toContain("via");
+    expect(trackingLink()).toBeNull();
+  });
+});
+
 describe("a checkout the server says can't be resumed", () => {
   const { isCheckoutRestart } = require("../../lib/shopPolish");
   test("only the restart code counts", () => {

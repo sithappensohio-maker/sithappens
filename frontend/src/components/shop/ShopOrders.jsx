@@ -370,6 +370,28 @@ export function OrderDetail({ order, onBack, onBuyAgain, onOpenItem, onOpenCours
             : "We'll email you as soon as it's ready to collect."}
         </p>
       )}
+
+      {/* The shipped email is a one-time thing — deleted, missed, or sent
+          to an old address, the customer then has no way to check a
+          shipment's status. This is that permanent record, same tracking
+          data whether it shipped self-fulfilled (FedEx) or through
+          Printify. */}
+      {order.tracking && (
+        <div className="mt-4 text-[12px] text-shTextMuted border border-shBorder rounded-lg p-3"
+             data-testid="shop-order-tracking">
+          <p>
+            <i className="fas fa-truck mr-1.5" aria-hidden="true" />
+            Shipped{order.tracking.carrier ? ` via ${order.tracking.carrier}` : ""} · {order.tracking.number}
+          </p>
+          {order.tracking.url && (
+            <a href={order.tracking.url} target="_blank" rel="noopener noreferrer"
+               data-testid="shop-order-tracking-link"
+               className="inline-block mt-1.5 text-shPrimary font-bold hover:underline">
+              Track Package <i className="fas fa-arrow-up-right-from-square ml-1 text-[10px]" aria-hidden="true" />
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
