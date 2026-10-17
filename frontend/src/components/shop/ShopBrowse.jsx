@@ -139,12 +139,57 @@ export function SortSelect({ value, onChange }) {
 
 // ══════════════════════════════════════════════════════════════ filters
 
+/**
+ * A bare `<input type="range">` renders as a thin grey line with a plain
+ * circle in every browser — no fill, no brand color, nothing to suggest it
+ * belongs to the same shop as a bold orange "Add to Cart" button. `accent-color`
+ * alone (the previous approach) only tints the thumb, not the track, so the
+ * unfilled half of the bar still looks identical to the filled half. This
+ * paints the track itself as a gradient split at the current value (so
+ * "how much range is selected" is visible at a glance, same idea as the
+ * native progress bar nobody styled here) and replaces the thumb with a
+ * bordered, shadowed circle — one `<style>` block, same pattern as
+ * RichTextEditor.jsx's own scoped CSS for a native control Tailwind can't
+ * reach via utility classes alone.
+ */
+function PriceSlider({ min, max, value, onChange }) {
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 100;
+  return (
+    <>
+      <input type="range" min={min} max={max} value={value}
+             aria-label="Maximum price"
+             onChange={onChange}
+             data-testid="shop-filter-price"
+             className="sh-price-range w-full"
+             style={{
+               background: `linear-gradient(to right, var(--sh-primary,#ff6a1a) ${pct}%, rgba(255,255,255,0.12) ${pct}%)`,
+             }} />
+      <style>{`
+        .sh-price-range { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; outline: none; }
+        .sh-price-range::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 999px;
+          background: var(--sh-primary,#ff6a1a); border: 3px solid var(--bg-header,#0b0e14);
+          box-shadow: 0 0 0 1px var(--sh-primary,#ff6a1a), 0 2px 6px rgba(0,0,0,0.5); cursor: pointer;
+        }
+        .sh-price-range::-moz-range-thumb {
+          width: 18px; height: 18px; border-radius: 999px; background: var(--sh-primary,#ff6a1a);
+          border: 3px solid var(--bg-header,#0b0e14); box-shadow: 0 0 0 1px var(--sh-primary,#ff6a1a), 0 2px 6px rgba(0,0,0,0.5);
+          cursor: pointer;
+        }
+        .sh-price-range::-moz-range-track { height: 6px; border-radius: 999px; background: transparent; }
+      `}</style>
+    </>
+  );
+}
+
 function FilterFields({ options, filters, onChange }) {
   return (
     <div className="space-y-5">
       {options.categories.length > 0 && (
         <fieldset>
-          <legend className="text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">Category</legend>
+          <legend className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">
+            <i className="fas fa-tags text-[10px]" aria-hidden="true" />Category
+          </legend>
           <div className="flex flex-wrap gap-1.5">
             {[{ id: null, name: "All" }, ...options.categories].map((c) => {
               const active = (filters.categoryId || null) === c.id;
@@ -152,9 +197,12 @@ function FilterFields({ options, filters, onChange }) {
                 <button key={c.id || "all"} type="button" aria-pressed={active}
                         onClick={() => onChange({ ...filters, categoryId: c.id })}
                         data-testid={`shop-filter-cat-${c.id || "all"}`}
+                        style={active ? { boxShadow: "0 0 14px rgba(var(--sh-green-rgb,255,106,26),0.45)" } : undefined}
                         className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition
                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-shPrimary
-                          ${active ? "bg-shPrimary text-bgHeader" : "border border-shBorder text-shTextMuted hover:text-shText"}`}>
+                          ${active
+                            ? "bg-shPrimary text-bgHeader"
+                            : "bg-white/[0.04] border border-shBorder text-shTextMuted hover:text-shText hover:border-shPrimary/50"}`}>
                   {c.name}
                 </button>
               );
@@ -165,12 +213,14 @@ function FilterFields({ options, filters, onChange }) {
 
       {options.availability && (
         <fieldset>
-          <legend className="text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">Availability</legend>
+          <legend className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">
+            <i className="fas fa-box-open text-[10px]" aria-hidden="true" />Availability
+          </legend>
           <label className="inline-flex items-center gap-2.5 cursor-pointer">
             <input type="checkbox" checked={filters.availability === "in_stock"}
                    onChange={(e) => onChange({ ...filters, availability: e.target.checked ? "in_stock" : "any" })}
                    data-testid="shop-filter-instock"
-                   className="w-4 h-4 accent-[var(--sh-primary,#8cc63f)]" />
+                   className="w-4 h-4 accent-shPrimary" />
             <span className="text-[13px] text-shText">In stock only</span>
           </label>
         </fieldset>
@@ -178,20 +228,18 @@ function FilterFields({ options, filters, onChange }) {
 
       {options.priceRange && (
         <fieldset>
-          <legend className="text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">
+          <legend className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">
+            <i className="fas fa-tag text-[10px]" aria-hidden="true" />
             Up to <span className="text-shPrimary tabular-nums">
               ${filters.maxPrice ?? options.priceRange.max}
             </span>
           </legend>
-          <input type="range" min={options.priceRange.min} max={options.priceRange.max}
-                 value={filters.maxPrice ?? options.priceRange.max}
-                 aria-label="Maximum price"
-                 onChange={(e) => {
-                   const v = Number(e.target.value);
-                   onChange({ ...filters, maxPrice: v >= options.priceRange.max ? null : v });
-                 }}
-                 data-testid="shop-filter-price"
-                 className="w-full accent-[var(--sh-primary,#8cc63f)]" />
+          <PriceSlider min={options.priceRange.min} max={options.priceRange.max}
+                       value={filters.maxPrice ?? options.priceRange.max}
+                       onChange={(e) => {
+                         const v = Number(e.target.value);
+                         onChange({ ...filters, maxPrice: v >= options.priceRange.max ? null : v });
+                       }} />
         </fieldset>
       )}
     </div>
