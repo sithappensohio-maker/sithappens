@@ -13,7 +13,7 @@ import { api } from "../lib/api";
 import { toast } from "sonner";
 import RelatedItemsEditor from "./shop/RelatedItemsEditor";
 import RichTextEditor from "./RichTextEditor";
-import ShopGalleryUpload from "./ShopGalleryUpload";
+import ShopGalleryUpload, { MAX_IMAGES } from "./ShopGalleryUpload";
 import { galleryIds as productGallery } from "../lib/shopImage";
 import ShopCategoryFields from "./ShopCategoryFields";
 import ItemThumbnail from "./ItemThumbnail";
@@ -437,11 +437,23 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
       toast.success("Synced this product's details from Printify");
     }
 
-    if (imageUrls && imageUrls.length > 0) {
+    // Same MAX_IMAGES ceiling ShopGalleryUpload's own manual upload already
+    // enforces (see its addFiles) — this import path used to skip it
+    // entirely, so a multi-color product's mockups (checked by default,
+    // often 8+ on their own) could push a gallery well past 8, after which
+    // ShopGalleryUpload's own "Add" button correctly has nothing left to do
+    // and disappears for good — a dead end the admin has no way out of
+    // except removing photos one at a time.
+    const photoRoom = MAX_IMAGES - (form.image_ids || []).length;
+    const cappedImageUrls = (imageUrls || []).slice(0, Math.max(0, photoRoom));
+    if (imageUrls && imageUrls.length > 0 && cappedImageUrls.length === 0) {
+      toast.error(`This product already has ${MAX_IMAGES} photos — remove one before adding more.`);
+    }
+    if (cappedImageUrls.length > 0) {
       setImportingPrintifyImages(true);
       try {
         const { data } = await api.post(`/admin/printify/products/${encodeURIComponent(form.printify_product_id.trim())}/import-images`,
-          { urls: imageUrls });
+          { urls: cappedImageUrls });
         const newIds = data.image_ids || [];
         if (newIds.length > 0) {
           setForm((f) => ({
@@ -449,6 +461,9 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             image_id: f.image_id || newIds[0],
           }));
           toast.success(`Imported ${newIds.length} photo${newIds.length === 1 ? "" : "s"} from Printify`);
+        }
+        if (imageUrls.length > cappedImageUrls.length) {
+          toast.error(`Only ${cappedImageUrls.length} of ${imageUrls.length} checked photos were imported — max ${MAX_IMAGES} per product.`);
         }
         if (data.errors && data.errors.length > 0) {
           toast.error(`${data.errors.length} photo${data.errors.length === 1 ? "" : "s"} couldn't be imported`);

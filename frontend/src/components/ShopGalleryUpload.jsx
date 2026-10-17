@@ -20,7 +20,7 @@ import { toast } from "sonner";
  * with eight photos costs eight ~2 KB thumbnails rather than eight
  * multi-megabyte originals.
  */
-const MAX_IMAGES = 8;
+export const MAX_IMAGES = 8;
 
 export default function ShopGalleryUpload({ imageIds = [], originalImageIds = [], onChange }) {
   const [busy, setBusy] = useState(false);

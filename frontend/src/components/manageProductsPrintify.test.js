@@ -291,6 +291,62 @@ describe("Fetch Sizes from Printify", () => {
     w.cleanup();
   });
 
+  // Owner (2026-10-17 screenshot): "add photo button disapears after so
+  // many" — a 9-photo product whose label read "9 of 8 used". The manual
+  // upload (ShopGalleryUpload's own addFiles) already respected the 8-photo
+  // cap; this Printify import path never did, so a multi-color product's
+  // checked-by-default mockups could push a gallery straight past it.
+  describe("the Printify photo import respects the same 8-photo cap the manual upload does", () => {
+    const PRODUCT_WITH_3_IMAGES = {
+      ...PRODUCT,
+      images: [
+        { src: "https://img/1.jpg", is_default: true },
+        { src: "https://img/2.jpg", is_default: false },
+        { src: "https://img/3.jpg", is_default: false },
+      ],
+    };
+    const eightIds = Array.from({ length: 8 }, (_, i) => `existing-${i}`);
+
+    test("a product already at 8 photos imports nothing and tells the admin why", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES });
+      api.post.mockReset();
+      toast.error.mockClear();
+      let current = { ...BASE_FORM, variants: [], image_ids: eightIds };
+      const setForm = jest.fn((updater) => { current = updater(current); });
+      const w = mount(editor(current, setForm));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+      await flush();
+      expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("import-images"), expect.anything());
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("already has 8 photos"));
+      expect(current.image_ids).toEqual(eightIds); // untouched
+      w.cleanup();
+    });
+
+    test("importing more photos than there's room for only imports up to the cap", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({ data: PRODUCT_WITH_3_IMAGES });
+      api.post.mockReset();
+      api.post.mockResolvedValue({ data: { image_ids: ["m1", "m2"], errors: [] } });
+      toast.error.mockClear();
+      let current = { ...BASE_FORM, variants: [], image_ids: eightIds.slice(0, 6) }; // room for exactly 2
+      const setForm = jest.fn((updater) => { current = updater(current); });
+      const w = mount(editor(current, setForm));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      expect(w.text()).toContain("3 of 3 selected"); // all 3 checked by default
+      await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+      await flush();
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/printify/products/pf-prod-1/import-images", { urls: ["https://img/1.jpg", "https://img/2.jpg"] });
+      expect(current.image_ids).toEqual([...eightIds.slice(0, 6), "m1", "m2"]); // never exceeds 8
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Only 2 of 3"));
+      w.cleanup();
+    });
+  });
+
   // Owner: a product that already has every size added used to dead-end
   // here — "doesnt let me refetch sizes this should be a thing for when i
   // change something in printify i can update it here by re pulling".
