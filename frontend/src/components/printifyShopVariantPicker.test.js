@@ -98,6 +98,7 @@ const mountDetail = async (item, props = {}) => {
   });
 };
 const q = (id) => container.querySelector(`[data-testid="${id}"]`);
+const qa = (sel) => [...container.querySelectorAll(sel)];
 const click = async (el) => { await act(async () => { el.click(); }); };
 const type = async (id, value) => {
   const el = q(id);
@@ -116,6 +117,25 @@ describe("Printify product page — size required", () => {
     expect(q("shop-detail-variant-v-s").textContent).toBe("Black / S");
     expect(q("shop-detail-variant-v-xl").textContent).toBe("Black / XL");
     expect(q("shop-detail-variant-v-sold-out").disabled).toBe(true);
+  });
+
+  // Owner: "is there a reason medium is out of order" — S/L/XL were added
+  // first, M/2XL/3XL in a later Fetch Sizes pass, so Printify's (and this
+  // product's own stored) array had them in S, L, XL, M, 2XL, 3XL order.
+  test("sizes added out of order (a later Fetch Sizes pass) still show in real size order", async () => {
+    const outOfOrder = {
+      ...SHIRT, variants: [
+        { id: "v-s", name: "Black / S", price: 19.99, is_available: true },
+        { id: "v-l", name: "Black / L", price: 19.99, is_available: true },
+        { id: "v-xl", name: "Black / XL", price: 19.99, is_available: true },
+        { id: "v-m", name: "Black / M", price: 19.99, is_available: true },
+        { id: "v-2xl", name: "Black / 2XL", price: 21.94, is_available: true },
+        { id: "v-3xl", name: "Black / 3XL", price: 21.94, is_available: true },
+      ],
+    };
+    await mountDetail(outOfOrder);
+    const order = qa('[data-testid^="shop-detail-variant-v-"]').map((el) => el.textContent);
+    expect(order).toEqual(["Black / S", "Black / M", "Black / L", "Black / XL", "Black / 2XL", "Black / 3XL"]);
   });
 
   test("the price reads \"From\" until a size is picked", async () => {
@@ -287,6 +307,27 @@ describe("Printify product page — many colors group into a color step then a s
     expect(q("shop-detail-variant-v-black-s").textContent).toBe("S");
     expect(q("shop-detail-variant-v-black-m").textContent).toBe("M");
     expect(q("shop-detail-variant-v-purple-s")).toBeFalsy(); // a different color's size, not shown
+  });
+
+  // The exact bug reported live: S/L/XL added first, M/2XL/3XL in a later
+  // Fetch Sizes pass — "CHOOSE A SIZE: S L XL M 2XL 3XL" on screen.
+  test("a color's sizes show in real size order even when added across two Fetch Sizes passes", async () => {
+    const reorderedColors = {
+      ...MULTI_COLOR_SHIRT, id: "shirt-6",
+      variants: [
+        { id: "v-black-s", name: "Black / S", price: 19.99, is_available: true },
+        { id: "v-black-l", name: "Black / L", price: 19.99, is_available: true },
+        { id: "v-black-xl", name: "Black / XL", price: 19.99, is_available: true },
+        { id: "v-black-m", name: "Black / M", price: 19.99, is_available: true },
+        { id: "v-black-2xl", name: "Black / 2XL", price: 21.94, is_available: true },
+        { id: "v-black-3xl", name: "Black / 3XL", price: 21.94, is_available: true },
+        { id: "v-purple-s", name: "Purple / S", price: 19.99, is_available: true },
+      ],
+    };
+    await mountDetail(reorderedColors);
+    await click(q("shop-detail-color-Black"));
+    const order = qa('[data-testid^="shop-detail-variant-v-black-"]').map((el) => el.textContent);
+    expect(order).toEqual(["S", "M", "L", "XL", "2XL", "3XL"]);
   });
 
   test("a color whose every size is unavailable is disabled", async () => {

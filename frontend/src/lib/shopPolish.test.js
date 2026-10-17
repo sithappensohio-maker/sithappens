@@ -8,7 +8,7 @@ import {
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
   creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
   creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget,
-  cartLineVariant, cartLineUnitPrice, groupVariantsByColor, swatchHexFor } from "./shopPolish";
+  cartLineVariant, cartLineUnitPrice, groupVariantsByColor, swatchHexFor, compareSizes } from "./shopPolish";
 
 const categories = [
   { id: "cat-merch", name: "Merch", subcategories: [{ id: "sub-collars", name: "Collars" }, { id: "sub-toys", name: "Toys" }] },
@@ -575,6 +575,24 @@ test("swatchHexFor returns null for anything it doesn't recognize, never a guess
   expect(swatchHexFor("")).toBeNull();
   expect(swatchHexFor(null)).toBeNull();
   expect(swatchHexFor(undefined)).toBeNull();
+});
+
+test("compareSizes sorts a shuffled, out-of-order list into real size order", () => {
+  const sizes = ["L", "S", "3XL", "XL", "M", "2XL"];
+  expect([...sizes].sort(compareSizes)).toEqual(["S", "M", "L", "XL", "2XL", "3XL"]);
+});
+
+test("compareSizes treats XXL and 2XL as the same rank", () => {
+  expect(compareSizes("XXL", "2XL")).toBe(0);
+});
+
+test("compareSizes is case-insensitive", () => {
+  expect([...["xl", "S", "Xs"]].sort(compareSizes)).toEqual(["Xs", "S", "xl"]);
+});
+
+test("compareSizes pushes unrecognized sizes after every known one, keeping their own relative order", () => {
+  const sizes = ["L", "One Size", "S", "Custom"];
+  expect([...sizes].sort(compareSizes)).toEqual(["S", "L", "One Size", "Custom"]);
 });
 
 test("groupVariantsByColor returns an empty list for no variants", () => {

@@ -217,6 +217,33 @@ export function cartLineUnitPrice(item, variantId) {
 // grouping). Callers render that case as the plain flat list they always
 // have; the grouped UI only kicks in when there's genuinely more than one
 // color to choose between.
+// Sizes within a color are shown in whatever order they were ADDED, not a
+// real size order, the moment a listing's sizes came from more than one
+// Fetch Sizes pass — a size picked up later lands at the end of the array
+// regardless of where it belongs (owner: "is there a reason medium is out
+// of order" — M landed after XL because it was added in a later re-fetch,
+// see [[project_shop_polish_round]]). A bounded, known-sizes table, same
+// honest-fallback shape as SWATCH_HEX below: a recognized size sorts into
+// its real place, an unrecognized one keeps its original position
+// relative to other unrecognized ones (stable sort) rather than a guess.
+const SIZE_RANK = {
+  xxs: 0, xs: 1, s: 2, sm: 2, small: 2,
+  m: 3, md: 3, medium: 3,
+  l: 4, lg: 4, large: 4,
+  xl: 5, "extra large": 5,
+  xxl: 6, "2xl": 6,
+  "3xl": 7, xxxl: 7,
+  "4xl": 8, "5xl": 9, "6xl": 10,
+};
+export function compareSizes(a, b) {
+  const ra = SIZE_RANK[(a || "").trim().toLowerCase()];
+  const rb = SIZE_RANK[(b || "").trim().toLowerCase()];
+  if (ra === undefined && rb === undefined) return 0;
+  if (ra === undefined) return 1;
+  if (rb === undefined) return -1;
+  return ra - rb;
+}
+
 export function groupVariantsByColor(variants) {
   const list = variants || [];
   if (list.length === 0) return [];
@@ -231,7 +258,9 @@ export function groupVariantsByColor(variants) {
     if (!byColor.has(color)) { byColor.set(color, []); order.push(color); }
     byColor.get(color).push({ ...v, size });
   });
-  const groups = order.map((color) => ({ color, variants: byColor.get(color) }));
+  const groups = order.map((color) => ({
+    color, variants: [...byColor.get(color)].sort((a, b) => compareSizes(a.size, b.size)),
+  }));
   return groups.length > 1 ? groups : [{ color: null, variants: list }];
 }
 

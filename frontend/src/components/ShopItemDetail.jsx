@@ -10,7 +10,7 @@ import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import { shopImageProps, galleryIds } from "../lib/shopImage";
-import { guestItemCta, creditPackDetailLine, groupVariantsByColor, swatchHexFor } from "../lib/shopPolish";
+import { guestItemCta, creditPackDetailLine, groupVariantsByColor, swatchHexFor, compareSizes } from "../lib/shopPolish";
 import ProductFacts from "./shop/ProductFacts";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -359,6 +359,18 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // it's always had — see groupVariantsByColor.
   const variantGroups = groupVariantsByColor(variants);
   const isColorGrouped = variantGroups.length > 1;
+  // A single-color Printify listing never reaches groupVariantsByColor's
+  // own per-group sort (it returns the ungrouped list untouched — see its
+  // own docstring) — same append-order bug as the grouped case, just one
+  // step up: sizes still show in whatever order they were added across
+  // however many Fetch Sizes passes, not real size order. Scoped to
+  // Printify specifically — an internal product's flat "options" are not
+  // necessarily sizes at all, so guessing an order for those would be
+  // worse than the append order it already has.
+  const flatVariants = isPrintify
+    ? [...variants].sort((a, b) => compareSizes(
+        (a.name || "").split(" / ").pop(), (b.name || "").split(" / ").pop()))
+    : variants;
   // A Printify item can never be added without a size — there's no base
   // price/SKU to fall back to (see PriceBlock and _price_shop_cart). A
   // plain internal product with options stays purchasable at its own base
@@ -548,7 +560,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 {isPrintify ? "Choose a size" : "Choose an option"}
               </p>
               <div className="flex flex-wrap gap-2">
-                {variants.map((v) => {
+                {flatVariants.map((v) => {
                   const selected = v.id === selectedVariantId;
                   const unavailable = v.is_available === false;
                   return (
