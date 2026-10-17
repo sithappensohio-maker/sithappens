@@ -856,6 +856,18 @@ function ShopGate() {
   return <Gate />;
 }
 
+// /store is a redirect, not a second copy of the storefront — "store" is
+// the word people naturally guess/type, but /shop is the one real URL
+// everything else (item links, the cart, a shared GuestOrderStatus link)
+// already generates. Redirecting preserves whatever came after /store
+// (a path, a query string, a hash) instead of just bouncing to bare /shop,
+// so a guessed deep link like /store/item/product/abc still lands right.
+export function StoreRedirect() {
+  const location = useLocation();
+  const rest = location.pathname.slice("/store".length);
+  return <Navigate to={`/shop${rest}${location.search}${location.hash}`} replace />;
+}
+
 // Flat nav registry — module scope so tests can assert the REAL permission
 // gating data (e.g. Finance ⇒ finance_reports) without rendering the app.
 // Moved verbatim out of App() during the Front Desk navigation-regression
@@ -978,6 +990,7 @@ export default function App() {
           instead of the order they followed a link to. */}
       <Route path="/shop/order/:orderId" element={<AppProviders><GuestOrderStatus /></AppProviders>} />
       <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
+      <Route path="/store/*" element={<StoreRedirect />} />
       <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
       <Route path="*" element={<AppProviders><Gate /></AppProviders>} />
     </Routes>
