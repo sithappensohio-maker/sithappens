@@ -907,8 +907,12 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           hands the visitor to Shopify, which is exactly what we want a
           stranger to be able to find. What it must never gain is a guest
           CART or an account-gate, because nothing is bought on our side —
-          domains/shop/guest refuses it regardless, and those controls stay
-          internal-only so the form cannot imply otherwise. */}
+          domains/shop/guest refuses it regardless, so those controls stay
+          hidden for Shopify only. A Printify item is a real, chargeable
+          "product" to domains/shop/guest exactly like an internal one (see
+          GUEST_FULFILLABLE_KINDS there) — it was wrongly internal-only here
+          too, which meant "Allow guests to add to cart" could never be
+          turned on for ANY Printify listing, no matter what an admin did. */}
       {form.show_online && (
         <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
           <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Public Storefront (signed-out visitors)</p>
@@ -933,12 +937,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               account requirement to set here.
             </p>
           )}
-          {form.publicly_visible && isPrintify && (
-            <p className="text-[11px] text-shTextMuted" data-testid="product-printify-public-note">
-              This listing isn't in the client Shop (see the note above), so guests won't see it here either — register-only, same as for clients.
-            </p>
-          )}
-          {form.publicly_visible && form.sales_destination === "internal" && (
+          {form.publicly_visible && !isShopify && (
             <>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="guest-cart-allowed" checked={form.guest_cart_allowed}

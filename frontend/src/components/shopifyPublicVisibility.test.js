@@ -87,6 +87,32 @@ describe("but it never becomes something a guest can buy here", () => {
   });
 });
 
+// Owner-reported bug: a guest hit "Sign In to Purchase" on a Printify
+// item that was meant to be buyable without an account — because this
+// form hid "Allow guests to add to cart" for EVERY Printify listing, no
+// matter what an admin did. domains/shop/guest treats a Printify item
+// exactly like an internal one (both are plain "product" kind) — only
+// Shopify is actually excluded there — so the form was stricter than the
+// backend it's configuring, with no way to reach the real setting.
+describe("a Printify listing is a real product to domains/shop/guest too", () => {
+  const printify = { ...BASE, sales_destination: "printify", shopify_product_url: "",
+                      printify_product_id: "pf-1", variants: [] };
+
+  test("the guest-cart control is offered, same as an internal product", () => {
+    const w = mount(printify);
+    expect(w.testId("product-guest-cart-allowed")).toBeTruthy();
+    expect(w.testId("product-requires-approval")).toBeTruthy();
+    expect(w.testId("product-requires-onboarding")).toBeTruthy();
+    w.cleanup();
+  });
+
+  test("no Shopify-only note is shown for it", () => {
+    const w = mount(printify);
+    expect(w.testId("product-shopify-public-note")).toBeNull();
+    w.cleanup();
+  });
+});
+
 describe("our own products are unchanged", () => {
   const internal = { ...BASE, sales_destination: "internal", price: "18.50" };
 
