@@ -8,7 +8,7 @@ import {
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
   creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
   creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget,
-  cartLineVariant, cartLineUnitPrice, groupVariantsByColor } from "./shopPolish";
+  cartLineVariant, cartLineUnitPrice, groupVariantsByColor, swatchHexFor } from "./shopPolish";
 
 const categories = [
   { id: "cat-merch", name: "Merch", subcategories: [{ id: "sub-collars", name: "Collars" }, { id: "sub-toys", name: "Toys" }] },
@@ -561,6 +561,20 @@ test("groupVariantsByColor falls back to one ungrouped section for plain (non Co
 test("groupVariantsByColor falls back to one ungrouped section for mixed/inconsistent name shapes", () => {
   const mixed = [{ id: "v1", name: "Black / S" }, { id: "v2", name: "Just A Name" }];
   expect(groupVariantsByColor(mixed)).toEqual([{ color: null, variants: mixed }]);
+});
+
+test("swatchHexFor knows common apparel colors, case- and whitespace-insensitive", () => {
+  expect(swatchHexFor("Black")).toBe("#1a1a1a");
+  expect(swatchHexFor("  purple  ")).toBe("#6a3fa0");
+  expect(swatchHexFor("FOREST GREEN")).toBe("#228b22");
+  expect(swatchHexFor("Dark Chocolate")).toBe("#3c1f14");
+});
+
+test("swatchHexFor returns null for anything it doesn't recognize, never a guess", () => {
+  expect(swatchHexFor("Galaxy Swirl")).toBeNull();
+  expect(swatchHexFor("")).toBeNull();
+  expect(swatchHexFor(null)).toBeNull();
+  expect(swatchHexFor(undefined)).toBeNull();
 });
 
 test("groupVariantsByColor returns an empty list for no variants", () => {

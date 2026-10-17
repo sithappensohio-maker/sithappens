@@ -235,6 +235,31 @@ export function groupVariantsByColor(variants) {
   return groups.length > 1 ? groups : [{ color: null, variants: list }];
 }
 
+// A color BUTTON that only ever says "Purple" or "Dark Chocolate" in plain
+// text reads as a template, not a real swatch — every apparel store shows
+// the actual color. Printify's own blueprint color names are drawn from a
+// bounded, well-known set (confirmed against the real catalog), so a
+// lookup table is honest here, never a guess at an arbitrary string: a
+// name not in the table gets no swatch rather than a wrong-looking one,
+// same graceful fallback groupVariantsByColor itself uses for anything
+// that doesn't fit its own shape.
+const SWATCH_HEX = {
+  black: "#1a1a1a", white: "#f5f5f5", "off white": "#f0ece2", cream: "#f2e8d5", ivory: "#f4f1e8",
+  gray: "#8a8a8a", grey: "#8a8a8a", "heather grey": "#9a9a9a", "heather gray": "#9a9a9a",
+  "dark grey heather": "#56575a", "dark gray heather": "#56575a", charcoal: "#36454f", "sport grey": "#9b9a94", "sport gray": "#9b9a94",
+  red: "#c8102e", maroon: "#6f2232", burgundy: "#6d071a", pink: "#f2a0c5", "heather pink": "#e8a3bf", fuchsia: "#c6007e",
+  orange: "#f2600c", "burnt orange": "#cc5500",
+  yellow: "#f5c518", gold: "#c9a227", mustard: "#d9a441",
+  green: "#2e8b57", "forest green": "#228b22", "kelly green": "#4cbb17", olive: "#6b6b2a", "military green": "#4b5320", mint: "#9fe2bf", sage: "#9cae8c",
+  blue: "#2a52be", navy: "#1b1f3b", royal: "#1b3fa0", "royal blue": "#1b3fa0", "light blue": "#a7c7e7", teal: "#1f8a8c", turquoise: "#30d5c8", "heather blue": "#5c7fa3",
+  purple: "#6a3fa0", lavender: "#b497d6", violet: "#7f3fbf",
+  brown: "#6b4423", "dark chocolate": "#3c1f14", chocolate: "#5a3825", tan: "#c9a66b", sand: "#d9c4a3", khaki: "#b9ac8f", beige: "#d8c9ab",
+  silver: "#c0c0c0",
+};
+export function swatchHexFor(colorName) {
+  return SWATCH_HEX[(colorName || "").trim().toLowerCase()] || null;
+}
+
 // Shop Appearance & Organization — hardcoded fallback metadata for the 3
 // permanent section keys, used whenever shop_page settings are absent or
 // incomplete so the Shop always renders something sensible on a fresh

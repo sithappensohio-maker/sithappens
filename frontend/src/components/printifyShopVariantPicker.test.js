@@ -264,6 +264,23 @@ describe("Printify product page — many colors group into a color step then a s
     expect(q("shop-detail-purchase-disabled")).toBeTruthy();
   });
 
+  // Owner: a color button that only ever says "Purple" in plain text reads
+  // as a template, not a real store — every real swatch shows the color.
+  test("a recognized color shows a real swatch dot in that color", async () => {
+    await mountDetail(MULTI_COLOR_SHIRT);
+    const swatch = q("shop-detail-color-swatch-Black");
+    expect(swatch).toBeTruthy();
+    expect(swatch.style.backgroundColor).toBe("rgb(26, 26, 26)"); // #1a1a1a
+  });
+
+  test("an unrecognized color name gets no swatch — graceful fallback, not a wrong-looking guess", async () => {
+    const weird = { ...MULTI_COLOR_SHIRT, id: "shirt-5",
+      variants: MULTI_COLOR_SHIRT.variants.map((v) => ({ ...v, name: v.name.replace("Black", "Galaxy Swirl") })) };
+    await mountDetail(weird);
+    expect(q("shop-detail-color-swatch-Galaxy Swirl")).toBeFalsy();
+    expect(q("shop-detail-color-Galaxy Swirl").textContent).toBe("Galaxy Swirl");
+  });
+
   test("picking a color reveals just that color's sizes, labeled by size alone", async () => {
     await mountDetail(MULTI_COLOR_SHIRT);
     await click(q("shop-detail-color-Black"));

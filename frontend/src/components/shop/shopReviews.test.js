@@ -67,6 +67,15 @@ test("a client who hasn't bought the item sees no write form and no 'my review' 
   expect(q("shop-review-form")).toBeFalsy();
   expect(q("shop-my-review")).toBeFalsy();
   expect(q("shop-reviews-empty")).toBeTruthy();
+  expect(q("shop-reviews-empty").textContent).toContain("No reviews yet");
+  expect(q("shop-reviews-empty").textContent).not.toContain("You've bought this");
+});
+
+test("a client eligible to review sees that spelled out in the empty state too", async () => {
+  api.get.mockResolvedValue({ data: { reviews: [], rating_avg: null, rating_count: 0, my_review: null, can_review: true } });
+  await mount(<ShopReviews productId="p1" mode="authenticated" />);
+
+  expect(q("shop-reviews-empty").textContent).toContain("You've bought this");
 });
 
 test("an eligible client sees the write form and can submit a review", async () => {

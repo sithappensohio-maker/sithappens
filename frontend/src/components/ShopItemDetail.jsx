@@ -10,7 +10,7 @@ import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import { shopImageProps, galleryIds } from "../lib/shopImage";
-import { guestItemCta, creditPackDetailLine, groupVariantsByColor } from "../lib/shopPolish";
+import { guestItemCta, creditPackDetailLine, groupVariantsByColor, swatchHexFor } from "../lib/shopPolish";
 import ProductFacts from "./shop/ProductFacts";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -496,15 +496,21 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 {variantGroups.map((g) => {
                   const selectedG = g.color === selectedColor;
                   const colorUnavailable = g.variants.every((v) => v.is_available === false);
+                  const swatch = swatchHexFor(g.color);
                   return (
                     <button key={g.color} type="button" disabled={colorUnavailable}
                             onClick={() => { setSelectedColor(selectedG ? null : g.color); setSelectedVariantId(null); }}
                             data-testid={`shop-detail-color-${g.color}`}
                             title={colorUnavailable ? `${g.color} is currently unavailable` : undefined}
-                            className={`px-3 py-2 rounded-lg text-[12px] font-bold border transition
+                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold border transition
                                        ${selectedG ? "bg-shPrimary text-bgHeader border-shPrimary"
                                          : colorUnavailable ? "border-shBorder text-shTextMuted/50 cursor-not-allowed line-through"
                                          : "border-shBorder text-shText hover:border-shPrimary/60"}`}>
+                      {swatch && (
+                        <span aria-hidden="true" data-testid={`shop-detail-color-swatch-${g.color}`}
+                              className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
+                              style={{ backgroundColor: swatch }} />
+                      )}
                       {g.color}
                     </button>
                   );

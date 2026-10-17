@@ -167,9 +167,15 @@ export default function ShopReviews({ productId, mode = "authenticated" }) {
       )}
 
       {reviews.length === 0 ? (
-        <p className="text-shTextMuted text-[13px]" data-testid="shop-reviews-empty">
-          No reviews yet — be the first to share what you think.
-        </p>
+        <div className="text-center py-8 px-4 rounded-xl border border-shBorder border-dashed" data-testid="shop-reviews-empty">
+          <div className="w-12 h-12 rounded-2xl mx-auto grid place-items-center border border-shBorder">
+            <i className="fas fa-star text-shTextMuted text-[17px]" aria-hidden="true" />
+          </div>
+          <h3 className="text-[14px] font-black text-shText mt-3">No reviews yet</h3>
+          <p className="text-[13px] text-shTextMuted mt-1">
+            {can_review ? "You've bought this — be the first to share what you think." : "Be the first to share what you think."}
+          </p>
+        </div>
       ) : (
         <ul data-testid="shop-reviews-list">
           {reviews.map((r) => <ReviewRow key={r.id} review={r} />)}
