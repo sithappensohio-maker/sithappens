@@ -56,6 +56,13 @@ export function shopImageProps(mediaId, surface = "card", { public: isPublic = f
     card: { size: "card", set: ["thumb", "card"], sizes: "(max-width: 640px) 45vw, 320px", eager: false },
     pdp: { size: "pdp", set: ["card", "pdp"], sizes: "(max-width: 900px) 100vw, 560px", eager: true },
     zoom: { size: "zoom", set: ["pdp", "zoom"], sizes: "100vw", eager: true },
+    // The Shop's own hero banner (ItemThumbnail variant="banner") — full
+    // width up to the Shop page's 1152px max content width, so it needs
+    // the largest derivative available, same as a lightbox zoom. It used
+    // to fall through to "card" (400px) and get visibly upscaled nearly
+    // 3x on a real desktop — eager, since it's the first thing painted on
+    // the Shop page (same reasoning as the product-page hero above).
+    banner: { size: "zoom", set: ["pdp", "zoom"], sizes: "(max-width: 1152px) 100vw, 1152px", eager: true },
   }[surface] || { size: "card", set: ["thumb", "card"], sizes: "320px", eager: false };
 
   const src = shopImageUrl(mediaId, plan.size, { public: isPublic });

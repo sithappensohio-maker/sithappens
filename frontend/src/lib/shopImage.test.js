@@ -73,13 +73,31 @@ test("everything else is lazy", () => {
   }
 });
 
-test("the zoom file is only ever requested by the zoom surface", () => {
+test("the zoom file is only ever requested by the zoom or banner surface", () => {
   for (const surface of ["thumb", "card", "pdp"]) {
     const p = shopImageProps("m1", surface);
     expect(p.src).not.toMatch(/\/zoom$/);
     expect(p.srcSet || "").not.toContain("/zoom");
   }
   expect(shopImageProps("m1", "zoom").src).toMatch(/\/zoom$/);
+});
+
+// Owner, 2026-10-17: a real uploaded Shop hero banner looked blurry —
+// ItemThumbnail's variant="banner" (shared with the much smaller register
+// tile and Online School card) fell through to the "card" (400px) plan by
+// default, and the Shop's own hero renders up to 1152px wide, nearly 3x
+// that. The fix is this dedicated "banner" surface, requested only via an
+// explicit `surface="banner"` override at the one call site that's
+// actually full-page-width (PortalShop.jsx) — never ItemThumbnail's
+// shared default, which stays "card" for the register tile/school card.
+test("the banner surface requests the largest derivative, same as zoom, not card", () => {
+  const p = shopImageProps("m1", "banner");
+  expect(p.src).toMatch(/\/zoom$/);
+  expect(p.srcSet || "").not.toContain("400w"); // never the blurry 400px file
+});
+
+test("the banner surface is eager, because it's the first thing painted on the Shop page", () => {
+  expect(shopImageProps("m1", "banner").loading).toBe("eager");
 });
 
 test("every surface tells the browser how wide the image will be", () => {
