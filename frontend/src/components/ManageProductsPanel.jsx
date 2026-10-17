@@ -35,6 +35,13 @@ const BLANK_FORM = {
   // orders against. Each variant row carries its own printify_variant_id
   // (see the Options section below) instead of a plain barcode SKU.
   printify_product_id: "", printify_blueprint_id: null, printify_print_provider_id: null,
+  // The product's raw print_areas (text-layer placeholders, e.g. a pet
+  // tag's "Name"/"Phone"/"Address" engraving) — carried straight through
+  // from Printify's own data to PosProductIn.printify_print_areas on save.
+  // The backend derives printify_personalization_fields from THIS, not
+  // from anything typed here, so without it every personalized item would
+  // silently never show a "fill this in" field anywhere (register or Shop).
+  printify_print_areas: null,
   // Public no-account storefront — see the "Public Storefront" section of
   // the editor below. guest_cart_allowed never permits guest checkout, only
   // temporary local cart placement.
@@ -230,11 +237,16 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
     // by re pulling") used to dead-end here — nothing new to check, so
     // nothing ever happened, not even the photos just picked. Sizes and
     // photos are independent reasons to confirm; either alone is enough.
-    if (chosen.length === 0 && imageUrls.length === 0) return;
+    // A THIRD reason, needing nothing checked at all: refreshing print_areas
+    // (what the register/Shop derive personalization inputs from) is always
+    // worth doing on confirm — otherwise a product that already has every
+    // size and photo can never pick up Printify's personalization fields,
+    // since there would be nothing left to check to even make the button
+    // clickable. The button is enabled unconditionally below for this case.
     onAdd(chosen, {
       blueprintId: product.blueprint_id ?? null, printProviderId: product.print_provider_id ?? null,
       title: product.title, description: product.description,
-      imageUrls,
+      imageUrls, printAreas: product.print_areas || [],
     });
     onClose();
   };
@@ -314,10 +326,12 @@ export function PrintifyVariantPickerModal({ printifyProductId, existingVariantI
           <button onClick={onClose} className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-2.5 font-black uppercase tracking-widest text-shTextMuted">
             Cancel
           </button>
-          <button onClick={confirm} disabled={loading || !!err || (checked.size === 0 && imagesChecked.size === 0)}
+          <button onClick={confirm} disabled={loading || !!err}
                   data-testid="printify-picker-add"
                   className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-2.5 font-black uppercase tracking-widest disabled:opacity-40">
-            {checked.size > 0 ? `Add ${checked.size} ${checked.size === 1 ? "Size" : "Sizes"}` : "Update Photos"}
+            {checked.size > 0
+              ? `Add ${checked.size} ${checked.size === 1 ? "Size" : "Sizes"}`
+              : imagesChecked.size > 0 ? "Update Photos" : "Refresh From Printify"}
           </button>
         </div>
       </div>
@@ -378,7 +392,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
   // "Fetch from Printify" — see PrintifyVariantPickerModal above.
   const [showPrintifyPicker, setShowPrintifyPicker] = useState(false);
   const [importingPrintifyImages, setImportingPrintifyImages] = useState(false);
-  const addPrintifyVariants = async (chosen, { blueprintId, printProviderId, title, description, imageUrls } = {}) => {
+  const addPrintifyVariants = async (chosen, { blueprintId, printProviderId, title, description, imageUrls, printAreas } = {}) => {
     setForm((f) => {
       const basePrice = f.price !== "" && f.price != null ? Number(f.price) : null;
       const rows = chosen.map((v, i) => ({
@@ -401,6 +415,11 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         // nobody ever has to type a blueprint/print-provider id by hand.
         printify_blueprint_id: blueprintId ?? f.printify_blueprint_id,
         printify_print_provider_id: printProviderId ?? f.printify_print_provider_id,
+        // The source of truth for personalization fields (register + Shop
+        // both derive "Name"/"Phone"/etc. inputs from this on the backend,
+        // never from anything an admin types) — captured here so it's never
+        // silently dropped on the floor between "Fetch Sizes" and save.
+        printify_print_areas: printAreas ?? f.printify_print_areas,
         // Pull in Printify's own title/description too — but only to fill
         // in a field the admin hasn't already typed something into. Never
         // overwrites a name/description someone already wrote.
@@ -410,6 +429,12 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
     });
     if (chosen.length > 0) {
       toast.success(`Added ${chosen.length} size${chosen.length === 1 ? "" : "s"} from Printify`);
+    } else if (!imageUrls || imageUrls.length === 0) {
+      // Neither a size nor a photo was picked — the only thing this
+      // confirm actually did was refresh blueprint/print-area data (see
+      // confirm()'s own comment). Silent otherwise, this would look like
+      // the button did nothing at all.
+      toast.success("Synced this product's details from Printify");
     }
 
     if (imageUrls && imageUrls.length > 0) {
@@ -1154,6 +1179,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       printify_product_id: p.printify_product_id || "",
       printify_blueprint_id: p.printify_blueprint_id ?? null,
       printify_print_provider_id: p.printify_print_provider_id ?? null,
+      printify_print_areas: p.printify_print_areas ?? null,
       publicly_visible: !!p.publicly_visible, guest_cart_allowed: !!p.guest_cart_allowed,
       show_public_price: p.show_public_price !== false,
       requires_approval: !!p.requires_approval, requires_completed_onboarding: !!p.requires_completed_onboarding,
@@ -1225,6 +1251,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       printify_product_id: isPrintify ? form.printify_product_id.trim() : null,
       printify_blueprint_id: isPrintify ? form.printify_blueprint_id : null,
       printify_print_provider_id: isPrintify ? form.printify_print_provider_id : null,
+      printify_print_areas: isPrintify ? form.printify_print_areas : null,
       // A Shopify listing may be public: it is a display-only card that sends
       // the visitor to Shopify. Everything below it stays internal-only,
       // because none of it describes buying something here.

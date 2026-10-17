@@ -311,17 +311,47 @@ describe("Fetch Sizes from Printify", () => {
       w.cleanup();
     });
 
-    test("the confirm button is disabled until a photo is checked, then reads Update Photos", async () => {
+    test("the confirm button is never disabled for lack of a selection — it reads Refresh From Printify with nothing checked, then Update Photos once a photo is", async () => {
       api.get.mockReset();
       api.get.mockResolvedValue({ data: PRODUCT_WITH_IMAGES_ALL_ADDED });
       const w = mount(editor(BASE_FORM, () => {}));
       await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
       await flush();
       const btn = w.q('[data-testid="printify-picker-add"]');
-      expect(btn.disabled).toBe(true);
+      expect(btn.disabled).toBe(false);
+      expect(btn.textContent).toBe("Refresh From Printify");
       await act(async () => { w.q('[data-testid="printify-picker-image-https://img/front.jpg"]').click(); });
       expect(btn.disabled).toBe(false);
       expect(btn.textContent).toBe("Update Photos");
+      w.cleanup();
+    });
+
+    // The actual bug (owner screenshot, 2026-10-17): a product that already
+    // has every size and photo could never pick up Printify's
+    // personalization fields (Name/Phone/Address, etc.) at all, because
+    // print_areas was only ever captured as a side effect of checking a
+    // new size or photo — and this product has neither left to check.
+    test("confirming with nothing checked still captures print_areas, so personalization fields aren't stuck empty forever", async () => {
+      api.get.mockReset();
+      api.get.mockResolvedValue({
+        data: {
+          ...PRODUCT_WITH_IMAGES_ALL_ADDED,
+          print_areas: [{ placeholders: [{ images: [{ layerType: "text", name: "Name" }, { layerType: "text", name: "Phone" }] }] }],
+        },
+      });
+      toast.success.mockClear();
+      let current = { ...BASE_FORM, printify_print_areas: null };
+      const setForm = jest.fn((updater) => { current = updater(current); });
+      const w = mount(editor(current, setForm));
+      await act(async () => { w.q('[data-testid="product-printify-fetch-sizes"]').click(); });
+      await flush();
+      await act(async () => { w.q('[data-testid="printify-picker-add"]').click(); });
+      await flush();
+      expect(current.printify_print_areas).toEqual([
+        { placeholders: [{ images: [{ layerType: "text", name: "Name" }, { layerType: "text", name: "Phone" }] }] },
+      ]);
+      expect(current.variants).toEqual(BASE_FORM.variants); // no new size rows added
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Synced"));
       w.cleanup();
     });
 

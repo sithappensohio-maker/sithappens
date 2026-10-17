@@ -63,6 +63,12 @@ const BLANK_PRODUCT_FORM = {
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
   printify_product_id: "", printify_blueprint_id: null, printify_print_provider_id: null,
+  // Printify's raw print_areas (text-layer placeholders) — the backend
+  // derives personalization fields (Name/Phone/Address, etc.) from THIS,
+  // not from anything typed in the form. Without it carried through here
+  // too, a product saved from Shop Manager never shows a personalization
+  // input anywhere (register or Shop), even if Printify itself has them.
+  printify_print_areas: null,
   // Merchandise is taxable by default; this is the per-item exemption. Missing here meant it was never
   // loaded on edit or sent on save, so an exempt item kept getting taxed no matter what the box showed.
   taxable: true, tax_exempt_reason: "",
@@ -2283,6 +2289,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         printify_product_id: raw.printify_product_id || "",
         printify_blueprint_id: raw.printify_blueprint_id ?? null,
         printify_print_provider_id: raw.printify_print_provider_id ?? null,
+        printify_print_areas: raw.printify_print_areas ?? null,
         publicly_visible: !!raw.publicly_visible, guest_cart_allowed: !!raw.guest_cart_allowed,
         show_public_price: raw.show_public_price !== false,
         requires_approval: !!raw.requires_approval, requires_completed_onboarding: !!raw.requires_completed_onboarding,
@@ -2346,6 +2353,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       printify_product_id: isPrintify ? productForm.printify_product_id.trim() : null,
       printify_blueprint_id: isPrintify ? productForm.printify_blueprint_id : null,
       printify_print_provider_id: isPrintify ? productForm.printify_print_provider_id : null,
+      printify_print_areas: isPrintify ? productForm.printify_print_areas : null,
       // See ManageProductsPanel: a Shopify listing is allowed to be public.
       publicly_visible: !!productForm.publicly_visible,
       guest_cart_allowed: !isShopify && productForm.publicly_visible && productForm.guest_cart_allowed,
