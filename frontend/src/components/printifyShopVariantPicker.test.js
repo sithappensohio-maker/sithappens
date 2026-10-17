@@ -172,6 +172,22 @@ describe("An internal product with options — picking stays optional", () => {
   });
 });
 
+// Owner-reported bug: the item page told a shopper "shipping is not
+// available for this item" on a Printify shirt — wrong, it ships just
+// fine through the cart's own PrintifyShipChoice. isInternalPhysical
+// forgot to exclude Printify the same way it already excludes Shopify.
+describe("the pickup-only notice", () => {
+  test("a Printify item never claims shipping is unavailable — it ships via its own cart choice", async () => {
+    await mountDetail(SHIRT);
+    expect(q("shop-detail-pickup-notice")).toBeFalsy();
+  });
+
+  test("an internal physical product still shows the pickup notice", async () => {
+    await mountDetail(SHIRT_INTERNAL);
+    expect(q("shop-detail-pickup-notice")).toBeTruthy();
+  });
+});
+
 describe("Merch card — a Printify item routes to the detail page", () => {
   test("shows \"Choose Size\" instead of an instant add, and a From price", () => {
     const opened = [];

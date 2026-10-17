@@ -370,7 +370,11 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   const outOfStock = isGuest
     ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
     : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
-  const isInternalPhysical = item.kind === "product" && !isShopifyMerch;
+  // A Printify item CAN ship — just through its own pickup-or-ship choice
+  // at checkout (PrintifyShipChoice), decided per cart, never per item
+  // here. Forgetting to exclude it here wrongly told a shopper a
+  // made-to-order item was pickup-only, with no way to ship it.
+  const isInternalPhysical = item.kind === "product" && !isShopifyMerch && !isPrintify;
   const avail = availabilityText(item, isGuest);
   // Guest CTA priority — Shopify (isShopifyMerch, handled unconditionally
   // below) always wins first; anything else that isn't a plain eligible
