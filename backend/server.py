@@ -43348,13 +43348,19 @@ async def _price_shop_cart(
 
     # Printify's own real shipping rate (owner request) — a SEPARATE charge
     # from shipping_amount above: different carrier, different real cost,
-    # never summed into one field. 0.0 for pickup, no choice yet, or a
-    # cart with no Printify line.
+    # never summed into one field. Charged for "pickup" too, not just
+    # "ship" (owner, 2026-10-17: "i would still need to pay shipping to
+    # the store") — see _price_pos_printify_shipping's own docstring for
+    # the full reasoning, identical here. 0.0 only when no choice has been
+    # made yet, or a cart with no Printify line.
     printify_shipping_amount = 0.0
-    if printify_fulfillment is not None and printify_fulfillment.method == "ship" and printify_fulfillment.shipping_address is not None:
-        # No address yet — never guess a country; create_checkout's own
-        # "address required to ship" check is what should surface for an
-        # incomplete choice, not a confusing "can't price this" from here.
+    if printify_fulfillment is not None and (
+        printify_fulfillment.method == "pickup"
+        or (printify_fulfillment.method == "ship" and printify_fulfillment.shipping_address is not None)
+    ):
+        # Ship with no address yet — never guess a country; create_checkout's
+        # own "address required to ship" check is what should surface for
+        # an incomplete choice, not a confusing "can't price this" from here.
         printify_lines = [l for l in lines if l.get("printify_fulfilled")]
         if printify_lines:
             cart_lines = [
@@ -46133,15 +46139,31 @@ async def _price_pos_printify_shipping(
     dont worry about the fed ex crap" (the Shop's existing shipping_amount
     is a SEPARATE FedEx-rate concept for self-fulfilled products; this is
     Printify's own catalog shipping table, domains/printify/client.
-    estimate_cart_shipping_cents). 0.0 for pickup, or when no choice has
-    been made yet (a live preview before the cashier picks one) — never
-    guessed, never charged without an explicit "ship" choice and address.
+    estimate_cart_shipping_cents).
+
+    Charged for "pickup" too, not just "ship" — owner, 2026-10-17: "i would
+    still need to pay shipping to the store so what is the proper way to
+    handle that." Printify always ships SOMEWHERE; "pickup" just means
+    "to us," not "nowhere" (see printify_client.PRINTIFY_PICKUP_ADDRESS_ENV,
+    the real address an order actually goes to once paid) — the business
+    was quietly eating that real cost before this. Printify's own rate
+    table is keyed by COUNTRY only (domains/printify/client.
+    get_shipping_rates — no street address needed to price it), so pickup
+    prices against "US" the same way a ship choice with no country yet
+    would, never the business's actual street address (that's for
+    create_order at fulfillment time, not for pricing).
+
+    0.0 only when no choice has been made yet at all (a live preview
+    before the cashier picks one) — never guessed, never charged without
+    an explicit choice.
 
     Shared by preview_pos_sale (so the live total the cashier sees already
     includes it before checkout) and _create_pos_sale_impl (which also
     enforces that a choice was made at all — see there)."""
-    if not printify_fulfillment or printify_fulfillment.method != "ship" or not printify_fulfillment.shipping_address:
-        # No address yet (or pickup, or no choice) — never guess a country.
+    if not printify_fulfillment:
+        return 0.0
+    if printify_fulfillment.method == "ship" and not printify_fulfillment.shipping_address:
+        # Ship chosen but no address typed yet — never guess a country.
         # _create_pos_sale_impl's own "address required to ship" check is
         # what should surface first for an incomplete choice, not a
         # confusing "can't price this" from here.
@@ -46243,7 +46265,8 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     # Priced the same way the live preview already showed it (same helper —
     # a surprise total at tender time, different from what the cashier saw
     # while building the cart, is exactly the bug class this shares code
-    # to avoid). Ship charges Printify's own real rate; pickup is free.
+    # to avoid). Both pickup and ship charge Printify's own real rate —
+    # see _price_pos_printify_shipping's own docstring.
     printify_shipping_amount = await _price_pos_printify_shipping(priced, product_cache, body.printify_fulfillment)
     total = round(total + printify_shipping_amount, 2)
 

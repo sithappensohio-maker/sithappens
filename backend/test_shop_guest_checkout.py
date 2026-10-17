@@ -573,7 +573,11 @@ def test_a_guest_sees_real_printify_tracking_once_printify_ships_it():
     # the guest's own order page, not just the admin screen.
     with _public_shop_open(), _guest_orders(), _printify_product() as p:
         variant_id = p["variants"][0]["id"]
-        with _stripe_mocked():
+        # Pickup now prices real Printify shipping too (owner, 2026-10-17:
+        # "i would still need to pay shipping to the store") — mocked to
+        # $0 here since this test is about tracking propagation, not price.
+        with _stripe_mocked(), \
+             patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
             result = run(guest_checkout(guest_routes.GuestCheckoutIn(
                 items=[_item("product", p["id"], 1, variant_id=variant_id)],
                 idempotency_key=f"g-{uuid.uuid4().hex}", email="buyer@example.com", name="Sam Guest",
@@ -600,15 +604,33 @@ def test_a_guest_sees_real_printify_tracking_once_printify_ships_it():
                                       "url": "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111"}
 
 
-def test_the_preview_charges_no_shipping_for_pickup_or_no_choice_yet():
+def test_the_preview_charges_no_shipping_with_no_choice_yet():
     with _public_shop_open(), _printify_product() as p:
         variant_id = p["variants"][0]["id"]
-        for fulfillment in (None, server.ShopPrintifyFulfillmentIn(method="pickup", shipping_address=None)):
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)) as mock_est:
             out = run(guest_cart_price(guest_routes.GuestCartIn(
                 items=[_item("product", p["id"], 1, variant_id=variant_id)],
-                printify_fulfillment=fulfillment,
+                printify_fulfillment=None,
             ), _Req()))
-            assert out["printify_shipping_amount"] == 0.0
+        assert out["printify_shipping_amount"] == 0.0
+        mock_est.assert_not_called()
+
+
+# Pickup now prices real Printify shipping too (owner, 2026-10-17: "i would
+# still need to pay shipping to the store so what is the proper way to
+# handle that") — Printify always ships SOMEWHERE, pickup just means "to
+# us," not free. Same fix as the register's own _price_pos_printify_shipping.
+def test_the_preview_charges_real_shipping_for_pickup_too():
+    with _public_shop_open(), _printify_product() as p:
+        variant_id = p["variants"][0]["id"]
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=550)) as mock_est:
+            out = run(guest_cart_price(guest_routes.GuestCartIn(
+                items=[_item("product", p["id"], 1, variant_id=variant_id)],
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup", shipping_address=None),
+            ), _Req()))
+        assert out["printify_shipping_amount"] == 5.5
+        call_lines, call_country = mock_est.call_args.args
+        assert call_country == "US"
 
 
 # ═════════════════════════════════════════════════════ 6. who owns it

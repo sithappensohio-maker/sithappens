@@ -141,8 +141,10 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
             "tax_rate_pct": priced["tax_rate_pct"],
             # Printify's own real shipping rate (owner request) — same field
             # the signed-in preview and the real charge both use, computed
-            # by the exact same _price_shop_cart call. 0.0 for pickup, no
-            # choice yet, or a cart with no Printify line.
+            # by the exact same _price_shop_cart call. Charged for pickup
+            # (ships to the business, not free) and ship alike; 0.0 only
+            # when no choice has been made yet, or a cart with no
+            # Printify line.
             "printify_shipping_amount": priced["printify_shipping_amount"],
             "total": priced["total"],
         }

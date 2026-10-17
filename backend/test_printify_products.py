@@ -422,8 +422,11 @@ def test_a_full_register_sale_of_a_printify_variant_commits_with_no_inventory_mo
     the pricing-time stock check and the commit-time stock MUTATION are two
     separate code paths (price_pos_cart vs. _create_pos_sale_impl's own
     qty_by_variant loop), and only patching the first would still leave a
-    printify sale failing here with "insufficient stock" at the register."""
-    p = _create()
+    printify sale failing here with "insufficient stock" at the register.
+
+    Shippable + shipping mocked to $0 — pickup now prices real shipping
+    too (see the dedicated pickup-shipping tests), not this test's focus."""
+    p = _create_shippable()
     sale_id = None
     try:
         variant_id = p["variants"][0]["id"]
@@ -434,7 +437,8 @@ def test_a_full_register_sale_of_a_printify_variant_commits_with_no_inventory_mo
             idempotency_key=f"test-{uuid.uuid4()}",
             printify_fulfillment=server.PrintifyFulfillmentIn(method="pickup"),
         )
-        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop), \
+             patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
             result = run(server.create_pos_sale(body, ADMIN))
         sale_id = result["pos_sale_id"]
         assert result["sale"]["line_items"][0]["variant_id"] == variant_id
@@ -508,12 +512,18 @@ def test_register_sale_refuses_ship_with_no_address():
 
 
 def test_register_sale_with_pickup_queues_an_outbox_row_with_no_address():
-    p = _create()
+    # Shippable (blueprint/provider mapped) and shipping mocked to $0 —
+    # pickup now prices real Printify shipping too (see the dedicated
+    # pickup-shipping tests below), but this test's own focus is the
+    # outbox row's SHAPE, not pricing, so shipping is kept at $0 here to
+    # avoid a tender mismatch unrelated to what's being asserted.
+    p = _create_shippable()
     sale_id = None
     try:
         variant_id = p["variants"][0]["id"]
         fulfillment = server.PrintifyFulfillmentIn(method="pickup")
-        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop), \
+             patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
             result = run(server.create_pos_sale(_sale_body(p["id"], variant_id, fulfillment), ADMIN))
         sale_id = result["pos_sale_id"]
         row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
@@ -665,13 +675,17 @@ def test_register_pricing_accepts_and_carries_personalization():
 
 
 def test_register_sale_queues_an_outbox_row_carrying_personalization_and_the_template():
-    p = _create_personalized()
+    # Shippable + shipping mocked to $0 — see the sibling outbox-row test
+    # above for why: pickup now prices real shipping too, but that's not
+    # what this test is about.
+    p = _create_personalized(printify_blueprint_id=6, printify_print_provider_id=99)
     sale_id = None
     try:
         variant_id = p["variants"][0]["id"]
         fulfillment = server.PrintifyFulfillmentIn(method="pickup")
         body = _sale_body(p["id"], variant_id, fulfillment, personalization={"Name": "Rex", "Phone": "330-555-0101"})
-        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop), \
+             patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
             result = run(server.create_pos_sale(body, ADMIN))
         sale_id = result["pos_sale_id"]
         row = run(server.db.printify_order_outbox.find_one({"source_id": sale_id}, {"_id": 0}))
@@ -800,13 +814,16 @@ def _cleanup_shop_order(cid, order_id):
 
 
 def test_shop_order_with_a_printify_variant_queues_a_pickup_outbox_row():
-    p = _create(show_online=True)
+    # Shippable + shipping mocked to $0 — pickup now prices real shipping
+    # too (see the dedicated pickup-shipping tests), not this test's focus.
+    p = _create_shippable(show_online=True)
     cid, user = _shop_client()
     order = None
     try:
         variant_id = p["variants"][0]["id"]
-        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
-                           printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
+            order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                               printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
         assert row is not None
         assert row["status"] == "pending"
@@ -827,15 +844,18 @@ def test_shop_order_with_a_printify_variant_queues_a_pickup_outbox_row():
 
 
 def test_shop_order_with_personalization_queues_the_template_and_price():
-    p = _create_personalized(show_online=True)
+    # Shippable + shipping mocked to $0 — see the sibling outbox-row test
+    # above for why.
+    p = _create_personalized(show_online=True, printify_blueprint_id=6, printify_print_provider_id=99)
     cid, user = _shop_client()
     order = None
     try:
         variant_id = next(v["id"] for v in p["variants"] if v["name"] == "Small")
-        order = _shop_pay(user, [server.ShopCartItemIn(
-            kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id,
-            personalization={"Name": "Rex", "Phone": "330-555-0101"})],
-            printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
+            order = _shop_pay(user, [server.ShopCartItemIn(
+                kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id,
+                personalization={"Name": "Rex", "Phone": "330-555-0101"})],
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         row = run(server.db.printify_order_outbox.find_one({"source": "shop_order", "source_id": order["id"]}, {"_id": 0}))
         li = row["line_items"][0]
         assert li["personalization"] == {"Name": "Rex", "Phone": "330-555-0101"}
@@ -869,13 +889,16 @@ def test_shop_order_with_no_printify_items_never_queues_anything():
 
 
 def test_shop_order_payment_replay_queues_only_one_outbox_row():
-    p = _create(show_online=True)
+    # Shippable + shipping mocked to $0 — see the sibling outbox-row test
+    # above for why.
+    p = _create_shippable(show_online=True)
     cid, user = _shop_client()
     order = None
     try:
         variant_id = p["variants"][0]["id"]
-        order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
-                           printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=0)):
+            order = _shop_pay(user, [server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)],
+                               printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup"))
         attempt = run(server.db.shop_payment_attempts.find_one({"shop_order_id": order["id"]}, {"_id": 0}))
         session = _FakeStripeObj(
             id=attempt["stripe_checkout_session_id"], payment_status="paid", currency="usd",
@@ -1037,17 +1060,35 @@ def test_guest_shop_checkout_with_ship_queues_outbox_row_using_the_guests_own_id
 # printify_shipping_amount, a SEPARATE field from the Shop's existing
 # FedEx shipping_amount.
 
-def test_shop_cart_adds_no_printify_shipping_for_pickup_or_no_choice():
+def test_shop_cart_adds_no_printify_shipping_with_no_choice_yet():
     p = _create_shippable(show_online=True)
     try:
         variant_id = p["variants"][0]["id"]
         cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)
-        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)):
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)) as mock_est:
             no_choice = run(server._price_shop_cart([cart_item], client_id=None))
+        assert no_choice["printify_shipping_amount"] == 0.0 and no_choice["total"] == 40.0
+        mock_est.assert_not_called()
+    finally:
+        _cleanup([p["id"]])
+
+
+# Owner, 2026-10-17: "i would still need to pay shipping to the store so
+# what is the proper way to handle that" — Printify always ships SOMEWHERE;
+# pickup just means "to us" (see printify_client.PRINTIFY_PICKUP_ADDRESS_ENV),
+# not a free teleport, so the business was quietly eating this real cost.
+def test_shop_cart_charges_real_printify_shipping_for_pickup_too():
+    p = _create_shippable(show_online=True)
+    try:
+        variant_id = p["variants"][0]["id"]
+        cart_item = server.ShopCartItemIn(kind="product", ref_id=p["id"], quantity=1, variant_id=variant_id)
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)) as mock_est:
             pickup = run(server._price_shop_cart(
                 [cart_item], client_id=None, printify_fulfillment=server.ShopPrintifyFulfillmentIn(method="pickup")))
-        assert no_choice["printify_shipping_amount"] == 0.0 and no_choice["total"] == 40.0
-        assert pickup["printify_shipping_amount"] == 0.0 and pickup["total"] == 40.0
+        assert pickup["printify_shipping_amount"] == 9.99
+        assert pickup["total"] == 49.99
+        call_lines, call_country = mock_est.call_args.args
+        assert call_country == "US"  # no street address needed to price it — see get_shipping_rates
     finally:
         _cleanup([p["id"]])
 
@@ -1307,26 +1348,43 @@ def test_import_images_one_failure_never_blocks_the_others():
 # ── Register pays Printify's real shipping rate (owner request) ───────────
 # "i would still like it to be able to have stuff shipped or picked up
 # they pay shipping based on printifys shipping dont worry about the fed
-# ex crap" — ship charges Printify's own catalog rate; pickup stays free.
+# ex crap" — originally built as "ship charges Printify's own catalog
+# rate; pickup stays free," corrected 2026-10-17 (owner: "i would still
+# need to pay shipping to the store so what is the proper way to handle
+# that") — Printify always ships SOMEWHERE, pickup just means "to us," so
+# it gets charged the same real rate ship does.
 
 def _create_shippable(**overrides):
     return _create(printify_blueprint_id=6, printify_print_provider_id=99, **overrides)
 
 
-def test_register_preview_adds_no_shipping_with_no_choice_or_pickup():
+def test_register_preview_adds_no_shipping_with_no_choice_yet():
     p = _create_shippable()
     try:
         variant_id = p["variants"][0]["id"]
         lines = [server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id, qty=1)]
         no_choice, _ = run(server.pos_domain_services.price_pos_cart(lines, None, can_price=True, client_id=None))
-        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)):
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)) as mock_est:
             preview_no_choice = run(server.preview_pos_sale(server.PosSalePreviewIn(lines=lines), ADMIN))
+        assert preview_no_choice["total"] == no_choice["total"] == 40.0
+        assert "printify_shipping_amount" not in preview_no_choice
+        mock_est.assert_not_called()
+    finally:
+        _cleanup([p["id"]])
+
+
+def test_register_preview_adds_real_shipping_for_pickup_too():
+    p = _create_shippable()
+    try:
+        variant_id = p["variants"][0]["id"]
+        lines = [server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id, qty=1)]
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=999)) as mock_est:
             preview_pickup = run(server.preview_pos_sale(
                 server.PosSalePreviewIn(lines=lines, printify_fulfillment=server.PrintifyFulfillmentIn(method="pickup")), ADMIN))
-        assert preview_no_choice["total"] == no_choice["total"] == 40.0
-        assert preview_pickup["total"] == 40.0
-        assert "printify_shipping_amount" not in preview_no_choice
-        assert "printify_shipping_amount" not in preview_pickup
+        assert preview_pickup["printify_shipping_amount"] == 9.99
+        assert preview_pickup["total"] == 49.99
+        call_lines, call_country = mock_est.call_args.args
+        assert call_country == "US"  # no street address needed to price it — see get_shipping_rates
     finally:
         _cleanup([p["id"]])
 
@@ -1382,7 +1440,7 @@ def test_register_sale_with_ship_charges_printifys_real_rate_and_tenders_must_ma
         _cleanup([p["id"]])
 
 
-def test_register_sale_pickup_never_charges_shipping():
+def test_register_sale_pickup_charges_printifys_real_rate_and_tenders_must_match():
     p = _create_shippable()
     sale_id = None
     try:
@@ -1391,17 +1449,27 @@ def test_register_sale_pickup_never_charges_shipping():
         body = server.PosSaleIn(
             client_id=None,
             lines=[server.PosSaleLineIn(kind="retail", product_id=p["id"], variant_id=variant_id, qty=1)],
-            tenders=[server.PosSaleTenderIn(method="cash", amount=40.0, tendered_amount=40.0)],
+            tenders=[server.PosSaleTenderIn(method="cash", amount=40.0, tendered_amount=40.0)],  # pre-shipping amount only
             idempotency_key=f"test-{uuid.uuid4()}", printify_fulfillment=fulfillment,
         )
         with _OpenRegisterDay(), patch.object(server, "_issue_pos_token", new=_noop), \
              patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=499)) as mock_est:
+            try:
+                run(server.create_pos_sale(body, ADMIN))
+                assert False, "should have been refused — tenders didn't cover the real (shipping-inclusive) total"
+            except HTTPException as e:
+                assert e.status_code == 400
+                assert "44.99" in e.detail
+
+            body.tenders = [server.PosSaleTenderIn(method="cash", amount=44.99, tendered_amount=44.99)]
             result = run(server.create_pos_sale(body, ADMIN))
         sale_id = result["pos_sale_id"]
-        mock_est.assert_not_called()
+        mock_est.assert_called()
+        call_lines, call_country = mock_est.call_args.args
+        assert call_country == "US"  # no street address needed to price it — see get_shipping_rates
         sale = run(server.db.pos_sales.find_one({"id": sale_id}, {"_id": 0}))
-        assert sale["total"] == 40.0
-        assert sale["printify_shipping_amount"] == 0.0
+        assert sale["total"] == 44.99
+        assert sale["printify_shipping_amount"] == 4.99
     finally:
         if sale_id:
             run(server.db.pos_sales.delete_one({"id": sale_id}))

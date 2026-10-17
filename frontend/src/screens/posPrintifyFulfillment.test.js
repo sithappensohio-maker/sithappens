@@ -55,15 +55,17 @@ const HOODIE = {
 };
 
 const VARIANT_PRICE = { "v-s": 40.00 };
-// Mirrors the real server: 0 for pickup/no choice, a fixed mock rate once
-// "ship" is actually chosen — proves the frontend reads/displays whatever
-// the server sends rather than ever computing its own shipping number.
+// Mirrors the real server: 0 with no choice made yet, a fixed mock rate
+// once EITHER method is actually chosen (pickup ships to the business,
+// not nowhere — owner, 2026-10-17: "i would still need to pay shipping
+// to the store") — proves the frontend reads/displays whatever the
+// server sends rather than ever computing its own shipping number.
 const MOCK_SHIPPING = 4.99;
 const priceCart = (lines, fulfillment) => {
   const unitPrice = (l) => l.variant_id ? (VARIANT_PRICE[l.variant_id] || 0) : ({ "p-mug": 18.00 }[l.product_id] || 0);
   const taxable = lines.reduce((n, l) => n + unitPrice(l) * l.qty, 0);
   const subtotal = Math.round(taxable * 100) / 100;
-  const shipping = fulfillment?.method === "ship" ? MOCK_SHIPPING : 0;
+  const shipping = fulfillment?.method === "ship" || fulfillment?.method === "pickup" ? MOCK_SHIPPING : 0;
   return {
     line_items: lines.map((l) => ({ ...l, amount: 0, taxable: true })),
     subtotal, discount_amount: 0, tax_amount: 0, tax_rate_pct: 0,
@@ -189,9 +191,11 @@ test("picking up sends pickup with no address on the actual sale", async () => {
   expect(q("printify-fulfillment-modal")).toBeNull();
   expect(q("pos-tender-screen")).toBeTruthy();
 
+  // $40 item + $4.99 Printify shipping to the business — pickup is priced
+  // the same as ship now (see the dedicated re-pricing test below).
   await click("pos-tender-method-cash");
-  await type("pos-tender-amount", "40.00");
-  await type("pos-tender-cash-received", "40.00");
+  await type("pos-tender-amount", "44.99");
+  await type("pos-tender-cash-received", "44.99");
   await click("pos-tender-add");
   await click("pos-complete-sale");
 
@@ -231,8 +235,11 @@ test("shipping sends the real address on the actual sale", async () => {
 });
 
 // Owner request: "i would still like it to be able to have stuff shipped
-// or picked up they pay shipping based on printifys shipping" — pickup
-// stays free, ship charges the server's own real Printify rate.
+// or picked up they pay shipping based on printifys shipping" — originally
+// "pickup stays free, ship charges the server's own real Printify rate,"
+// corrected 2026-10-17 (owner: "i would still need to pay shipping to the
+// store") — pickup ships to the business, not nowhere, so it's charged
+// the same real rate.
 test("choosing Ship re-prices with Printify's own shipping charge before the tender screen opens", async () => {
   await mount();
   await click("pos-product-p-hoodie");
@@ -254,7 +261,11 @@ test("choosing Ship re-prices with Printify's own shipping charge before the ten
   expect(q("pos-tender-amount").value).toBe("44.99");
 });
 
-test("pickup never charges shipping — the tender total stays the plain item price", async () => {
+// Owner, 2026-10-17: "i would still need to pay shipping to the store so
+// what is the proper way to handle that" — Printify always ships
+// SOMEWHERE; pickup just means "to us," not free, so it re-prices exactly
+// like Ship does (see the sibling test just above).
+test("pickup also re-prices with Printify's own shipping charge before the tender screen opens", async () => {
   await mount();
   await click("pos-product-p-hoodie");
   await click("pos-variant-v-s");
@@ -262,8 +273,8 @@ test("pickup never charges shipping — the tender total stays the plain item pr
   await click("printify-method-pickup");
   await click("printify-fulfillment-continue");
 
-  expect(q("pos-tender-total").textContent).not.toContain("44.99");
-  expect(q("pos-tender-amount").value).toBe("40");
+  expect(q("pos-tender-total").textContent).toContain("44.99");
+  expect(q("pos-tender-amount").value).toBe("44.99");
 });
 
 test("the Shipping (Printify) line appears in the cart summary once a ship choice is active", async () => {
@@ -283,6 +294,20 @@ test("the Shipping (Printify) line appears in the cart summary once a ship choic
   // (and the shipping line it earns) survives, so the cashier can review
   // it before trying payment again. The Cancel button has no testid of
   // its own; found by its label, same as other untested buttons here.
+  const cancelBtn = [...document.body.querySelectorAll("button")].find((b) => b.textContent.trim() === "Cancel");
+  await act(async () => { cancelBtn.click(); });
+
+  expect(q("pos-cart-printify-shipping")).toBeTruthy();
+  expect(q("pos-cart-printify-shipping").textContent).toContain("4.99");
+});
+
+test("the Shipping (Printify) line appears for a pickup choice too, not just ship", async () => {
+  await mount();
+  await click("pos-product-p-hoodie");
+  await click("pos-variant-v-s");
+  await click("pos-checkout-button");
+  await click("printify-method-pickup");
+  await click("printify-fulfillment-continue");
   const cancelBtn = [...document.body.querySelectorAll("button")].find((b) => b.textContent.trim() === "Cancel");
   await act(async () => { cancelBtn.click(); });
 
