@@ -131,6 +131,13 @@ describe("cards", () => {
     expect(text()).toContain("$280.00");
   });
 
+  // Owner request: packs/programs previously showed no photo on their own
+  // grid card at all, even when one was uploaded in Shop Manager.
+  test("a value card shows its own photo, same as the other cards", () => {
+    mount(<ValueCard item={pack} mode="authenticated" onOpenDetail={() => {}} onAdd={() => {}} />);
+    expect(byTestId("shop-product-image")).toBeTruthy();
+  });
+
   test("a value card claims a saving only when a baseline proves one", () => {
     mount(<ValueCard item={pack} mode="authenticated" onOpenDetail={() => {}} onAdd={() => {}} />);
     expect(byTestId("shop-pack-saving")).toBeNull();

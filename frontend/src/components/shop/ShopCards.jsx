@@ -234,39 +234,46 @@ export function ValueCard(props) {
   return (
     <CardShell favorite={props.favoriteSlot?.(item)} onOpen={() => onOpenDetail?.(item)} label={`View ${item.name}`}
                testId={`shop-card-${item.kind}-${item.id}`}
-               className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 hover:border-shPrimary/50 transition">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shTextMuted">
-            {info.serviceType === "training" ? "Training" : "Daycare"}
-          </p>
-          <h3 className="sh-display text-[22px] text-shText leading-tight mt-1">{item.name}</h3>
-        </div>
+               className="rounded-2xl border border-shBorder overflow-hidden bg-[var(--sh-card-base)] hover:border-shPrimary/50 transition">
+      {/* Landscape, not the 4/5 portrait MerchCard uses — this is still a
+          numbers-first comparison card (see below), so the photo gets a
+          modest band rather than the full-bleed treatment a product photo
+          card gets. Owner request: packs/programs previously showed no
+          photo here at all. */}
+      <div className="relative">
+        <ProductImage item={item} surface="card" ratio="3 / 2" isPublic={mode === "guest"} className="rounded-none" />
         {value?.savingPct != null && (
-          <span className="px-2 py-1 rounded-full bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-wider shrink-0"
+          <span className="absolute top-2 left-2 z-[5] px-2 py-1 rounded-full bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-wider"
                 data-testid="shop-pack-saving">Save {value.savingPct}%</span>
         )}
       </div>
 
-      {value && (
-        <div className="mt-4 flex items-end gap-2">
-          <span className="text-[34px] font-black text-shPrimary leading-none tabular-nums"
-                data-testid="shop-pack-each">{money(value.each)}</span>
-          <span className="text-[13px] text-shTextMuted pb-1">
-            per {singularUnit(value.unit)}
-          </span>
-        </div>
-      )}
+      <div className="p-5">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shTextMuted">
+          {info.serviceType === "training" ? "Training" : "Daycare"}
+        </p>
+        <h3 className="sh-display text-[22px] text-shText leading-tight mt-1">{item.name}</h3>
 
-      <p className="text-[13px] text-shTextMuted mt-2">
-        {value ? `${value.quantity} ${value.unit} · ${money(item.price)} up front` : money(item.price)}
-      </p>
-      <p className="text-[12px] text-shTextMuted mt-3 leading-relaxed">
-        Use them whenever you like — they do not expire, and they come off
-        your balance automatically at check-in.
-      </p>
+        {value && (
+          <div className="mt-4 flex items-end gap-2">
+            <span className="text-[34px] font-black text-shPrimary leading-none tabular-nums"
+                  data-testid="shop-pack-each">{money(value.each)}</span>
+            <span className="text-[13px] text-shTextMuted pb-1">
+              per {singularUnit(value.unit)}
+            </span>
+          </div>
+        )}
 
-      <div className="mt-4"><CardAction {...props} addLabel="Add to Cart" /></div>
+        <p className="text-[13px] text-shTextMuted mt-2">
+          {value ? `${value.quantity} ${value.unit} · ${money(item.price)} up front` : money(item.price)}
+        </p>
+        <p className="text-[12px] text-shTextMuted mt-3 leading-relaxed">
+          Use them whenever you like — they do not expire, and they come off
+          your balance automatically at check-in.
+        </p>
+
+        <div className="mt-4"><CardAction {...props} addLabel="Add to Cart" /></div>
+      </div>
     </CardShell>
   );
 }
