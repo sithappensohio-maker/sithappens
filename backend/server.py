@@ -17989,10 +17989,40 @@ async def duplicate_program(program_id: str, user: dict = Depends(require_admin_
 
 
 @api.delete("/programs/{program_id}")
-async def delete_program(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
-    # Soft delete — existing enrollments are unaffected
-    await db.programs.update_one({"id": program_id}, {"$set": {"active": False}})
-    return {"ok": True}
+async def delete_program(
+    program_id: str, hard: bool = False,
+    _: dict = Depends(require_admin_and_permission("manage_training_content")),
+):
+    """Default (hard=False, every existing caller): soft delete — sets
+    active=False, existing enrollments are unaffected. Unchanged behavior,
+    kept exactly as it was for backward compatibility.
+
+    hard=True (owner request, 2026-10-17: "can we make it so any item in
+    the shop can be deleted so i can clean up unused stuff" — Shop
+    Manager's own Delete action for this kind): permanently removes the
+    program document ONLY when no dog has ever actually been enrolled in
+    it, matching the same never-hard-delete-real-history rule
+    delete_pos_product already enforces for products. ANY dog_programs
+    row for this program — active, completed, cancelled, any status —
+    counts as real history; a dog's enrollment record must keep reading
+    back correctly regardless of what happens to the catalog listing.
+    Refuses with 409 pointing at the existing soft-delete (hide) above
+    instead, rather than silently falling back to it."""
+    if not hard:
+        # Soft delete — existing enrollments are unaffected
+        await db.programs.update_one({"id": program_id}, {"$set": {"active": False}})
+        return {"ok": True}
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if await db.dog_programs.count_documents({"program_id": program_id}) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="This program has enrollment history and can't be permanently deleted — "
+                   "hide it instead to keep past enrollments and progress intact.",
+        )
+    await deletion_log.delete_one(db, "programs", {"id": program_id})
+    return {"ok": True, "action": "deleted"}
 
 
 # ----- Enrollments -----

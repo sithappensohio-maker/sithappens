@@ -181,8 +181,15 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [historyItem, setHistoryItem] = useState(null);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null); // product only, mirrors ManageProductsPanel's safe-delete flow
+  const [deleteTarget, setDeleteTarget] = useState(null); // any kind now — mirrors ManageProductsPanel's safe-delete flow
   const [hasHistory, setHasHistory] = useState(false);
+  // credit_pack's own 409 isn't a real history block like the other two
+  // kinds' — it's a softer "N clients have a custom price on this, pass
+  // force=true to proceed anyway" warning (see _count_active_overrides_
+  // for_target) — the server's own wording is carried through verbatim
+  // rather than re-described, since re-describing it risked drifting out
+  // of sync with what force=true actually does.
+  const [blockedDetail, setBlockedDetail] = useState("");
   const [forbidden, setForbidden] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -261,24 +268,73 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     setBusyId(null);
   };
 
-  const openDeleteProduct = (it) => { setDeleteTarget(it); setHasHistory(false); };
+  // Every kind's own real permanent-delete path, matching delete_pos_product's
+  // long-standing rule: hard delete ONLY with no real history, 409 otherwise.
+  // credit_pack's DELETE already enforced this (see toggleHidePackOrProgram's
+  // own comment below); training_program's hard=true query param is new
+  // (server.py's delete_program) — owner, 2026-10-17: "can we make it so any
+  // item in the shop can be deleted so i can clean up unused stuff."
+  const deleteEndpointFor = (it, { force = false } = {}) =>
+    it.kind === "physical_product" ? `/pos/products/${it.id}`
+      : it.kind === "credit_pack" ? `/credit-packs/${it.id}${force ? "?force=true" : ""}`
+        : `/programs/${it.id}?hard=true`;
+
+  const openDeleteProduct = (it) => { setDeleteTarget(it); setHasHistory(false); setBlockedDetail(""); };
   const confirmDeleteProduct = async () => {
     if (!deleteTarget) return;
     setBusyId(deleteTarget.id);
     try {
-      await api.delete(`/pos/products/${deleteTarget.id}`);
+      await api.delete(deleteEndpointFor(deleteTarget));
       toast.success(`"${deleteTarget.name}" permanently deleted`);
       setDeleteTarget(null);
       load();
     } catch (e) {
-      if (e?.response?.status === 409) setHasHistory(true);
+      if (e?.response?.status === 409) { setHasHistory(true); setBlockedDetail(e?.response?.data?.detail || ""); }
       else toast.error(e?.response?.data?.detail || "Could not delete");
     }
     setBusyId(null);
   };
+  // credit_pack's 409 is a soft warning (active client-specific prices),
+  // not a real history block — force=true proceeds anyway, same as the
+  // server already allows (unlike physical_product/training_program,
+  // which have no force option because theirs IS a real, final block).
+  const confirmDeleteForced = async () => {
+    if (!deleteTarget) return;
+    setBusyId(deleteTarget.id);
+    try {
+      await api.delete(deleteEndpointFor(deleteTarget, { force: true }));
+      toast.success(`"${deleteTarget.name}" permanently deleted`);
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not delete");
+    }
+    setBusyId(null);
+  };
+  // The fallback once delete is refused for real history. Physical products
+  // have a real Archive (restorable, remembers prior active/show_online —
+  // see archiveProduct); packs/programs don't, so this explicitly hides
+  // them instead — never toggleHidePackOrProgram, which would REACTIVATE
+  // an already-hidden item instead of hiding it (several of the exact
+  // items prompting this feature are already "Hidden Everywhere").
   const archiveFromDeleteFlow = async () => {
     if (!deleteTarget) return;
-    await archiveProduct(deleteTarget);
+    if (deleteTarget.kind === "physical_product") {
+      await archiveProduct(deleteTarget);
+    } else {
+      setBusyId(deleteTarget.id);
+      try {
+        const path = deleteTarget.kind === "credit_pack" ? "/credit-packs" : "/programs";
+        const { data } = await api.get(path, { params: { include_inactive: true } });
+        const raw = (data || []).find((p) => p.id === deleteTarget.id);
+        if (raw) await api.put(`${path}/${deleteTarget.id}`, { ...raw, active: false });
+        toast.success(`"${deleteTarget.name}" hidden`);
+        load();
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Could not hide");
+      }
+      setBusyId(null);
+    }
     setDeleteTarget(null);
   };
 
@@ -519,6 +575,16 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                             { key: "adjust-stock", label: "Adjust Stock", testId: `sm-adjust-stock-${it.id}`, onClick: () => openAdjustStock(it) },
                             { key: "stock-history", label: "Stock History", testId: `sm-stock-history-${it.id}`, onClick: () => openStockHistory(it) },
                           ] : []),
+                          // Packs/programs get Delete here, in the menu — physical
+                          // products already have their own always-visible red
+                          // Delete button, so adding a second one here would just
+                          // duplicate it. Same permanently-delete-only-with-no-
+                          // real-history rule as that one (owner, 2026-10-17:
+                          // "can we make it so any item in the shop can be
+                          // deleted so i can clean up unused stuff").
+                          ...(it.kind !== "physical_product" ? [
+                            { key: "delete", label: "Delete", testId: `sm-delete-${it.id}`, onClick: () => openDeleteProduct(it) },
+                          ] : []),
                         ]} />
                         {it.kind === "physical_product" ? (
                           <button onClick={() => openDeleteProduct(it)} data-testid={`sm-delete-${it.id}`}
@@ -627,31 +693,52 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
         </div>
       )}
 
-      {deleteTarget && (
+      {deleteTarget && (() => {
+        const kindNoun = deleteTarget.kind === "physical_product" ? "product"
+          : deleteTarget.kind === "credit_pack" ? "pack" : "program";
+        const isCreditPack = deleteTarget.kind === "credit_pack";
+        const historyNoun = deleteTarget.kind === "physical_product" ? "order, sale, or inventory" : "enrollment";
+        const fallbackVerb = deleteTarget.kind === "physical_product" ? "archiving" : "hiding";
+        const fallbackLabel = deleteTarget.kind === "physical_product" ? "Archive Product" : `Hide ${kindNoun === "pack" ? "Pack" : "Program"}`;
+        return (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="sm-delete-confirm">
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-sm p-5 space-y-3">
             {!hasHistory ? (
               <>
                 <p className="text-shText font-black uppercase tracking-widest">Delete "{deleteTarget.name}"?</p>
-                <p className="text-shTextMuted text-sm">This permanently removes the product. Only possible with no order, sale, or inventory history — otherwise we'll offer to archive it instead.</p>
+                <p className="text-shTextMuted text-sm">
+                  {isCreditPack
+                    ? "This permanently removes the pack from your catalog. Any client with a custom price on it keeps that override, just no longer tied to a live catalog item."
+                    : `This permanently removes the ${kindNoun}. Only possible with no ${historyNoun} history — otherwise we'll offer to ${fallbackVerb} it instead.`}
+                </p>
                 <div className="flex gap-3 pt-1">
                   <button onClick={() => setDeleteTarget(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
                   <button onClick={confirmDeleteProduct} className="flex-1 bg-red-500 text-white rounded-xl py-3 font-black uppercase tracking-widest">Permanently Delete</button>
                 </div>
               </>
-            ) : (
+            ) : isCreditPack ? (
               <>
-                <p className="text-shText font-black uppercase tracking-widest">"{deleteTarget.name}" has order history</p>
-                <p className="text-shTextMuted text-sm">Can't be permanently deleted — archiving instead keeps every past order/receipt/report intact.</p>
+                <p className="text-shText font-black uppercase tracking-widest">"{deleteTarget.name}"</p>
+                <p className="text-shTextMuted text-sm">{blockedDetail || "Some clients have a custom price on this pack."}</p>
                 <div className="flex gap-3 pt-1">
                   <button onClick={() => setDeleteTarget(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
-                  <button onClick={archiveFromDeleteFlow} className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">Archive Product</button>
+                  <button onClick={confirmDeleteForced} className="flex-1 bg-red-500 text-white rounded-xl py-3 font-black uppercase tracking-widest">Delete Anyway</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-shText font-black uppercase tracking-widest">"{deleteTarget.name}" has {historyNoun} history</p>
+                <p className="text-shTextMuted text-sm">Can't be permanently deleted — {fallbackVerb} instead keeps every past {deleteTarget.kind === "physical_product" ? "order/receipt/report" : "enrollment/progress"} intact.</p>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setDeleteTarget(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
+                  <button onClick={archiveFromDeleteFlow} className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">{fallbackLabel}</button>
                 </div>
               </>
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

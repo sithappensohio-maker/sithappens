@@ -183,6 +183,90 @@ describe("the Shop Manager survives being rendered", () => {
   });
 });
 
+// Owner, 2026-10-17: "can we make it so any item in the shop can be
+// deleted so i can clean up unused stuff" — screenshot showed several
+// training programs and prepaid packs stuck in the table (some already
+// "Hidden Everywhere") with no way to actually remove the row, only a
+// physical product had a Delete button at all.
+describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
+  test("Delete is offered for a pack and a program, inside the More menu", async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-k1-more").click(); });
+    expect(byTestId("sm-delete-k1")).toBeTruthy();
+    await act(async () => { byTestId("sm-row-t1-more").click(); });
+    expect(byTestId("sm-delete-t1")).toBeTruthy();
+  });
+
+  test("confirming delete on a program with no history calls the real hard-delete endpoint", async () => {
+    api.delete.mockReset();
+    api.delete.mockResolvedValue({ data: { ok: true, action: "deleted" } });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-t1-more").click(); });
+    await act(async () => { byTestId("sm-delete-t1").click(); });
+    expect(byTestId("sm-delete-confirm")).toBeTruthy();
+    await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.delete).toHaveBeenCalledWith("/programs/t1?hard=true");
+    noReferenceErrors();
+  });
+
+  test("a program with real enrollment history is refused, and the fallback hides it (never reactivates)", async () => {
+    api.delete.mockReset();
+    api.delete.mockRejectedValue({ response: { status: 409, data: {
+      detail: "This program has enrollment history and can't be permanently deleted — hide it instead to keep past enrollments and progress intact.",
+    } } });
+    api.get.mockImplementation((url, opts) => {
+      if (url === "/programs" && opts?.params?.include_inactive) {
+        return Promise.resolve({ data: [{ id: "t1", name: "Rock Solid Recall", active: true, price: 119 }] });
+      }
+      if (url.includes("/shop-manager/items")) return Promise.resolve({ data: { items: ITEMS } });
+      if (url.includes("/programs/meta")) return Promise.resolve({ data: { types: [], focuses: [] } });
+      return Promise.resolve({ data: {} });
+    });
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: {} });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-t1-more").click(); });
+    await act(async () => { byTestId("sm-delete-t1").click(); });
+    await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // Blocked, never fell back to the "no history" path silently.
+    expect(byTestId("sm-delete-confirm").textContent).toContain("enrollment history");
+    const fallback = byTestId("sm-delete-confirm").querySelector("button.bg-shPrimary");
+    expect(fallback.textContent).toBe("Hide Program");
+    await act(async () => { fallback.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // Explicitly active:false — never the toggle (which would REACTIVATE
+    // an item that started hidden, the exact bug this must avoid).
+    expect(api.put).toHaveBeenCalledWith("/programs/t1", expect.objectContaining({ active: false }));
+    noReferenceErrors();
+  });
+
+  test("a credit pack with client-specific prices offers Delete Anyway with the server's real message, not a generic one", async () => {
+    api.delete.mockReset();
+    api.delete.mockImplementation((url) => {
+      if (url === "/credit-packs/k1") {
+        return Promise.reject({ response: { status: 409, data: {
+          detail: '2 clients have an active client-specific price on "10 Visits". Pass force=true to proceed anyway.',
+        } } });
+      }
+      return Promise.resolve({ data: { ok: true } });
+    });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-k1-more").click(); });
+    await act(async () => { byTestId("sm-delete-k1").click(); });
+    await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(byTestId("sm-delete-confirm").textContent).toContain('2 clients have an active client-specific price');
+    const again = [...byTestId("sm-delete-confirm").querySelectorAll("button")].find((b) => b.textContent === "Delete Anyway");
+    expect(again).toBeTruthy();
+    await act(async () => { again.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.delete).toHaveBeenCalledWith("/credit-packs/k1?force=true");
+    noReferenceErrors();
+  });
+});
+
 describe("CSV import", () => {
   const pickFile = async (text = "name,price\nNew Treats,10.00\n") => {
     const input = byTestId("csv-import-file-input");
