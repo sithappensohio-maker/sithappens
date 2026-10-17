@@ -88,7 +88,20 @@ def register_shop_seo_routes(*, api, server_globals: dict) -> None:
         site = seo.site_name(settings)
         shop_page = (settings.get("shop_page") or {})
 
+        # `dept in seo.DEPARTMENT_SEO` alone only proves the KEY is a real
+        # department name — not that it's currently showing anything. A
+        # department the admin turned off (Online School, 2026-10-17) is
+        # emptied out of the public catalogue entirely (same filtering the
+        # sitemap route above already relies on via _department_of), so a
+        # stale/direct ?dept= link to it must read exactly like an unknown
+        # department here too — never hand a crawler or a link-preview bot
+        # that department's own title for a page with nothing in it.
+        dept_has_items = False
         if dept and dept in seo.DEPARTMENT_SEO:
+            items = await _s("_public_visible_shop_items")()
+            dept_has_items = any(_department_of(item) == dept for item in items)
+
+        if dept_has_items:
             label, tagline = seo.DEPARTMENT_SEO[dept]
             title = f"{label} | {site}"
             description = tagline

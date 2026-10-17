@@ -77,7 +77,12 @@ test("Online School keeps its own storefront, and a live search still wins", () 
   // DEPARTMENT renders the educational storefront rather than a product
   // grid, and that typing a search overrides it — otherwise searching from
   // inside Online School would silently show you nothing.
-  expect(portalShopSrc).toMatch(/department === "online_school" && !searching \?\s*\(?\s*<OnlineSchoolStorefront/);
+  //
+  // Checked against currentDept (2026-10-17: a department the backend has
+  // emptied out — e.g. Online School turned off in Settings — must read
+  // like an unknown one), not the raw department state straight off the
+  // URL, which a stale/direct ?dept=online_school link could still carry.
+  expect(portalShopSrc).toMatch(/currentDept\?\.key === "online_school" && !searching \?\s*\(?\s*<OnlineSchoolStorefront/);
   // ...and the grid is the other branch of that same ternary, so the two
   // cannot both render or both vanish.
   expect(portalShopSrc).toMatch(/<OnlineSchoolStorefront[\s\S]{0,400}\) : browsing\.length === 0 \?/);

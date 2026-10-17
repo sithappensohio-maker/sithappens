@@ -687,7 +687,14 @@ export default function PortalShop({
     () => browseItems(browsableItems, { department, query: search, filters, sort }),
     [browsableItems, department, search, filters, sort],
   );
-  const currentDept = departmentByKey(department);
+  // Looked up against the already-VISIBLE departments list, never the raw
+  // static registry (departmentByKey alone) — `department` comes straight
+  // off the URL (?dept=... or the legacy ?section=...), so a direct link
+  // to a department that's empty or admin-disabled (e.g. Online School
+  // turned off in Settings, which empties it via the backend's own catalog
+  // filtering) must read exactly like an unknown department, not render
+  // that department's real heading/chrome from a stale link.
+  const currentDept = departments.find((d) => d.key === department) || null;
 
   // Products that were genuinely on screen. Deduplicated per view CONTEXT
   // (this department, this search), so scrolling a grid counts each product
@@ -1040,7 +1047,11 @@ export default function PortalShop({
   // describes the item it actually loaded rather than guessing from a route.
   useDocumentMeta({
     ...shopMetaFor({
-      department: detail ? null : department,
+      // currentDept?.key, not the raw department state — a direct/stale
+      // link to a hidden department (e.g. ?dept=online_school while it's
+      // turned off) must get the plain Shop title, not that department's
+      // own SEO copy.
+      department: detail ? null : currentDept?.key || null,
       shopPage,
       origin: publicOrigin(),
     }),
@@ -1352,8 +1363,12 @@ export default function PortalShop({
             <div className="flex-1 min-w-0">
               {/* Online School keeps its own, stronger educational sell —
                   the brief is explicit that it should not be flattened into
-                  a product grid. Only its chrome is unified. */}
-              {department === "online_school" && !searching ? (
+                  a product grid. Only its chrome is unified.
+                  Checked against currentDept (the VISIBLE-list lookup), not
+                  the raw department state — a direct/stale link to
+                  ?dept=online_school while it's turned off must not render
+                  this full marketing page over an empty item list. */}
+              {currentDept?.key === "online_school" && !searching ? (
                 <OnlineSchoolStorefront
                   items={browsing}
                   mode={mode}

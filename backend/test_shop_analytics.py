@@ -873,7 +873,11 @@ def test_robots_is_generated_and_does_not_block_the_shop():
 
 
 def test_the_landing_page_has_its_own_title():
-    with _public_shop_open():
+    # A real gear item is required now, not just the department key existing
+    # in DEPARTMENT_SEO (see test_a_department_with_nothing_in_it_never_gets_
+    # its_own_crawler_title below) — ?dept=gear with nothing in it must read
+    # like an unknown department, same as a turned-off department would.
+    with _public_shop_open(), _product() as p:
         page = run(_endpoint("public_shop_landing_meta")(_Req(), None)).body.decode("utf-8")
         dept = run(_endpoint("public_shop_landing_meta")(_Req(), "gear")).body.decode("utf-8")
     assert "<title>Shop | " in page
@@ -881,6 +885,22 @@ def test_the_landing_page_has_its_own_title():
     # Unique canonicals, or search engines treat them as one page.
     assert "dept=gear" in dept
     assert "dept=gear" not in page
+
+
+# Owner, 2026-10-17: Online School turned off in Settings — the public
+# catalogue already correctly empties it out (same filtering the sitemap
+# route's own _department_of relies on), but this crawler-facing route
+# used to hand out that department's own title/heading for ANY key it
+# recognized, with no check that anything was actually in it. A stale or
+# direct ?dept=online_school link (it's the exact URL used site-wide
+# before this feature was turned off) must read like an unknown department.
+def test_a_department_with_nothing_in_it_never_gets_its_own_crawler_title():
+    with _public_shop_open():
+        page = run(_endpoint("public_shop_landing_meta")(_Req(), None)).body.decode("utf-8")
+        dept = run(_endpoint("public_shop_landing_meta")(_Req(), "online_school")).body.decode("utf-8")
+    assert "<title>Online Dog Training School | " not in dept
+    assert "<title>Shop | " in dept
+    assert dept == page
 
 
 # ─────────────────────────────────── relationships across every item type

@@ -228,6 +228,31 @@ describe("every department renders", () => {
     expect(document.querySelector('[data-testid="shop-dept-gear"]').getAttribute("aria-current")).toBe("page");
     window.history.pushState({}, "", "/shop");
   });
+
+  // Owner, 2026-10-17: Online School turned off. The backend already strips
+  // every purchase_fulfillment:"online_school" item out of the public
+  // catalog when the feature is off — this mock reproduces exactly that
+  // (the fixture above's t2 removed) while still visiting the EXACT URL
+  // ONLINE_SCHOOL_HREF uses site-wide, as a stale bookmark/old link would.
+  // Before the fix, this showed the real "Online School" heading and the
+  // full OnlineSchoolStorefront marketing page over zero items.
+  test("a direct link to a turned-off department reads like an unknown one, not its real heading", async () => {
+    const catalogWithoutSchool = { items: CATALOG.items.filter((i) => i.id !== "t2") };
+    api.get.mockImplementation((url) => {
+      if (url.includes("/catalog/taxonomy")) return Promise.resolve({ data: { categories: [], subcategories: [] } });
+      if (url.includes("/catalog")) return Promise.resolve({ data: catalogWithoutSchool });
+      if (url.includes("/settings/public")) return Promise.resolve({ data: { shop_page: { public_shop_enabled: true, public_browsing_enabled: true } } });
+      if (url.includes("/dogs")) return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: {} });
+    });
+    window.history.pushState({}, "", "/shop?dept=online_school");
+    await mount(<PortalShop mode="guest" cart={[]} onCartChange={() => {}} onRequireAccount={() => {}} />);
+    noReferenceErrors();
+    expect(document.body.textContent).not.toContain("Sit Happens Online School");
+    expect(document.querySelector("h1")?.textContent).not.toBe("Online School");
+    expect(document.title).not.toContain("Online Dog Training School");
+    window.history.pushState({}, "", "/shop");
+  });
 });
 
 // ══════════════════════════ every product page, mounted
