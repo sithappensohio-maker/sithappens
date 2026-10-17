@@ -158,4 +158,29 @@ describe("guest checkout", () => {
       shipping_address: { address1: "1 Main St", address2: "", city: "Dayton", region: "OH", zip: "45402" },
     });
   });
+
+  // Owner-reported bug: the "you'll collect this at Sit Happens" note kept
+  // showing after choosing Ship To Me — nothing was actually being picked
+  // up. It's only true for Pick Up In Store (the default).
+  test("the pickup note disappears once Ship To Me is chosen, and returns if Pick Up In Store is chosen back", async () => {
+    api.post.mockImplementation((url) => {
+      if (url === "/public/shop/cart/price") {
+        return Promise.resolve({ data: { lines: [{ kind: "product", ref_id: "tag1", name: "Pet ID Tag", quantity: 1, unit_price: 12, line_subtotal: 12, line_total: 12 }],
+          subtotal: 12, tax_amount: 0, tax_rate_pct: 0, total: 12 } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    await mount(<PortalShop mode="guest" cart={[{ kind: "product", ref_id: "tag1", quantity: 1 }]}
+      onCartChange={() => {}} onRequireAccount={() => {}} />);
+    await click("shop-cart-open");
+    await click("shop-checkout-button");
+
+    expect(q("guest-checkout-pickup-note")).toBeTruthy(); // pickup by default
+
+    await click("shop-printify-ship");
+    expect(q("guest-checkout-pickup-note")).toBeFalsy();
+
+    await click("shop-printify-pickup");
+    expect(q("guest-checkout-pickup-note")).toBeTruthy();
+  });
 });

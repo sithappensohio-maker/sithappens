@@ -168,11 +168,17 @@ export function stockCeiling(item) {
   return Math.max(0, Math.floor(item.stock_on_hand ?? 0));
 }
 
-// Internal (Sit Happens-fulfilled) physical products need pickup messaging;
-// credit packs, training programs, and Shopify-linked merchandise never do —
-// Shopify owns its own checkout/shipping entirely.
+// Internal (Sit Happens-fulfilled) physical products need pickup-only
+// messaging; credit packs, training programs, and Shopify-linked
+// merchandise never do — Shopify owns its own checkout/shipping entirely.
+// A Printify item ALSO never does: it ships through its own cart-level
+// pickup-or-ship choice (PrintifyShipChoice/hasPrintifyLine), so telling a
+// shopper it's pickup-only with "no postage to pay" is simply false for
+// it — the same bug ShopItemDetail.jsx's own isInternalPhysical already
+// had fixed (see its comment), just not here too.
 export function isInternalPhysical(item) {
-  return !!item && item.kind === "product" && item.sales_destination !== "shopify_external";
+  return !!item && item.kind === "product"
+    && item.sales_destination !== "shopify_external" && item.sales_destination !== "printify";
 }
 
 // The chosen size/color row, for a cart line that named one — own-Shop

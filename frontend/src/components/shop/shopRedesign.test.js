@@ -547,4 +547,15 @@ describe("product facts", () => {
     expect(text()).toContain("choose which dog");
     expect(text()).not.toMatch(/at least 0 months/);
   });
+
+  // Owner-reported bug: a Printify item's own page said "Collect at Sit
+  // Happens... we don't post orders, so there's no postage to pay" — false,
+  // it ships via its own PrintifyShipChoice at the cart. isInternalPhysical
+  // (lib/shopPolish) must never be true for a Printify item.
+  test("a Printify item never gets the internal pickup-only 'Collection' blurb", () => {
+    mount(<ProductFacts item={{ kind: "product", id: "p10", name: "POD Shirt",
+                                sales_destination: "printify" }} mode="guest" />);
+    expect(text()).not.toContain("We don't post orders");
+    expect(text()).not.toContain("Collect at Sit Happens");
+  });
 });

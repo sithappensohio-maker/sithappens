@@ -116,10 +116,15 @@ test("stockCeiling only applies to inventory-tracked internal products", () => {
   expect(stockCeiling({ kind: "training_program" })).toBeNull();
 });
 
-test("isInternalPhysical is true only for internal (non-Shopify) products", () => {
+test("isInternalPhysical is true only for internal (non-Shopify, non-Printify) products", () => {
   expect(isInternalPhysical({ kind: "product", sales_destination: "internal" })).toBe(true);
   expect(isInternalPhysical({ kind: "product" })).toBe(true); // sales_destination defaults to internal server-side
   expect(isInternalPhysical({ kind: "product", sales_destination: "shopify_external" })).toBe(false);
+  // Owner-reported bug: a Printify item's cart line and product page both
+  // said "Collect in store" / "we don't post orders" — wrong, it ships
+  // through its own PrintifyShipChoice, same as ShopItemDetail.jsx's own
+  // isInternalPhysical already correctly excludes.
+  expect(isInternalPhysical({ kind: "product", sales_destination: "printify" })).toBe(false);
   expect(isInternalPhysical({ kind: "credit_pack" })).toBe(false);
   expect(isInternalPhysical({ kind: "training_program" })).toBe(false);
 });

@@ -87,10 +87,24 @@ export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onR
   }, [payload]);
 
   const emailLooksReal = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
-  // Merchandise is collected in person, so somebody has to be named on it.
-  // A gift card is emailed and nobody comes to the counter, so it does not.
+  // Merchandise is collected in person, so somebody has to be named on it —
+  // a Printify line still needs a name too even when shipped, because the
+  // same name goes on the shipping label (_printify_ship_to_address). A
+  // gift card is emailed and nobody comes to the counter, so it does not.
   // The server enforces this too — the form only says so earlier.
   const needsPickupName = (cart || []).some((c) => c.kind === "product");
+  // Owner-reported bug: the "you'll collect this at Sit Happens" note kept
+  // showing even after choosing Ship To Me for a Printify item — nothing
+  // was actually being picked up in person. Separate from needsPickupName
+  // above (a name is still required either way): this is specifically
+  // "will someone physically come get something", true for any internal
+  // product (guests never get a ship option for those) or a Printify line
+  // that hasn't chosen to ship.
+  const willBePickedUpInPerson = cartLines.some((c) => {
+    if (c.kind !== "product") return false;
+    if (c.item?.sales_destination === "printify") return printifyFulfillment?.method !== "ship";
+    return true;
+  });
   const printifyShipIncomplete = cartHasPrintify && printifyFulfillment?.method === "ship"
     && !shippingAddressComplete(printifyFulfillment.shipping_address);
   const ready = emailLooksReal && (!needsPickupName || name.trim().length > 0) && !printifyShipIncomplete;
@@ -222,10 +236,12 @@ export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onR
                          data-testid="guest-checkout-phone" autoComplete="tel"
                          placeholder="Phone (optional)"
                          className="w-full px-3 py-2.5 rounded-lg border border-shBorder bg-black/20 text-shText text-sm" />
-                  <p className="text-[11px] text-shTextMuted" data-testid="guest-checkout-pickup-note">
-                    <i className="fas fa-store mr-1.5" />You&apos;ll collect this at Sit Happens —
-                    we need a name to hand it over, and a number in case we need to reach you.
-                  </p>
+                  {willBePickedUpInPerson && (
+                    <p className="text-[11px] text-shTextMuted" data-testid="guest-checkout-pickup-note">
+                      <i className="fas fa-store mr-1.5" />You&apos;ll collect this at Sit Happens —
+                      we need a name to hand it over, and a number in case we need to reach you.
+                    </p>
+                  )}
                 </>
               )}
               {cartHasPrintify && (
