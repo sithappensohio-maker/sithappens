@@ -168,7 +168,8 @@ describe("the guest checkout panel", () => {
     api.post.mockResolvedValue(PRICED);
     mount(<GuestCheckoutPanel cart={CART} onClose={() => {}} onSignIn={() => {}} onRemoveLines={() => {}} />);
     await flush();
-    expect(api.post).toHaveBeenCalledWith("/public/shop/cart/price", { items: expect.any(Array) });
+    expect(api.post).toHaveBeenCalledWith("/public/shop/cart/price",
+      { items: expect.any(Array), printify_fulfillment: null }); // no Printify line in this cart
     expect(byTestId("guest-checkout-total").textContent).toBe("$26.88");
     expect(text()).toContain("$1.88");
   });
@@ -188,12 +189,12 @@ describe("the guest checkout panel", () => {
     expect(summary.match(/\$26\.88/g)).toHaveLength(1);
   });
 
-  test("it sends no price, no total and no tax — only what is in the basket", async () => {
+  test("it sends no price, no total and no tax — only what is in the basket (plus the fulfillment choice)", async () => {
     api.post.mockResolvedValue(PRICED);
     mount(<GuestCheckoutPanel cart={CART} onClose={() => {}} onSignIn={() => {}} onRemoveLines={() => {}} />);
     await flush();
     const [, body] = api.post.mock.calls[0];
-    expect(Object.keys(body)).toEqual(["items"]);
+    expect(Object.keys(body).sort()).toEqual(["items", "printify_fulfillment"]);
     for (const line of body.items) {
       expect(Object.keys(line).sort()).toEqual(
         ["gift_message", "kind", "personalization", "quantity", "recipient_email", "recipient_name", "ref_id", "variant_id"]);

@@ -159,6 +159,52 @@ describe("guest checkout", () => {
     });
   });
 
+  // Owner-reported bug: the preview total shown before paying never
+  // included Printify's real shipping rate, even though the actual Stripe
+  // charge always had — "shouldnt we be charging them shipping... its
+  // supposed to pull shipping directly from printify". Must re-price (and
+  // show the real amount) once — and only once — the ship address is
+  // actually complete, never on every keystroke of a half-typed one.
+  test("choosing Ship To Me with a complete address re-prices and shows the real shipping charge", async () => {
+    let priceCalls = 0;
+    api.post.mockImplementation((url, body) => {
+      if (url === "/public/shop/cart/price") {
+        priceCalls += 1;
+        const shipping = body?.printify_fulfillment?.method === "ship" ? 5.5 : 0;
+        return Promise.resolve({ data: {
+          lines: [{ kind: "product", ref_id: "tag1", name: "Pet ID Tag", quantity: 1, unit_price: 12, line_subtotal: 12, line_total: 12 }],
+          subtotal: 12, tax_amount: 0, tax_rate_pct: 0, printify_shipping_amount: shipping, total: 12 + shipping,
+        } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    await mount(<PortalShop mode="guest" cart={[{ kind: "product", ref_id: "tag1", quantity: 1 }]}
+      onCartChange={() => {}} onRequireAccount={() => {}} />);
+    await click("shop-cart-open");
+    await click("shop-checkout-button");
+
+    expect(q("guest-checkout-total").textContent).toBe("$12.00");
+    expect(q("guest-checkout-printify-shipping")).toBeFalsy();
+    const callsBeforeShip = priceCalls;
+
+    await click("shop-printify-ship");
+    // Address still incomplete — must NOT have re-priced yet.
+    expect(priceCalls).toBe(callsBeforeShip);
+
+    await type("shop-printify-address1", "1 Main St");
+    await type("shop-printify-city", "Dayton");
+    // Still incomplete (no region/zip yet) — still no re-price.
+    expect(priceCalls).toBe(callsBeforeShip);
+
+    await type("shop-printify-region", "oh");
+    await type("shop-printify-zip", "45402");
+    // Now complete — exactly one re-price call, and the real amount shows.
+    expect(priceCalls).toBe(callsBeforeShip + 1);
+    expect(q("guest-checkout-printify-shipping")).toBeTruthy();
+    expect(q("guest-checkout-printify-shipping").textContent).toContain("5.50");
+    expect(q("guest-checkout-total").textContent).toBe("$17.50");
+  });
+
   // Owner-reported bug: the "you'll collect this at Sit Happens" note kept
   // showing after choosing Ship To Me — nothing was actually being picked
   // up. It's only true for Pick Up In Store (the default).

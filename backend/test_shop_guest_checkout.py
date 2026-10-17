@@ -20,6 +20,7 @@ as the webhook would.
 """
 import contextlib
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
@@ -31,6 +32,7 @@ from domains.shop import guest as shop_guest
 from domains.shop import guest_routes
 
 TAG = "TEST_GUEST_SHOP"
+SHOP_SHIP_ADDRESS = {"address1": "1 Main St", "address2": "", "city": "Columbus", "region": "OH", "zip": "43215"}
 
 
 # ─────────────────────────────────────────────────────────────── harness
@@ -530,6 +532,48 @@ def test_the_preview_reserves_nothing_and_charges_nothing():
         fresh = run(server.db.pos_products.find_one({"id": p["id"]}, {"_id": 0}))
         assert float(fresh.get("stock_reserved") or 0) == 0.0
         assert run(server.db.shop_orders.count_documents({"lines.ref_id": p["id"]})) == 0
+
+
+# Real live bug (2026-10-17): the preview a guest saw before paying never
+# included Printify's own real shipping rate, even though the actual
+# charge (guest_checkout → shop_checkout.create_checkout) always did — a
+# guest could see $23.42 on this screen and then be charged more on
+# Stripe's own page. Found by reproducing live on sithappens.app and
+# reading the real network request, not from a unit test assumption.
+@contextlib.contextmanager
+def _printify_product(**kw):
+    defaults = dict(
+        sales_destination="printify", printify_product_id=f"pf-{uuid.uuid4().hex[:8]}",
+        printify_blueprint_id=6, printify_print_provider_id=99,
+        variants=[{"name": "Small", "printify_variant_id": "pf-var-s"}],
+    )
+    defaults.update(kw)
+    with _product(**defaults) as p:
+        yield p
+
+
+def test_the_preview_includes_printifys_real_shipping_once_ship_is_chosen():
+    with _public_shop_open(), _printify_product() as p:
+        variant_id = p["variants"][0]["id"]
+        with patch.object(server.printify_client, "estimate_cart_shipping_cents", AsyncMock(return_value=550)):
+            out = run(guest_cart_price(guest_routes.GuestCartIn(
+                items=[_item("product", p["id"], 1, variant_id=variant_id)],
+                printify_fulfillment=server.ShopPrintifyFulfillmentIn(
+                    method="ship", shipping_address=server.shop_shipping.ShopShippingAddressIn(**SHOP_SHIP_ADDRESS)),
+            ), _Req()))
+        assert out["printify_shipping_amount"] == 5.5
+        assert out["total"] == round(out["subtotal"] + out["tax_amount"] + 5.5, 2)
+
+
+def test_the_preview_charges_no_shipping_for_pickup_or_no_choice_yet():
+    with _public_shop_open(), _printify_product() as p:
+        variant_id = p["variants"][0]["id"]
+        for fulfillment in (None, server.ShopPrintifyFulfillmentIn(method="pickup", shipping_address=None)):
+            out = run(guest_cart_price(guest_routes.GuestCartIn(
+                items=[_item("product", p["id"], 1, variant_id=variant_id)],
+                printify_fulfillment=fulfillment,
+            ), _Req()))
+            assert out["printify_shipping_amount"] == 0.0
 
 
 # ═════════════════════════════════════════════════════ 6. who owns it

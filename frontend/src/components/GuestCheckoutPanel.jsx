@@ -63,12 +63,29 @@ export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onR
     gift_message: c.gift?.gift_message || null,
   })), [cart]);
 
+  // Owner: "shouldnt we be charging them shipping... its supposed to pull
+  // shipping directly from printify" — the price a guest sees before
+  // paying must include Printify's real rate once Ship To Me is chosen,
+  // same as the real charge (create_checkout) always has. Pickup is free
+  // to re-price immediately; "ship" only once the address is genuinely
+  // complete, so a half-typed street address never re-fires this (rate-
+  // limited) endpoint or Printify's own real-time rate lookup on every
+  // keystroke — this stays null (no re-price) until then.
+  const pricingFulfillment = useMemo(() => {
+    if (!cartHasPrintify) return null;
+    if (!printifyFulfillment || printifyFulfillment.method !== "ship") {
+      return { method: "pickup", shipping_address: null };
+    }
+    return shippingAddressComplete(printifyFulfillment.shipping_address) ? printifyFulfillment : null;
+  }, [cartHasPrintify, printifyFulfillment]);
+
   useEffect(() => {
+    if (cartHasPrintify && pricingFulfillment === null) return; // ship chosen, address still incomplete
     let cancelled = false;
     // A different basket is a different purchase, so it gets its own key.
     idemKey.current = null;
     setPriced(null); setBlocked(null); setErr("");
-    api.post("/public/shop/cart/price", { items: payload })
+    api.post("/public/shop/cart/price", { items: payload, printify_fulfillment: pricingFulfillment })
       .then(({ data }) => { if (!cancelled) setPriced(data); })
       .catch((e) => {
         if (cancelled) return;
@@ -84,7 +101,8 @@ export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onR
         }
       });
     return () => { cancelled = true; };
-  }, [payload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload, JSON.stringify(pricingFulfillment)]);
 
   const emailLooksReal = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
   // Merchandise is collected in person, so somebody has to be named on it —
@@ -206,6 +224,11 @@ export default function GuestCheckoutPanel({ cart, items, onClose, onSignIn, onR
                   <div className="flex justify-between text-[12px] text-shTextMuted">
                     <span>Subtotal</span><span>{money(priced.subtotal)}</span>
                   </div>
+                  {priced.printify_shipping_amount > 0 && (
+                    <div className="flex justify-between text-[12px] text-shTextMuted" data-testid="guest-checkout-printify-shipping">
+                      <span>Shipping</span><span>{money(priced.printify_shipping_amount)}</span>
+                    </div>
+                  )}
                   {priced.tax_amount > 0 && (
                     <div className="flex justify-between text-[12px] text-shTextMuted">
                       <span>Sales tax</span><span>{money(priced.tax_amount)}</span>

@@ -38,6 +38,12 @@ from domains.shop.cart import ShopCartItemIn, ShopPrintifyFulfillmentIn, _normal
 
 class GuestCartIn(BaseModel):
     items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
+    # Same choice GuestCheckoutIn.printify_fulfillment below carries through
+    # to the real charge — without it here, the price a guest sees before
+    # paying never includes Printify's own real shipping rate, even though
+    # the actual Stripe charge (create_checkout) always has, which is a
+    # worse bug than showing nothing: a total that is quietly wrong.
+    printify_fulfillment: Optional[ShopPrintifyFulfillmentIn] = None
 
 
 class GuestCheckoutIn(BaseModel):
@@ -74,7 +80,7 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
         await _s("_enforce_rate_limit")(
             request, key, _s("_client_ip")(request), limit=limit, window_seconds=window)
 
-    async def _priced_guest_cart(items) -> dict:
+    async def _priced_guest_cart(items, *, printify_fulfillment=None) -> dict:
         """Price a basket AS A GUEST, refusing anything a guest may not buy.
 
         Order matters: eligibility is decided before pricing, so a product
@@ -105,7 +111,7 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
                 "message": "Some items in your cart need an account.",
                 "blocked": blocked,
             })
-        return await _s("_price_shop_cart")(normalized, client_id=None)
+        return await _s("_price_shop_cart")(normalized, client_id=None, printify_fulfillment=printify_fulfillment)
 
     @api.post("/public/shop/cart/price")
     async def price_public_shop_cart(body: GuestCartIn, request: Request):
@@ -117,7 +123,7 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
         """
         await _guest_shop_open()
         await _limit(request, "public_shop_cart_price", limit=60, window=60)
-        priced = await _priced_guest_cart(body.items)
+        priced = await _priced_guest_cart(body.items, printify_fulfillment=body.printify_fulfillment)
         return {
             "lines": [
                 # BOTH halves of the line. line_total carries this line's
@@ -133,6 +139,11 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
             "subtotal": priced["subtotal"],
             "tax_amount": priced["tax_amount"],
             "tax_rate_pct": priced["tax_rate_pct"],
+            # Printify's own real shipping rate (owner request) — same field
+            # the signed-in preview and the real charge both use, computed
+            # by the exact same _price_shop_cart call. 0.0 for pickup, no
+            # choice yet, or a cart with no Printify line.
+            "printify_shipping_amount": priced["printify_shipping_amount"],
             "total": priced["total"],
         }
 
