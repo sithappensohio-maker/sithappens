@@ -260,6 +260,74 @@ def test_price_hidden_item_has_no_price_fields_and_guest_cart_disabled():
             assert row["guest_cart_allowed"] is False
 
 
+# ---------------------------------------------------------------------------
+# Real live bug (2026-10-17): a guest could never actually buy a Printify
+# item, no matter how `guest_cart_allowed` was set — `variants` and
+# `personalization_fields` were never on the public allowlist at all, so the
+# guest-facing item page could never show a size picker (or personalization
+# inputs), and "Add to Cart" silently went through with no variant_id.
+# Pricing then refused with "Choose a size for this item before adding it to
+# your cart" — reproduced live via the real public catalog + cart/price
+# endpoints, not just a unit assumption.
+# ---------------------------------------------------------------------------
+
+def _printify_product(**kw):
+    defaults = dict(
+        sales_destination="printify", printify_product_id=f"pf-{uuid.uuid4().hex[:8]}",
+        variants=[{"name": "Small", "printify_variant_id": "pf-var-s"},
+                  {"name": "Medium", "printify_variant_id": "pf-var-m"}],
+    )
+    defaults.update(kw)
+    return _product(**defaults)
+
+
+def test_printify_variants_are_exposed_so_a_guest_can_pick_a_size():
+    with _public_shop_on():
+        with _printify_product(guest_cart_allowed=True) as p:
+            items = run(server.get_public_shop_catalog(_req()))["items"]
+            row = _find(items, p["id"])
+            assert row is not None
+            assert row.get("variants"), "a guest can never pick a size without this"
+            names = {v["name"] for v in row["variants"]}
+            assert names == {"Small", "Medium"}
+            # The internal printify_variant_id is never a public concern —
+            # the catalog's own row id is what the guest picks and what
+            # checkout matches on.
+            assert all("printify_variant_id" not in v for v in row["variants"])
+
+
+def test_printify_personalization_fields_are_exposed_to_guests_too():
+    # printify_personalization_fields is DERIVED from printify_print_areas
+    # at create time (see test_printify_products.py's own
+    # test_create_derives_personalization_fields_from_print_areas) — never
+    # settable directly.
+    print_areas = [{
+        "variant_ids": ["pf-var-s"],
+        "placeholders": [{"position": "front", "images": [
+            {"id": "name-layer", "name": "Name", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.35,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Name", "layerType": "text"},
+            {"id": "phone-layer", "name": "Phone", "type": "text/svg", "width": 714, "x": 0.5, "y": 0.5,
+             "font_family": "Open Sans", "font_size": 200, "font_color": "#000000", "input_text": "Phone", "layerType": "text"},
+        ], "decoration_method": "dye-sublimation"}],
+        "background": "#ffffff", "canvas": False,
+    }]
+    with _public_shop_on():
+        with _printify_product(guest_cart_allowed=True, printify_print_areas=print_areas) as p:
+            assert p["printify_personalization_fields"] == ["Name", "Phone"]  # sanity on the create response
+            items = run(server.get_public_shop_catalog(_req()))["items"]
+            row = _find(items, p["id"])
+            assert row.get("personalization_fields") == ["Name", "Phone"]
+
+
+def test_printify_variant_price_hidden_but_size_still_pickable_when_price_hidden():
+    with _public_shop_on():
+        with _printify_product(guest_cart_allowed=True, show_public_price=False) as p:
+            items = run(server.get_public_shop_catalog(_req()))["items"]
+            row = _find(items, p["id"])
+            assert {v["name"] for v in row["variants"]} == {"Small", "Medium"}
+            assert all("price" not in v for v in row["variants"])
+
+
 def test_global_show_public_prices_false_strips_price_from_every_item():
     with _public_shop_on(show_public_prices=False):
         with _product() as p:

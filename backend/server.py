@@ -42535,10 +42535,16 @@ _PUBLIC_FIELDS_COMMON = {
 # display_price_each are both derived from effective_price, so they belong
 # here too — a price-hidden pack must not leak its per-credit/per-unit rate
 # through these side-channel fields.
-_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each", "shopify_price"}
+_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each", "shopify_price", "from_price"}
 # sales_destination/shopify_product_url are NEVER price-gated — View Options
-# must keep working even when pricing is hidden.
-_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url", "rating_avg", "rating_count", "shippable"}
+# must keep working even when pricing is hidden. variants/personalization_
+# fields are structural (which size exists, what text is needed), never
+# price-gated either — a guest must be able to pick a size and fill in
+# personalization even when show_public_price is off; each variant's own
+# `price` sub-field is stripped separately below when price is hidden, same
+# as every other price field.
+_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url", "rating_avg", "rating_count", "shippable",
+                          "variants", "personalization_fields"}
 # display_quantity/display_unit/display_dog_count/credits_per_display_unit
 # describe QUANTITY, not price (same precedent as raw `qty` below, already
 # unconditionally public) — safe to show even when pricing is hidden.
@@ -42598,6 +42604,12 @@ def _build_public_shop_item(raw_item: dict, *, global_show_public_prices: bool) 
     if purchase_state["show_public_price"]:
         field_set |= _PUBLIC_FIELDS_PRICE
     out = {k: raw_item[k] for k in field_set if k in raw_item}
+    if kind == "product" and not purchase_state["show_public_price"] and out.get("variants"):
+        # Variant IDENTITY (id/name) stays even with prices hidden — a guest
+        # still has to pick a size to add it to the cart at all — only each
+        # variant's own `price` is stripped, same redaction every other
+        # price field on this item already gets.
+        out["variants"] = [{k: v for k, v in variant.items() if k != "price"} for variant in out["variants"]]
     out["availability"] = _public_shop_item_availability(raw_item)
     out["publicly_visible"] = purchase_state["publicly_visible"]
     out["account_required"] = purchase_state["account_required"]
