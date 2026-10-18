@@ -190,6 +190,7 @@ MERGE_INSERT_ONLY = frozenset({
     "pos_sale_claims", "pos_sale_void_claims", "pos_sale_return_claims", "payment_topup_claims",
     "payment_void_claims", "refund_idempotency_claims", "shop_checkout_claims", "auto_receipt_email_claims",
     "financial_adjustment_claims", "tab_adjustment_claims", "stripe_terminal_payment_claims",
+    "booking_checkout_stripe_terminal_claims",
 })
 
 

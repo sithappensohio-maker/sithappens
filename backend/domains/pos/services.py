@@ -277,7 +277,7 @@ async def _link_card_tenders(sale_id: str, body, redeemed: list) -> None:
 # Tenders the till understands. A stay can be settled by "transfer" or by
 # prepaid credits; merchandise cannot be, so those two are handled explicitly
 # below rather than being allowed to fail validation deep inside the sale.
-_TILL_TENDERS = ("cash", "card", "check", "venmo", "paypal", "other", "gift_card")
+_TILL_TENDERS = ("cash", "card", "check", "venmo", "paypal", "other", "gift_card", "stripe_terminal")
 
 
 async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[dict]:
@@ -321,6 +321,18 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
     note = (getattr(body, "payment_notes", None) or "").strip()
     if method == "other" and not note:
         raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
+    # Card-reader checkout (owner, 2026-10-18) — whichever field actually
+    # supplied `tender` above is the one whose provider_ref goes with it;
+    # retail_payment_method/retail_payment_provider_ref are a genuinely
+    # separate real charge from payment_method/payment_provider_ref when
+    # both the stay AND the goods are being charged in the same checkout
+    # (one PaymentIntent cannot cover two differently-verified amounts —
+    # _create_sale_impl re-checks this tender's amount against Stripe's
+    # own amount_received for whichever PaymentIntent is given here).
+    provider_ref = None
+    if method == "stripe_terminal":
+        provider_ref = (getattr(body, "retail_payment_provider_ref", None) if getattr(body, "retail_payment_method", None)
+                         else getattr(body, "payment_provider_ref", None))
 
     sale = await create_sale(
         _sale_model(
@@ -332,7 +344,8 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
                 method=method, amount=total,
                 **({"tendered_amount": total} if method == "cash" else {}),
                 **({"gift_card_code": getattr(body, "gift_card_code", None)} if method == "gift_card" else {}),
-                **({"notes": note} if method == "other" else {}))],
+                **({"notes": note} if method == "other" else {}),
+                **({"provider_ref": provider_ref} if method == "stripe_terminal" else {}))],
             workstation_id=getattr(body, "workstation_id", None),
             idempotency_key=body.retail_idempotency_key,
         ),

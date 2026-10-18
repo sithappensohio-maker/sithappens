@@ -1265,9 +1265,21 @@ class CheckoutIn(BaseModel):
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
     expect_friends_family: Optional[bool] = None  # the screen's view; refused if the booking changed since
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "gift_card"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "gift_card", "stripe_terminal"]] = None
     gift_card_code: Optional[str] = Field(default=None, max_length=40)  # payment_method == "gift_card"
-    retail_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other", "gift_card"]] = None  # the goods alone, when the stay takes nothing (audit #24)
+    retail_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other", "gift_card", "stripe_terminal"]] = None  # the goods alone, when the stay takes nothing (audit #24)
+    # Card-reader checkout (owner, 2026-10-18: "checking out a dog doesnt
+    # offer our card reader") — the already-SUCCEEDED Stripe Terminal
+    # PaymentIntent id for each real charge the modal made before
+    # submitting. The server re-verifies both directly against Stripe (see
+    # _verify_and_claim_booking_stripe_terminal_charge) and consumes each
+    # exactly once; neither field is ever trusted blindly. Two separate
+    # fields because a checkout can owe money for the stay AND for goods
+    # bought at pickup in the same request, and those are two separate
+    # real charges — one PaymentIntent cannot cover both (each is
+    # re-verified against Stripe for an EXACT amount match).
+    payment_provider_ref: Optional[str] = Field(default=None, max_length=200)          # payment_method == "stripe_terminal"
+    retail_payment_provider_ref: Optional[str] = Field(default=None, max_length=200)   # retail_payment_method == "stripe_terminal"
     # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
     # the Dashboard checkout modal's "Partial / on tab" pill) — belt-and-
     # suspenders so a partial/tab checkout can never silently collapse into
@@ -1367,7 +1379,15 @@ class BookingFinancialAdjustmentIn(BaseModel):
 
 class BookingRefundIn(BaseModel):
     amount: float = Field(gt=0, le=100000)
-    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]
+    # "stripe_terminal" (owner, 2026-10-18) means "refund it back to the
+    # same card automatically" — _booking_refund_locked calls Stripe for
+    # real before any local record is written, and only when there's
+    # exactly one matching original card-reader charge on this booking's
+    # invoice to refund; anything messier (a group bill, more than one
+    # reader charge) refuses rather than guessing which charge to touch.
+    # Any other value here just describes how cash was physically handed
+    # back — it was never a claim about the ORIGINAL charge's method.
+    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other", "stripe_terminal"]
     reason: str = Field(min_length=3, max_length=500)
     # Payment rebuild Phase 1 — optional so existing/legacy callers behave
     # exactly as before. When supplied, `_booking_refund_locked` atomically
@@ -7243,9 +7263,41 @@ def _map_booking_method_to_payment_method(method: Optional[str]) -> str:
     enum. Generic manual `card` entries map to `other`; processor-backed card
     payments use the explicit Stripe methods in Payment.method."""
     m = _normalize_payment_method(method, store=True) if method else "other"
-    if m in ("cash", "check", "venmo", "paypal", "credits"):
+    if m in ("cash", "check", "venmo", "paypal", "credits", "stripe_terminal"):
         return m
     return "other"
+
+
+async def _verify_and_claim_booking_stripe_terminal_charge(*, booking_id: str, provider_ref: Optional[str], amount: float) -> str:
+    """Re-verifies a card-reader charge directly with Stripe before a
+    booking checkout is allowed to commit (owner, 2026-10-18: "checking
+    out a dog doesnt offer our card reader") — the same non-negotiable
+    discipline POS's own stripe_terminal tender already uses in
+    _create_pos_sale_impl, now required here too. The browser's claim that
+    a PaymentIntent succeeded, and for how much, is never trusted: this
+    always re-asks Stripe directly, then consumes the PaymentIntent
+    exactly once via a unique-indexed claim (booking_checkout_stripe_
+    terminal_claims) so the same swipe can never be applied to two
+    different checkouts — or replayed onto this one twice."""
+    _require_stripe_terminal_enabled()
+    if not (provider_ref or "").strip():
+        raise HTTPException(status_code=400, detail="Missing the card reader's payment reference — charge the card again.")
+    try:
+        pi = stripe.PaymentIntent.retrieve(provider_ref)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not verify the card payment: {exc.user_message or 'Stripe error.'}")
+    if pi.status != "succeeded":
+        raise HTTPException(status_code=400, detail="That card payment has not completed successfully.")
+    if abs(int(pi.amount_received or 0) - _stripe_amount_cents(amount)) > 1:
+        raise HTTPException(status_code=400, detail="The card payment amount doesn't match what's due today — charge the correct amount again.")
+    try:
+        await db.booking_checkout_stripe_terminal_claims.insert_one({
+            "id": str(uuid.uuid4()), "payment_intent_id": provider_ref, "booking_id": booking_id,
+            "amount": amount, "created_at": now_iso(),
+        })
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="This card payment was already applied to a different checkout.")
+    return provider_ref
 
 
 def _build_invoice_line_items_from_booking(booking: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -7529,12 +7581,21 @@ async def _write_checkout_payment_rows(
             # checkout (a manual-payment-method rule, not a pricing rule) —
             # only tendered_amount/change_given are single-booking-only.
             row_notes = payment_notes.strip() if (mapped_method == "other" and payment_notes and tender == "other") else ""
+            # A card-reader charge was already re-verified against Stripe
+            # before this booking was ever allowed to commit (see
+            # _verify_and_claim_booking_stripe_terminal_charge) — its
+            # PaymentIntent id rides along on the booking doc itself so the
+            # Payment row carries real processor info instead of None, the
+            # same shape Stripe Online payments already use.
+            is_stripe_terminal = mapped_method == "stripe_terminal"
             await _insert_payment_row({
                 "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": friends_family.payer_id(b),
                 "amount": round(cash_amount, 2), "method": mapped_method,
                 "is_credit": False, "date": row_day, "employee_id": user.get("id") if user else None,
                 "employee_name": (user.get("name") or user.get("email")) if user else None,
-                "processor": None, "processor_payment_id": None, "status": "completed",
+                "processor": "stripe_terminal" if is_stripe_terminal else None,
+                "processor_payment_id": b.get("payment_provider_ref") if is_stripe_terminal else None,
+                "status": "completed",
                 "notes": row_notes, "refunded_amount": 0.0, "source": None,
                 "booking_id": bid, "ledger_id": None,
                 "idempotency_ref": f"{invoice_id}:{bid}:cash",
@@ -7547,6 +7608,7 @@ async def _write_checkout_payment_rows(
 
 async def _apply_refund_to_invoice(
     *, booking_id: str, amount: float, method: str, reason: str, event_id: str, user: dict, ts: str,
+    processor: Optional[str] = None, processor_payment_id: Optional[str] = None,
 ) -> None:
     """Called from _booking_refund_locked, inside its existing try/rollback.
     Appends a negative Payment row keyed to the refund's own event_id (fresh
@@ -7554,7 +7616,13 @@ async def _apply_refund_to_invoice(
     across separate refunds), and bumps the canonical invoice's
     refunded_total/status. invoice.total/amount_paid/balance are left
     untouched, mirroring how the booking's own fields already behave on
-    refund."""
+    refund.
+
+    `processor`/`processor_payment_id` (owner, 2026-10-18) — set only when
+    `_booking_refund_locked` already completed a real Stripe refund for a
+    card-reader charge; the Stripe Refund id travels onto this row the same
+    way an original stripe_terminal charge's PaymentIntent id does on its
+    own Payment row."""
     invoice = await db.invoices.find_one({"booking_ids": booking_id}, {"_id": 0})
     if not invoice:
         return  # no Phase-1 invoice exists for this booking (e.g. pre-Phase-1 checkout)
@@ -7566,7 +7634,7 @@ async def _apply_refund_to_invoice(
         "is_credit": False, "date": business_today().isoformat(),
         "employee_id": user.get("id") if user else None,
         "employee_name": (user.get("name") or user.get("email")) if user else None,
-        "processor": None, "processor_payment_id": None, "status": "completed",
+        "processor": processor, "processor_payment_id": processor_payment_id, "status": "completed",
         "notes": reason, "refunded_amount": 0.0, "source": None,
         "booking_id": booking_id, "ledger_id": None,
         "idempotency_ref": ref, "created_at": ts, "updated_at": ts,
@@ -9170,6 +9238,7 @@ async def _check_out_locked(
                 update["actual_price"] = remaining_cash
                 update["credit_shortfall"] = credit_shortfall
                 update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
+                update["payment_provider_ref"] = body.payment_provider_ref
                 use_credits = False
                 had_credit = False
         elif prepaid:
@@ -9527,6 +9596,7 @@ async def _check_out_locked(
     if not is_paid_today and (update.get("actual_price") or 0) > 0:
         if body.payment_method:
             update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
+            update["payment_provider_ref"] = body.payment_provider_ref
         if body.payment_status:
             update["payment_status"] = body.payment_status
         elif "payment_status" not in update and not booking.get("payment_status"):
@@ -9569,6 +9639,7 @@ async def _check_out_locked(
             update["paid_at"] = ts
         if body.payment_method:
             update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
+            update["payment_provider_ref"] = body.payment_provider_ref
 
     # Mixed credits + cash: credits may cover the base visit while add-ons,
     # overages, tips, or uncovered extra nights are paid today. Preserve the
@@ -9589,6 +9660,8 @@ async def _check_out_locked(
                 body.payment_method, booking.get("cash_payment_method"))
             if chosen_tender:
                 update["cash_payment_method"] = chosen_tender
+                if chosen_tender == "stripe_terminal":
+                    update["payment_provider_ref"] = body.payment_provider_ref
 
     # Finalize cash-basis bookkeeping fields. `actual_price` is what the visit
     # was worth/charged; `cash_revenue` is money collected; `balance_due` is AR.
@@ -9637,6 +9710,14 @@ async def _check_out_locked(
         )
         if not drawer_open:
             raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+    if resolved_tender == "stripe_terminal" and amount_collected_now > 0:
+        # The reader collects the full amount due today, never a partial/tab
+        # payment — a split card-reader-plus-tab charge would mean this one
+        # PaymentIntent no longer matches amount_collected_now by construction.
+        if merged_money.get("payment_status") == "paid_partial":
+            raise HTTPException(status_code=400, detail="The card reader can only collect the full amount due today, not a partial payment.")
+        update["payment_provider_ref"] = await _verify_and_claim_booking_stripe_terminal_charge(
+            booking_id=booking_id, provider_ref=update.get("payment_provider_ref"), amount=amount_collected_now)
 
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
@@ -12562,6 +12643,42 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             raise HTTPException(status_code=409, detail=f"Refund cannot exceed the remaining refundable cash (${refundable:.2f}).")
         await _require_register_day_open(business_today().isoformat())
 
+        # Card-reader refund (owner, 2026-10-18) — "refund it back to the
+        # same card" means a REAL Stripe refund, done before any local
+        # record is written (fail closed: if Stripe refuses, nothing here
+        # is touched). Only for the simple, common case: exactly one
+        # original stripe_terminal charge on this booking's invoice.
+        # Anything messier (a group bill, more than one reader charge on
+        # the same invoice) refuses rather than guessing which charge to
+        # touch — staff refund it directly in Stripe and record it here
+        # as a plain refund instead.
+        stripe_refund_id: Optional[str] = None
+        refund_method = _normalize_payment_method(body.payment_method, store=True)
+        if refund_method == "stripe_terminal":
+            invoice_id_for_stripe = (invoice_for_refund_ceiling or {}).get("id")
+            if not invoice_id_for_stripe:
+                bill_lookup = await db.invoices.find_one({"booking_ids": booking_id}, {"_id": 0, "id": 1})
+                invoice_id_for_stripe = (bill_lookup or {}).get("id")
+            candidates = await db.payments.find(
+                {"invoice_id": invoice_id_for_stripe, "method": "stripe_terminal", "amount": {"$gt": 0},
+                 "status": "completed", "processor_payment_id": {"$ne": None}},
+                {"_id": 0, "processor_payment_id": 1},
+            ).to_list(5)
+            if len(candidates) != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not automatically find the one card-reader charge to refund — refund it directly in Stripe and record it here as a plain refund instead.")
+            payment_intent_id = candidates[0]["processor_payment_id"]
+            try:
+                stripe_refund = stripe.Refund.create(
+                    payment_intent=payment_intent_id, amount=_stripe_amount_cents(amount),
+                    idempotency_key=f"booking-refund-{booking_id}-{body.refund_idempotency_key or uuid.uuid4().hex}",
+                )
+                stripe_refund_id = stripe_refund.id
+            except Exception as exc:
+                logger.warning("Stripe refund failed for booking %s PaymentIntent %s: %s", booking_id, payment_intent_id, exc)
+                raise HTTPException(status_code=400, detail="Could not refund the card automatically — try again, or refund it directly in Stripe.") from exc
+
         # Preserve the original invoice and original payment exactly as checked out.
         # The refund is a new negative cash event on today's books. Rewriting the
         # old booking would move historical revenue and then the refund row would
@@ -12609,6 +12726,8 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
                 await _apply_refund_to_invoice(
                     booking_id=booking_id, amount=amount, method=body.payment_method,
                     reason=body.reason, event_id=event_id, user=user, ts=now_iso(),
+                    processor="stripe_terminal" if stripe_refund_id else None,
+                    processor_payment_id=stripe_refund_id,
                 )
             except Exception as exc:
                 logger.warning("invoice refund-payment recording failed for booking %s: %s", booking_id, exc)
@@ -30283,6 +30402,7 @@ BACKUP_COLLECTIONS = [
     "payment_topup_claims", "payment_void_claims", "refund_idempotency_claims",
     "shop_checkout_claims", "auto_receipt_email_claims",
     "financial_adjustment_claims", "tab_adjustment_claims", "stripe_terminal_payment_claims",
+    "booking_checkout_stripe_terminal_claims",
     # The hard-delete log (domains/backup/deletion_log.py). A merge restore reads it so it does not bring back a
     # row removed after the backup was taken; a replace restores it with the rest.
     "deleted_records",
@@ -34343,6 +34463,13 @@ async def startup():
         # pre-check in _create_pos_sale_impl, is the actual guarantee against
         # the same reader charge paying for two different sales.
         (db.stripe_terminal_payment_claims, "payment_intent_id", {"unique": True}),
+        # Booking checkout's own card-reader tender (owner, 2026-10-18) — same
+        # exactly-once guarantee as the POS one above, kept in its own
+        # collection: the POS one's orphan-charge webhook handler assumes
+        # every claim belongs to a pos_sale, and conflating the two would
+        # make it misreport every successful booking-checkout swipe as an
+        # orphaned charge (see _handle_terminal_reader_action_succeeded).
+        (db.booking_checkout_stripe_terminal_claims, "payment_intent_id", {"unique": True}),
         # Simple retail stock tracking.
         (db.pos_products, "track_inventory", {}),
         (db.inventory_movements, "product_id", {}),
@@ -39423,12 +39550,22 @@ async def _handle_terminal_reader_action_succeeded(obj: dict) -> None:
     # completed sale" case this handler exists for actually means.
     claimed = await db.stripe_terminal_payment_claims.find_one({"payment_intent_id": payment_intent_id}, {"_id": 0, "pos_sale_id": 1})
     sale = (await db.pos_sales.find_one({"id": claimed["pos_sale_id"]}, {"_id": 0, "status": 1})) if claimed else None
-    if not sale or sale.get("status") != "completed":
-        logger.warning(
-            "Stripe Terminal reader charge %s succeeded but is not attached to a completed POS sale — "
-            "it may still be mid-checkout, or it may be an orphaned charge that needs manual review.",
-            payment_intent_id,
-        )
+    if sale and sale.get("status") == "completed":
+        return
+    # Same charge, same question, for a booking checkout's own card-reader
+    # tender (owner, 2026-10-18) — a separate claims collection (see its
+    # index comment), so checked separately rather than folded into the
+    # POS claim lookup above.
+    booking_claim = await db.booking_checkout_stripe_terminal_claims.find_one(
+        {"payment_intent_id": payment_intent_id}, {"_id": 0, "booking_id": 1})
+    booking = (await _booking_rows_anywhere({"id": booking_claim["booking_id"]}, {"_id": 0, "id": 1, "payment_provider_ref": 1}, limit=1)) if booking_claim else None
+    if booking and booking[0].get("payment_provider_ref") == payment_intent_id:
+        return
+    logger.warning(
+        "Stripe Terminal reader charge %s succeeded but is not attached to a completed sale or checkout — "
+        "it may still be mid-checkout, or it may be an orphaned charge that needs manual review.",
+        payment_intent_id,
+    )
 
 
 async def _handle_checkout_session_paid_event(session_obj: dict) -> None:

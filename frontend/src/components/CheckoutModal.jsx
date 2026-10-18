@@ -9,6 +9,7 @@ import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { useAuth } from "../lib/auth";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
+import { useStripeTerminalCharge } from "../lib/useStripeTerminalCharge";
 import ReceiptLogo from "./ReceiptLogo";
 
 /**
@@ -45,6 +46,50 @@ function StepNumber({ n, tone = "blue" }) {
     >
       {n}
     </span>
+  );
+}
+
+// One card-reader charge: idle "Charge $X" button → waiting-for-the-reader
+// status (with Cancel) → succeeded confirmation, or a declined/timed-out
+// error with Retry. Two of these render side by side when a checkout owes
+// money for both the stay and pickup merchandise — see the stripe_terminal
+// branch above for why that's two separate real charges, not one.
+function TerminalChargeControl({ label, amount, charge, testIdSuffix }) {
+  const c = charge.charge;
+  if (!c) {
+    return (
+      <button type="button" onClick={() => charge.start(amount)} data-testid={`checkout-terminal-charge-${testIdSuffix}`}
+              className="w-full min-h-[44px] rounded-xl border border-shGreen/50 text-shGreen text-[12px] font-black uppercase tracking-widest">
+        <i className="fas fa-credit-card mr-1.5"/>{label} · ${amount.toFixed(2)} on the reader
+      </button>
+    );
+  }
+  if (c.phase === "succeeded") {
+    return (
+      <p className="text-[13px] font-black text-shGreen" data-testid={`checkout-terminal-status-${testIdSuffix}`}>
+        <i className="fas fa-check-circle mr-1.5"/>{label} — ${c.amount.toFixed(2)} charged
+      </p>
+    );
+  }
+  if (c.phase === "error") {
+    return (
+      <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2.5" data-testid={`checkout-terminal-status-${testIdSuffix}`}>
+        <p className="text-[13px] text-red-400 font-black">{c.error}</p>
+        <button type="button" onClick={() => charge.start(amount)} data-testid={`checkout-terminal-retry-${testIdSuffix}`}
+                className="mt-1.5 text-[11px] font-black uppercase tracking-widest text-shGreen">
+          Try again
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-shOrange/40 bg-shOrange/5 p-2.5" data-testid={`checkout-terminal-status-${testIdSuffix}`}>
+      <p className="text-[13px] text-shOrange font-black"><i className="fas fa-circle-notch fa-spin mr-1.5"/>Waiting for the card — ${c.amount.toFixed(2)}</p>
+      <button type="button" onClick={() => charge.cancel()} data-testid={`checkout-terminal-cancel-${testIdSuffix}`}
+              className="text-[11px] font-black uppercase tracking-widest text-gray-400">
+        Cancel
+      </button>
+    </div>
   );
 }
 
@@ -277,6 +322,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [ffErr, setFfErr] = useState("");
   const [ffConfirmClose, setFfConfirmClose] = useState(false);
   const [payMethod, setPayMethod] = useState("cash");
+  // Card-reader checkout (owner, 2026-10-18: "checking out a dog doesnt
+  // offer our card reader") — a real Stripe Terminal charge, not just a
+  // label, so it needs the real charge-and-poll flow. Up to TWO separate
+  // real charges when the stay AND pickup merchandise both owe money in
+  // the same checkout — one PaymentIntent cannot cover both (the server
+  // re-verifies each against Stripe for an exact amount match; see
+  // CheckoutIn.payment_provider_ref / retail_payment_provider_ref).
+  const stayCharge = useStripeTerminalCharge();
+  const goodsCharge = useStripeTerminalCharge();
   // "Other" (Zelle, Cash App…) needs a note saying what it was, as at the Register.
   const [otherNote, setOtherNote] = useState("");
   // Paying a pickup with a gift card. The balance is checked while the
@@ -679,6 +733,42 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const goodsOnlyPayment = useCredits && chargedToday <= 0 && shopTotal > 0 && !isFF;
   const payPickerShown = (!useCredits || chargedToday > 0 || shopTotal > 0) && !isFF;
 
+  // Card-reader checkout — up to two real charges, computed the same way
+  // submit() decides which body field(s) actually carry `payMethod`: the
+  // stay (payment_method) whenever it's being charged at all and isn't
+  // goods-only, and the goods (retail_payment_method) whenever there are
+  // any and they're owed. The reader only ever collects the FULL amount
+  // due today — see the "Partial / on tab" toggle below, which resets off
+  // stripe_terminal the instant it's chosen (one swipe can't be split
+  // between "paid now" and "on the tab").
+  const stayChargeAmount = (payPickerShown && !goodsOnlyPayment && chargedToday > 0.005) ? chargedToday : 0;
+  const goodsChargeAmount = (shopLines.length > 0 && shopTotal > 0.005) ? shopTotal : 0;
+  const stayChargeOk = stayChargeAmount <= 0 || stayCharge.charge?.phase === "succeeded";
+  const goodsChargeOk = goodsChargeAmount <= 0 || goodsCharge.charge?.phase === "succeeded";
+  const terminalReady = payMethod !== "stripe_terminal" || (stayChargeOk && goodsChargeOk);
+
+  // If something changes the amount due AFTER a reader charge already
+  // succeeded (an add-on removed, a price edited), that charge no longer
+  // matches what it would be applied to — invalidate it rather than let a
+  // stale PaymentIntent get sent for a now-wrong amount. The server would
+  // catch the mismatch anyway (it re-verifies against Stripe's own
+  // amount_received), but resetting here gives a clear reason immediately
+  // instead of a refusal after tapping Complete.
+  useEffect(() => {
+    if (stayCharge.charge?.phase === "succeeded" && Math.abs(stayCharge.charge.amount - stayChargeAmount) > 0.005) {
+      stayCharge.reset();
+      toast("The amount due changed — charge the card again.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stayChargeAmount]);
+  useEffect(() => {
+    if (goodsCharge.charge?.phase === "succeeded" && Math.abs(goodsCharge.charge.amount - goodsChargeAmount) > 0.005) {
+      goodsCharge.reset();
+      toast("The amount due for the goods changed — charge the card again.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goodsChargeAmount]);
+
   useEffect(() => {
     let alive = true;
     api.get("/pos/catalog", { params: booking.client_id ? { client_id: booking.client_id } : {} })
@@ -732,6 +822,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     }
     if (payMethod === "other" && payPickerShown && !otherNote.trim()) {
       setErr("A note is required when the payment method is Other.");
+      return;
+    }
+    // Belt-and-suspenders beyond the Complete button's own disabled state
+    // (see terminalReady) — never build/send a body that claims
+    // stripe_terminal for a charge that hasn't actually succeeded yet.
+    if (payMethod === "stripe_terminal" && !terminalReady) {
+      setErr("Charge the card on the reader before completing checkout.");
       return;
     }
     setBusy(true);
@@ -791,8 +888,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.retail_lines = shopLines.map((l) => ({ kind: "retail", product_id: l.item.id, qty: l.qty }));
         body.retail_idempotency_key = retailKey;
         // Merchandise always takes real money, whatever the stay is doing.
-        if (goodsOnlyPayment) body.retail_payment_method = payMethod;
-        else body.payment_method = payMethod;
+        if (goodsOnlyPayment) {
+          body.retail_payment_method = payMethod;
+        } else {
+          body.payment_method = payMethod;
+          // A card-reader charge for the goods is a SEPARATE real charge
+          // from the stay's (see stayCharge/goodsCharge above) — give it
+          // its own method field explicitly rather than let the server
+          // fall back to (and wrongly try to apply) the stay's own
+          // PaymentIntent, which is for a different amount entirely.
+          if (payMethod === "stripe_terminal" && goodsChargeAmount > 0) body.retail_payment_method = payMethod;
+        }
       }
       if (btSessions.length) {
         body.board_train_resolution = btSessions.map((s) => ({
@@ -851,6 +957,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.payment_status = "paid";
         body.amount_paid = Number(chargedToday.toFixed(2));
       }
+      // Card-reader checkout — attach each already-succeeded charge's real
+      // PaymentIntent id to whichever method field actually claims
+      // stripe_terminal. The server re-verifies both against Stripe itself
+      // (see _verify_and_claim_booking_stripe_terminal_charge and
+      // ring_pickup_merchandise) — these are never trusted blindly.
+      if (body.payment_method === "stripe_terminal") body.payment_provider_ref = stayCharge.charge?.paymentIntentId || null;
+      if (body.retail_payment_method === "stripe_terminal") body.retail_payment_provider_ref = goodsCharge.charge?.paymentIntentId || null;
       // The server refuses the checkout if the booking stopped (or started)
       // being friends & family since this screen read it.
       body.expect_friends_family = isFF;
@@ -1573,8 +1686,22 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           {payPickerShown && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
-              <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
+              <option value="cash">Cash</option><option value="card">Card</option>
+              {/* Partial/tab mode can't be split against one real card
+                  swipe — the reader option only appears when paying in full. */}
+              {payMode !== "partial" && <option value="stripe_terminal">Card (Reader)</option>}
+              <option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
             </select>
+          )}
+          {payMethod === "stripe_terminal" && payPickerShown && (
+            <div className="mb-3 space-y-2" data-testid="checkout-terminal-tender">
+              {stayChargeAmount > 0 && (
+                <TerminalChargeControl label="Charge the stay" amount={stayChargeAmount} charge={stayCharge} testIdSuffix="stay" />
+              )}
+              {goodsChargeAmount > 0 && (
+                <TerminalChargeControl label="Charge the merchandise" amount={goodsChargeAmount} charge={goodsCharge} testIdSuffix="goods" />
+              )}
+            </div>
           )}
           {payMethod === "other" && payPickerShown && (
             <input value={otherNote} onChange={(e) => setOtherNote(e.target.value)} maxLength={500}
@@ -1674,7 +1801,14 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                   <div className="text-[12px] opacity-80 mt-0.5">Client paid the whole ticket today.</div>
                 </button>
                 <button type="button"
-                        onClick={()=>{ setPayMode("partial"); if (!amountPaid) setAmountPaid(""); }}
+                        onClick={()=>{
+                          setPayMode("partial");
+                          if (!amountPaid) setAmountPaid("");
+                          // The reader collects the full amount, never a split —
+                          // drop any in-progress/succeeded reader charge rather
+                          // than let it silently go unused against a tab balance.
+                          if (payMethod === "stripe_terminal") { setPayMethod("cash"); stayCharge.reset(); goodsCharge.reset(); }
+                        }}
                         data-testid="checkout-pay-mode-partial"
                         className={`p-3 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
                   <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
@@ -1970,9 +2104,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         )}
 
         <div className="flex flex-col gap-3">
-          <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
+          <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0 || !terminalReady} data-testid="confirm-checkout"
                   className="w-full bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-            {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
+            {busy ? "Checking out…" : !terminalReady ? "Charge the card on the reader first" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
           </button>
           <div className="flex items-center justify-between gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
