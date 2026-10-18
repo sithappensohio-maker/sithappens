@@ -474,6 +474,20 @@ describe("the storefront landing", () => {
     expect(text()).toContain("Good things for good dogs.");
   });
 
+  // Owner: "cant set an image for the gift card or gear categories unless
+  // im missing where they go" — a built-in department (Gear here) had no
+  // image field of its own at all, only ever showing a photo from one of
+  // its own items (none of this fixture's have one, so it's a placeholder
+  // icon without the override). shop_page.department_images is that field.
+  test("a configured department image overrides the fallback placeholder from its first item", () => {
+    render({ shopPage: { department_images: { gear: "dept-custom-img" } } });
+    const tile = byTestId("shop-dept-tile-gear");
+    expect(tile.querySelector("i.fa-camera")).toBeFalsy();
+    const img = tile.querySelector("img");
+    expect(img).toBeTruthy();
+    expect(img.src).toContain("dept-custom-img");
+  });
+
   test("Online School keeps a spotlight of its own", () => {
     render();
     expect(byTestId("shop-school-spotlight")).toBeTruthy();

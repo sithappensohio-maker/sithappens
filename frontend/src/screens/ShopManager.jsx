@@ -24,6 +24,7 @@ import {
   catalogProfitSummary,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
 } from "../lib/shopManagerPolish";
+import { DEPARTMENTS } from "../lib/shopDepartments";
 
 /* ============================================================================
  * Shop Manager — the ONE place to create, edit, organize, price, display,
@@ -2433,6 +2434,7 @@ function ShopSettingsTab() {
   const [sp, setSp] = useState(null); // shop_page draft
   const [originalBannerImageId, setOriginalBannerImageId] = useState(null);
   const [originalSectionImageIds, setOriginalSectionImageIds] = useState({});
+  const [originalDepartmentImageIds, setOriginalDepartmentImageIds] = useState({});
 
   const load = () => {
     setLoading(true);
@@ -2444,6 +2446,9 @@ function ShopSettingsTab() {
         const orig = {};
         for (const key of SHOP_SETTINGS_SECTION_KEYS) orig[key] = (shopPage.sections || {})[key]?.image_id || null;
         setOriginalSectionImageIds(orig);
+        const origDept = {};
+        for (const d of DEPARTMENTS) origDept[d.key] = (shopPage.department_images || {})[d.key] || null;
+        setOriginalDepartmentImageIds(origDept);
       })
       .catch(() => toast.error("Could not load shop settings"))
       .finally(() => setLoading(false));
@@ -2452,6 +2457,13 @@ function ShopSettingsTab() {
 
   const setField = (patch) => setSp((s) => ({ ...s, ...patch }));
   const setSection = (key, patch) => setSp((s) => ({ ...s, sections: { ...(s.sections || {}), [key]: { ...((s.sections || {})[key] || {}), ...patch } } }));
+  // The 5 built-in departments (Gear, Training, Online School, Prepaid
+  // Visits, Gift Cards) have no category record of their own to hold an
+  // image on — unlike a self-service department, they only ever showed
+  // whatever photo their first item happened to have, with no admin
+  // control over it (owner: "cant set an image for the gift card or gear
+  // categories"). This is that control.
+  const setDepartmentImage = (key, imageId) => setSp((s) => ({ ...s, department_images: { ...(s.department_images || {}), [key]: imageId } }));
 
   // Same up/down-arrow reorder Categories already uses, instead of the raw
   // "Order" number field this used to be — a plain integer input meant an
@@ -2491,6 +2503,11 @@ function ShopSettingsTab() {
       for (const key of SHOP_SETTINGS_SECTION_KEYS) {
         const origId = originalSectionImageIds[key];
         const nextId = sp.sections?.[key]?.image_id || null;
+        if (origId && origId !== nextId) api.delete(`/shop/media/${origId}`).catch(() => {});
+      }
+      for (const d of DEPARTMENTS) {
+        const origId = originalDepartmentImageIds[d.key];
+        const nextId = sp.department_images?.[d.key] || null;
         if (origId && origId !== nextId) api.delete(`/shop/media/${origId}`).catch(() => {});
       }
       toast.success("Shop settings saved");
@@ -2615,6 +2632,25 @@ function ShopSettingsTab() {
             </div>
           );
         })}
+      </div>
+
+      {/* The 5 built-in department tiles under the Shop's hero (Gear,
+          Training, Online School, Prepaid Visits, Gift Cards) — a
+          self-service department already gets its image from its own
+          category above; these never had anywhere to set one at all,
+          always just showing whatever photo their first item had. */}
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-4">
+        <div>
+          <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Department Tile Images</p>
+          <p className="text-[11px] text-shTextMuted mt-1">Optional. Left blank, a department's tile shows a photo from one of its own items instead.</p>
+        </div>
+        {DEPARTMENTS.map((d) => (
+          <div key={d.key} className="border-t border-shBorder pt-3 first:border-t-0 first:pt-0 flex items-center gap-3" data-testid={`sm-department-image-row-${d.key}`}>
+            <span className="flex-1 text-shText text-sm font-bold">{d.label}</span>
+            <ShopImageUpload imageId={sp.department_images?.[d.key] || null} originalImageId={originalDepartmentImageIds[d.key]}
+                             onChange={(id) => setDepartmentImage(d.key, id)} />
+          </div>
+        ))}
       </div>
 
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">

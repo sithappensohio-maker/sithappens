@@ -82,7 +82,19 @@ function Hero({ shopPage, departments, onSelectDepartment, items, isPublic, cate
              className="grid grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-3 mt-5"
              data-testid="shop-department-tiles">
           {departments.map((d, i) => (
-            <DepartmentTile key={d.key} dept={d} onSelect={onSelectDepartment}
+            <DepartmentTile key={d.key}
+                            /* A self-service department (effectiveDepartments)
+                               already carries its own coverImageId from its
+                               category record — the 5 built-in departments
+                               (Gear, Training, Online School, Prepaid Visits,
+                               Gift Cards) never had one at all, just whatever
+                               photo its first item happened to have (see
+                               `coverItem` below), with no admin control over
+                               it. shop_page.department_images (Shop Manager →
+                               Shop Settings) fills that gap without touching
+                               the fallback for anything left unset. */
+                            dept={{ ...d, coverImageId: shopPage?.department_images?.[d.key] || d.coverImageId || null }}
+                            onSelect={onSelectDepartment}
                             isPublic={isPublic} coverItem={itemsInDepartment(items, d.key, categories)[0]}
                             /* An odd number of departments leaves the last
                                tile alone in a two-up row with a hole beside
@@ -111,7 +123,11 @@ function DepartmentTile({ dept, coverItem, onSelect, isPublic, wide }) {
                        hover:border-shPrimary/50 transition focus-visible:outline focus-visible:outline-2
                        focus-visible:outline-offset-2 focus-visible:outline-shPrimary`}>
       <div className="relative">
-        <ProductImage item={cover} surface="thumb" ratio="16 / 9" isPublic={isPublic} alt=""
+        {/* surface="card" (400px), not "thumb" (128px, meant for ~64px list
+            rows/cart lines) — these tiles render at 200-370px wide across
+            the 2/5-column grid below, so "thumb" was a 128px file stretched
+            nearly 3x, same root cause as the hero banner's own blur fix. */}
+        <ProductImage item={cover} surface="card" ratio="16 / 9" isPublic={isPublic} alt=""
                       className="!rounded-none group-hover:[&>img]:scale-[1.04]" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
       </div>
