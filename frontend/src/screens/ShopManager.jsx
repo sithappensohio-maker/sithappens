@@ -596,6 +596,39 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                     ) : (
                       <>
                         <button onClick={() => onEditItem(it)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Edit</button>
+                        {/* One quick, reversible, always-visible action per
+                            kind — Archive for a physical product (restorable,
+                            see restoreProduct above), Hide/Activate for a
+                            pack or program (no archive concept for those).
+                            This used to only exist for packs/programs; a
+                            physical product had no one-click way to pull
+                            itself from Shop/Register short of opening Edit
+                            and unchecking both visibility boxes, or getting
+                            bounced off Delete into this same action anyway
+                            (see archiveFromDeleteFlow). */}
+                        {it.kind === "physical_product" ? (
+                          <button onClick={() => archiveProduct(it)} disabled={busyId === it.id}
+                                  data-testid={`sm-archive-${it.id}`}
+                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+                            Archive
+                          </button>
+                        ) : (
+                          <button onClick={() => toggleHidePackOrProgram(it)} disabled={busyId === it.id}
+                                  data-testid={`sm-toggle-active-${it.id}`}
+                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+                            {it.active ? "Hide" : "Activate"}
+                          </button>
+                        )}
+                        {/* Delete is always inline, never behind the More
+                            menu, for every kind — a physical product already
+                            had this (owner-reported: several row actions once
+                            pushed Delete off-screen behind a menu, which read
+                            as "no way to delete this"); a pack/program had
+                            the exact same button buried in the menu instead,
+                            same bug by a different name. */}
+                        <button onClick={() => openDeleteProduct(it)} disabled={busyId === it.id}
+                                data-testid={`sm-delete-${it.id}`}
+                                className="text-red-400 text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Delete</button>
                         <RowActionsMenu testIdPrefix={`sm-row-${it.id}`} actions={[
                           { key: "duplicate", label: "Duplicate", disabled: busyId === it.id,
                             testId: `sm-duplicate-${it.id}`, onClick: () => duplicateItem(it) },
@@ -608,27 +641,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                             { key: "adjust-stock", label: "Adjust Stock", testId: `sm-adjust-stock-${it.id}`, onClick: () => openAdjustStock(it) },
                             { key: "stock-history", label: "Stock History", testId: `sm-stock-history-${it.id}`, onClick: () => openStockHistory(it) },
                           ] : []),
-                          // Packs/programs get Delete here, in the menu — physical
-                          // products already have their own always-visible red
-                          // Delete button, so adding a second one here would just
-                          // duplicate it. Same permanently-delete-only-with-no-
-                          // real-history rule as that one (owner, 2026-10-17:
-                          // "can we make it so any item in the shop can be
-                          // deleted so i can clean up unused stuff").
-                          ...(it.kind !== "physical_product" ? [
-                            { key: "delete", label: "Delete", testId: `sm-delete-${it.id}`, onClick: () => openDeleteProduct(it) },
-                          ] : []),
                         ]} />
-                        {it.kind === "physical_product" ? (
-                          <button onClick={() => openDeleteProduct(it)} data-testid={`sm-delete-${it.id}`}
-                                  className="text-red-400 text-[11px] font-black uppercase tracking-widest">Delete</button>
-                        ) : (
-                          <button onClick={() => toggleHidePackOrProgram(it)} disabled={busyId === it.id}
-                                  data-testid={`sm-toggle-active-${it.id}`}
-                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
-                            {it.active ? "Hide" : "Activate"}
-                          </button>
-                        )}
                       </>
                     )}
                   </div>

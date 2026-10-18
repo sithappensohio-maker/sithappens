@@ -170,12 +170,16 @@ describe("the Shop Manager survives being rendered", () => {
   // Label, Receive/Adjust Stock, Stock History) pushed the row so wide
   // that Delete scrolled off-screen — read as "there's no way to delete
   // this". Edit and Delete must always be reachable with no "More" menu
-  // and no horizontal scrolling.
-  test("Edit and Delete are always inline, never hidden behind the More menu", async () => {
+  // and no horizontal scrolling, for every item kind — a pack/program
+  // used to bury Delete in the More menu instead, same bug by a
+  // different name (see "Delete for packs and programs" below).
+  test("Edit and Delete are always inline, never hidden behind the More menu, for every item kind", async () => {
     await mount(<ShopManager />);
-    const row = byTestId("sm-item-row-p1");
-    expect(row.querySelector('[data-testid="sm-delete-p1"]')).toBeTruthy();
-    expect([...row.querySelectorAll("button")].some((b) => b.textContent === "Edit")).toBe(true);
+    for (const id of ["p1", "k1", "t1"]) {
+      const row = byTestId(`sm-item-row-${id}`);
+      expect(row.querySelector(`[data-testid="sm-delete-${id}"]`)).toBeTruthy();
+      expect([...row.querySelectorAll("button")].some((b) => b.textContent === "Edit")).toBe(true);
+    }
     // Not yet opened — Duplicate lives inside the collapsed menu.
     expect(byTestId("sm-duplicate-p1")).toBeFalsy();
     await act(async () => { byTestId("sm-row-p1-more").click(); });
@@ -187,22 +191,24 @@ describe("the Shop Manager survives being rendered", () => {
 // deleted so i can clean up unused stuff" — screenshot showed several
 // training programs and prepaid packs stuck in the table (some already
 // "Hidden Everywhere") with no way to actually remove the row, only a
-// physical product had a Delete button at all.
+// physical product had a Delete button at all. Delete started out tucked
+// in the More menu for a pack/program (unlike the physical product's own
+// always-inline button) — inconsistent, and the exact "pushed off-screen
+// behind a menu" bug above by a different name, so it was moved inline
+// too, same place as every other kind.
 describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
-  test("Delete is offered for a pack and a program, inside the More menu", async () => {
+  test("Delete is offered for a pack and a program, inline like every other kind", async () => {
     await mount(<ShopManager />);
-    await act(async () => { byTestId("sm-row-k1-more").click(); });
     expect(byTestId("sm-delete-k1")).toBeTruthy();
-    await act(async () => { byTestId("sm-row-t1-more").click(); });
     expect(byTestId("sm-delete-t1")).toBeTruthy();
   });
 
-  // Owner-reported, live: Delete was in the DOM but invisible — the Items
-  // table's overflow-x-auto wrapper (for horizontal scroll on mobile) also
-  // clips the Y axis per the CSS overflow spec, so a 2-item dropdown
-  // (Duplicate + Delete) got cut off after the first item. jsdom doesn't
-  // lay out or clip anything, so it can't reproduce the visual bug — but it
-  // CAN prove the fix's actual mechanism: the panel must render outside the
+  // Owner-reported, live: a menu item was in the DOM but invisible — the
+  // Items table's overflow-x-auto wrapper (for horizontal scroll on
+  // mobile) also clips the Y axis per the CSS overflow spec, so a
+  // dropdown got cut off after the first item. jsdom doesn't lay out or
+  // clip anything, so it can't reproduce the visual bug — but it CAN
+  // prove the fix's actual mechanism: the panel must render outside the
   // row's DOM subtree (portaled to document.body with fixed positioning),
   // not nested inside the clipping ancestor. If this regresses back to an
   // inline/absolute panel, this is the test that catches it.
@@ -215,14 +221,12 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
     expect(row.contains(panel)).toBe(false);
     expect(document.body.contains(panel)).toBe(true);
     expect(byTestId("sm-duplicate-k1")).toBeTruthy();
-    expect(byTestId("sm-delete-k1")).toBeTruthy();
   });
 
   test("confirming delete on a program with no history calls the real hard-delete endpoint", async () => {
     api.delete.mockReset();
     api.delete.mockResolvedValue({ data: { ok: true, action: "deleted" } });
     await mount(<ShopManager />);
-    await act(async () => { byTestId("sm-row-t1-more").click(); });
     await act(async () => { byTestId("sm-delete-t1").click(); });
     expect(byTestId("sm-delete-confirm")).toBeTruthy();
     await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
@@ -247,7 +251,6 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
     api.put.mockReset();
     api.put.mockResolvedValue({ data: {} });
     await mount(<ShopManager />);
-    await act(async () => { byTestId("sm-row-t1-more").click(); });
     await act(async () => { byTestId("sm-delete-t1").click(); });
     await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -274,7 +277,6 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
       return Promise.resolve({ data: { ok: true } });
     });
     await mount(<ShopManager />);
-    await act(async () => { byTestId("sm-row-k1-more").click(); });
     await act(async () => { byTestId("sm-delete-k1").click(); });
     await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });

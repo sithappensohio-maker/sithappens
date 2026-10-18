@@ -558,7 +558,14 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                 : "Sold and paid for right here — stock, price, and checkout are all handled in this app."}
           </p>
         </div>
+      </div>
 
+      {/* Pricing & Inventory — grouped under one header so a non-technical
+          admin can see at a glance "this is the money/stock stuff" and
+          skip past it for a Shopify listing, where none of it applies. */}
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Pricing & Inventory</p>
+        <div className="grid grid-cols-2 gap-3">
         {form.sales_destination === "internal" && (
           <div>
             <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Register Group (optional)</label>
@@ -584,6 +591,13 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             </div>
           </>
         )}
+        {(form.sales_destination === "internal" || isPrintify) && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
+          <div className="col-span-2 rounded border border-shBorder bg-[var(--sh-card-base)] px-3 py-2 text-sm text-shText" data-testid="product-margin-preview">
+            <span className="text-[11px] text-shTextMuted uppercase tracking-widest mr-2">Profit per unit</span>
+            <span className="font-black">{money(Number(form.price) - Number(form.cost))}</span>
+            <span className="text-shTextMuted ml-2">({(((Number(form.price) - Number(form.cost)) / Number(form.price)) * 100).toFixed(1)}% margin)</span>
+          </div>
+        )}
         {form.sales_destination === "internal" && variants.length === 0 && (
           <div>
             <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
@@ -592,6 +606,21 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             <input type="number" disabled={!!editingId} value={form.starting_stock}
                    onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+          </div>
+        )}
+        {form.sales_destination === "internal" && (
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="track-inv" checked={form.track_inventory}
+                   onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
+            <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
+          </div>
+        )}
+        {form.sales_destination === "internal" && form.track_inventory && (
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
+            <input type="number" value={form.low_stock_threshold}
+                   onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
           </div>
         )}
         {form.sales_destination === "internal" && (
@@ -636,7 +665,12 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             </p>
           </div>
         )}
+        </div>
+      </div>
 
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Description & Photos</p>
+        <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Description (optional)</label>
           <RichTextEditor value={form.description} onChange={(html) => setForm((f) => ({ ...f, description: html }))}
@@ -655,17 +689,13 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           <ShopGalleryUpload imageIds={form.image_ids} originalImageIds={originalImageIds}
                              onChange={(ids) => setForm((f) => ({ ...f, image_ids: ids, image_id: ids[0] || null }))} />
         </div>
+        </div>
+      </div>
 
-        {(form.sales_destination === "internal" || isPrintify) && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
-          <div className="col-span-2 rounded border border-shBorder bg-[var(--sh-card-base)] px-3 py-2 text-sm text-shText" data-testid="product-margin-preview">
-            <span className="text-[11px] text-shTextMuted uppercase tracking-widest mr-2">Profit per unit</span>
-            <span className="font-black">{money(Number(form.price) - Number(form.cost))}</span>
-            <span className="text-shTextMuted ml-2">({(((Number(form.price) - Number(form.cost)) / Number(form.price)) * 100).toFixed(1)}% margin)</span>
-          </div>
-        )}
-
-        {form.sales_destination === "shopify_external" && (
-          <>
+      {form.sales_destination === "shopify_external" && (
+        <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+          <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Shopify Listing Details</p>
+          <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Shopify Product URL *</label>
               <input value={form.shopify_product_url} onChange={(e) => setForm((f) => ({ ...f, shopify_product_url: e.target.value }))}
@@ -688,24 +718,13 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             <p className="col-span-2 text-[11px] text-shTextMuted">
               Admin note: this price is informational only — the final Shopify price may vary by size, color, promotion, or variant. Client-specific and grandfathered pricing never applies here; Shopify controls this price.
             </p>
-          </>
-        )}
+          </div>
+        </div>
+      )}
 
-        {form.sales_destination === "internal" && (
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="track-inv" checked={form.track_inventory}
-                   onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
-            <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
-          </div>
-        )}
-        {form.sales_destination === "internal" && form.track_inventory && (
-          <div>
-            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
-            <input type="number" value={form.low_stock_threshold}
-                   onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
-                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-          </div>
-        )}
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Visibility & Status</p>
+        <div className="grid grid-cols-2 gap-3">
         <div className="flex items-center gap-2">
           <input type="checkbox" id="active" checked={form.active}
                  onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} />
@@ -721,6 +740,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                  onChange={(e) => setForm((f) => ({ ...f, show_at_register: e.target.checked }))}
                  data-testid="product-show-at-register" />
           <label htmlFor="show-at-register" className="text-shText text-sm">Show at Register</label>
+        </div>
         </div>
       </div>
 
@@ -857,6 +877,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           that genuinely is not, and it asks why so the answer survives the
           person who knew it. */}
       <div className="border-t border-shBorder pt-3 mt-1 space-y-2">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Tax</p>
         <div className="flex items-center gap-2">
           <input type="checkbox" id="product-taxable" checked={form.taxable}
                  onChange={(e) => setForm((f) => ({ ...f, taxable: e.target.checked }))}
@@ -886,6 +907,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           their own path. */}
       {!isShopify && !isPrintify && (
         <div className="border-t border-shBorder pt-3 mt-1 space-y-2">
+          <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Shipping</p>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="product-shippable" checked={form.shippable}
                    onChange={(e) => setForm((f) => ({ ...f, shippable: e.target.checked }))}
