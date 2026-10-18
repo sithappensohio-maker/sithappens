@@ -249,9 +249,9 @@ export default function ShopLanding({
         <h2 id="shop-trust-h" className="sr-only">Why shop with Sit Happens</h2>
         <div className="grid sm:grid-cols-3 gap-4">
           {[
-            ["fa-store", "Collect in store", "Order online, pick it up next time you are in. No postage, no waiting in."],
-            ["fa-lock", "Secure checkout", "Payment is handled by Stripe. We never see your card details."],
-            ["fa-paw", "Chosen by trainers", "Everything here is kit we use in class, not a catalogue we drop-ship."],
+            ["fa-store", "Pickup or Shipping", "Shop online and choose convenient in-store pickup or shipping at checkout."],
+            ["fa-lock", "Secure Checkout", "Payment is handled by Stripe. We never see your card details."],
+            ["fa-paw", "For Dogs & Their People", "From everyday dog essentials to fun gifts, merchandise, and Sit Happens services—all in one place."],
           ].map(([icon, title, body]) => (
             <div key={title} className="rounded-xl border border-shBorder p-4" style={{ background: "var(--sh-card-base)" }}>
               <i className={`fas ${icon} text-shPrimary`} aria-hidden="true" />
