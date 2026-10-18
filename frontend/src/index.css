@@ -2919,7 +2919,15 @@ a.bg-shGreen::after,
    <header> — without per-surface classes a single theme asset would bleed
    across portals that the admin explicitly turned off for it. */
 :root {
-  --theme-decoration-opacity: 0.75;
+  /* Owner, 2026-10-18: the Shop page header (and everything else on this
+     shared scalar) read as "way too faded" at the standard tier — the
+     directional/flat scrims already carry their own built-in darkening
+     (see --theme-decoration-scrim-* below), so a 0.75 multiplier on top of
+     that was compounding into uploaded art that barely showed through.
+     Raised standard and subtle so an uploaded theme photo actually reads
+     as a photo at the tier most admins never change away from; bold was
+     already the ceiling (1) and needs no change. */
+  --theme-decoration-opacity: 0.95;
   --theme-decoration-badge-opacity: 1;
   /* A dark layer painted BETWEEN the real UI and any uploaded photo/
      illustration — on top of the image in paint order (the first listed
@@ -2940,7 +2948,7 @@ a.bg-shGreen::after,
   --theme-decoration-scrim-flat: linear-gradient(rgba(3, 6, 15, 0.52), rgba(3, 6, 15, 0.52));
 }
 html[data-theme-intensity="subtle"] {
-  --theme-decoration-opacity: 0.4;
+  --theme-decoration-opacity: 0.6;
   --theme-decoration-badge-opacity: 0.7;
 }
 html[data-theme-intensity="bold"] {
