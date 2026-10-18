@@ -264,7 +264,7 @@ function ProductGallery({ ids, alt, isPublic, fallbackSrc }) {
   );
 }
 
-export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, onClaimFreeCourse, onAddDog, dogs = [],
+export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", previewClientId = null, onRequireAccount, onGoToOnlineSchool, onClaimFreeCourse, onAddDog, dogs = [],
   // Curated suggestions and this browser's own history, both resolved by
   // the server against the catalogue this viewer is allowed to see. Passed
   // in as a rendered node rather than fetched here, so the page makes ONE
@@ -304,16 +304,25 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setNotFound(false); setItem(null); setQty(1); setSelectedVariantId(null); setSelectedColor(null); setPersonalizationValues({});
+    // Shop Manager's Client Preview is an ADMIN session, not a client one —
+    // the real client-only /shop/item/... 403'd for it every time, which
+    // this component's catch() below can't tell apart from a genuinely
+    // missing item, so every preview item read as "isn't available right
+    // now." /shop-manager/catalog-preview/item/... is its own admin-gated
+    // mirror (see that route's docstring), same as the catalog grid already
+    // has one.
     const url = isGuest
       ? `/public/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`
-      : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
+      : mode === "preview"
+        ? `/shop-manager/catalog-preview/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}${previewClientId ? `?preview_client_id=${encodeURIComponent(previewClientId)}` : ""}`
+        : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
     api.get(url)
       .then(({ data }) => { if (!cancelled) setItem(data); })
       .catch(() => { if (!cancelled) setNotFound(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, itemId, isGuest]);
+  }, [kind, itemId, isGuest, mode, previewClientId]);
 
   // Phase 5 — Online School commerce. Only fetched for the one item kind/
   // fulfillment combination that needs it: a training_program whose

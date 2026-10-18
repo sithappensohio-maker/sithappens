@@ -42426,21 +42426,17 @@ _SHOP_ITEM_DETAIL_SECTION = {"product": "merch", "credit_pack": "prepaid_visits"
 _SHOP_ITEM_DETAIL_KINDS = frozenset(_SHOP_ITEM_DETAIL_SECTION) | {"gift_card"}
 
 
-@api.get("/shop/item/{kind}/{item_id}")
-async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get_current_user)):
-    """Single-item detail view for the client Shop's item detail page.
-    Reuses _build_shop_catalog so price, description, and visibility are
-    byte-for-byte identical to the catalog grid, cart, and checkout — this
-    is never a second pricing/visibility implementation. Returns 404 (never
-    403/a distinguishable "hidden" response) for anything nonexistent,
-    inactive, or not shown in the client Shop, so a guessed or stale URL
-    can't be used to confirm an item's existence or peek at admin-only
-    state."""
-    if user.get("role") != "client":
-        raise HTTPException(status_code=403, detail="Client account required")
+async def _shop_item_detail_from_catalog(catalog: dict, kind: str, item_id: str, client_id: Optional[str]):
+    """The lookup+enrichment _build_shop_catalog's result still needs to
+    become one item-detail page — shared by the real client endpoint below
+    and Shop Manager's admin-preview mirror of it, so there is only ever
+    one place that knows how a training program's prerequisites/Online
+    School eligibility/recommended-next list get attached to the response.
+    `client_id` is whoever's dogs the Online School eligibility check should
+    run against — the real client's own id on the client endpoint, or
+    whichever client an admin is previewing as (if any) on the preview one."""
     if kind not in _SHOP_ITEM_DETAIL_KINDS:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
-    catalog = await _build_shop_catalog(user.get("client_id"))
     item = next((dict(i) for i in catalog["items"] if i["kind"] == kind and i["id"] == item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
@@ -42463,10 +42459,13 @@ async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get
         # Return an explicit server-derived eligibility row for each of this
         # client's dogs so the detail page can guide the customer before cart/
         # checkout while the checkout endpoint remains the final authority.
+        # No client_id (an admin previewing "Standard / public pricing",
+        # nobody in particular) means no dogs to check — an empty list, not
+        # an error.
         item["school_prerequisite_eligibility"] = []
-        if (prog or {}).get("purchase_fulfillment") == "online_school":
+        if client_id and (prog or {}).get("purchase_fulfillment") == "online_school":
             client_dogs = await db.dogs.find(
-                {"owner_id": user.get("client_id")}, {"_id": 0, "id": 1, "name": 1}
+                {"owner_id": client_id}, {"_id": 0, "id": 1, "name": 1}
             ).to_list(200)
             for dog in client_dogs:
                 missing = await _missing_program_prerequisites(dog["id"], prog or {})
@@ -42483,6 +42482,22 @@ async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get
         else:
             item["recommended_next_programs"] = []
     return item
+
+
+@api.get("/shop/item/{kind}/{item_id}")
+async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get_current_user)):
+    """Single-item detail view for the client Shop's item detail page.
+    Reuses _build_shop_catalog so price, description, and visibility are
+    byte-for-byte identical to the catalog grid, cart, and checkout — this
+    is never a second pricing/visibility implementation. Returns 404 (never
+    403/a distinguishable "hidden" response) for anything nonexistent,
+    inactive, or not shown in the client Shop, so a guessed or stale URL
+    can't be used to confirm an item's existence or peek at admin-only
+    state."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    catalog = await _build_shop_catalog(user.get("client_id"))
+    return await _shop_item_detail_from_catalog(catalog, kind, item_id, user.get("client_id"))
 
 
 @api.get("/shop-manager/catalog-preview")
@@ -42502,6 +42517,27 @@ async def shop_manager_catalog_preview(
         if not client:
             raise HTTPException(status_code=404, detail="Client not found")
     return await _build_shop_catalog(preview_client_id)
+
+
+@api.get("/shop-manager/catalog-preview/item/{kind}/{item_id}")
+async def shop_manager_catalog_preview_item(
+    kind: str, item_id: str, preview_client_id: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """Shop Manager Client Preview's own item-detail page — the real client
+    Shop's `/shop/item/{kind}/{id}` is deliberately client-account-only (see
+    its own docstring), so it 403'd for every admin trying to open an item
+    from Client Preview, same symptom as a genuinely missing/hidden item:
+    "This item isn't available right now." This is the admin-gated mirror
+    `shop_manager_catalog_preview` above is for the catalog grid — same
+    _build_shop_catalog, same per-item enrichment, never a second
+    implementation of either."""
+    if preview_client_id:
+        client = await db.clients.find_one({"id": preview_client_id}, {"_id": 0, "id": 1})
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+    catalog = await _build_shop_catalog(preview_client_id)
+    return await _shop_item_detail_from_catalog(catalog, kind, item_id, preview_client_id)
 
 
 async def _shop_taxonomy_payload() -> dict:

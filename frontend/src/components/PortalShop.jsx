@@ -1267,6 +1267,7 @@ export default function PortalShop({
           allItems={items}
           onOpenItem={openDetail}
           mode={mode}
+          previewClientId={previewClientId}
           onRequireAccount={onRequireAccount}
           onGoToOnlineSchool={onGoToOnlineSchool}
           onClaimFreeCourse={claimFreeCourse}
