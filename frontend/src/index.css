@@ -2940,12 +2940,19 @@ a.bg-shGreen::after,
      Two shapes: "directional" darkens the left zone (title/eyebrow text)
      and right zone (header actions / avatar menu) harder than the middle,
      for hero banners where real content sits at both edges; "flat" dims
-     the whole layer evenly, for badges/overlays with centered content. */
+     the whole layer evenly, for badges/overlays with centered content.
+
+     Owner, 2026-10-18: even after raising --theme-decoration-opacity
+     above, the Shop header still read as "pretty dim" — these stops were
+     the other half of the compounding (opacity x scrim-alpha). Lightened
+     every stop by roughly a third; the text zones (0%/10%/90%/100%) are
+     still noticeably darker than the open middle, just no longer darker
+     than the art is bright. */
   --theme-decoration-scrim-directional: linear-gradient(to right,
-    rgba(3, 6, 15, 0.82) 0%, rgba(3, 6, 15, 0.78) 10%,
-    rgba(3, 6, 15, 0.32) 38%, rgba(3, 6, 15, 0.32) 62%,
-    rgba(3, 6, 15, 0.7) 90%, rgba(3, 6, 15, 0.78) 100%);
-  --theme-decoration-scrim-flat: linear-gradient(rgba(3, 6, 15, 0.52), rgba(3, 6, 15, 0.52));
+    rgba(3, 6, 15, 0.58) 0%, rgba(3, 6, 15, 0.55) 10%,
+    rgba(3, 6, 15, 0.2) 38%, rgba(3, 6, 15, 0.2) 62%,
+    rgba(3, 6, 15, 0.48) 90%, rgba(3, 6, 15, 0.55) 100%);
+  --theme-decoration-scrim-flat: linear-gradient(rgba(3, 6, 15, 0.35), rgba(3, 6, 15, 0.35));
 }
 html[data-theme-intensity="subtle"] {
   --theme-decoration-opacity: 0.6;
