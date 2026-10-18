@@ -43037,7 +43037,16 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
         raise HTTPException(status_code=409, detail=f"{name} is no longer available.")
     if not isinstance(quantity, int) or quantity <= 0:
         raise HTTPException(status_code=422, detail="Invalid quantity.")
-    if kind == "product" and item_doc.get("track_inventory"):
+    # A Printify-fulfilled product can now opt into track_inventory too
+    # (register-only stock-first fulfillment — see _pos_resolve_printify_
+    # stock); its real stock, if any, lives per-VARIANT, never on this
+    # product-level field, which is never populated for one. Same bypass as
+    # price_pos_cart's variant-level check and create_shop_checkout's own
+    # qty_by_product check, for the same reason: the online Shop always
+    # orders fresh from Printify regardless of local stock, so this must
+    # never refuse a cart line over a field that was never meant to mean
+    # anything for it.
+    if kind == "product" and item_doc.get("sales_destination") != "printify" and item_doc.get("track_inventory"):
         stock = float(item_doc.get("stock_on_hand") or 0)
         if quantity > stock + 0.0005:
             if stock <= 0.0005:
@@ -43332,6 +43341,21 @@ async def _price_shop_cart(
             qty_by_product[line["ref_id"]] = qty_by_product.get(line["ref_id"], 0) + line["quantity"]
     for product_id, total_qty in qty_by_product.items():
         product = product_cache[product_id]
+        # A Printify-fulfilled product can now opt into track_inventory too
+        # (register-only stock-first fulfillment, see
+        # _pos_resolve_printify_stock) — but its real stock, if any, lives
+        # per-VARIANT, same as price_pos_cart's own variant-level check
+        # already treats it. This product-level field was never populated
+        # for one (there's no such thing as a non-variant Printify listing),
+        # so without this bypass every online order for a now-stock-opted-in
+        # Printify product refused outright as "out of stock" against a
+        # field that was always 0 and was never meant to mean anything for
+        # it. The online Shop always orders fresh from Printify regardless
+        # of stock (register-only feature) — this skip is what makes that
+        # true rather than an accident of track_inventory having been
+        # unconditionally False before now.
+        if product.get("sales_destination") == "printify":
+            continue
         if not product.get("track_inventory"):
             continue
         stock = float(product.get("stock_on_hand") or 0)
@@ -43521,6 +43545,16 @@ async def _reserve_shop_inventory_line(order: dict, line: dict) -> str:
         product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=400, detail=f"{line.get('name') or 'A product'} is no longer available.")
+        # A Printify-fulfilled product can now opt into track_inventory too
+        # (register-only stock-first fulfillment); its real stock, if any,
+        # lives per-VARIANT, never on this product-level field, which was
+        # never populated for one. Reserving (or later committing) against
+        # it would refuse every online order for a now-stock-opted-in
+        # Printify product as "out of stock" against a field that always
+        # reads 0 — the online Shop must always order fresh from Printify
+        # regardless of local stock, so this is never held back here at all.
+        if product.get("sales_destination") == "printify":
+            return "skipped"
         if not product.get("track_inventory"):
             return "skipped"
         for entry in (product.get("shop_reservations") or []):
@@ -43585,8 +43619,14 @@ async def _commit_shop_inventory_line(order_id: str, line: dict) -> None:
         return  # already committed by an earlier (crashed) run
 
     product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
-    if not product or not product.get("track_inventory"):
-        return  # untracked (or since-deleted) product never had a reservation to commit
+    # Same Printify bypass as _reserve_shop_inventory_line, stated again
+    # here rather than only relied on implicitly: a Printify-fulfilled
+    # product is never reserved in the first place, so this would already
+    # no-op on the ref precondition below — but a reader of this function
+    # alone shouldn't have to trace back to the reservation step to know
+    # it's safe to skip here too.
+    if not product or product.get("sales_destination") == "printify" or not product.get("track_inventory"):
+        return  # untracked (or since-deleted, or Printify-fulfilled) product never had a reservation to commit
 
     ts = now_iso()
     stock_before = float(product.get("stock_on_hand") or 0)
@@ -44923,8 +44963,13 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
     products default to sales_destination="internal"). A printify product
     is sold and paid for here (register + client Shop) same as internal —
     Printify only takes over production/shipping after payment — so price
-    and variants stay live; only stock tracking is forced off (Printify
-    makes each one on demand, so there is no real stock to track)."""
+    and variants stay live. track_inventory/low_stock_threshold now pass
+    through for it too (owner, 2026-10-18: some Printify items are also
+    physically stocked, and selling one of THOSE shouldn't place a fresh
+    production order — see _pos_resolve_printify_stock, register-only; the
+    online Shop never looks at stock for a Printify item). Still nothing
+    like a Shopify listing's hard block above: track_inventory defaults
+    False and stays off for any product that was never opted in."""
     if body.sales_destination == "shopify_external":
         url = _validate_shopify_product_url(body.shopify_product_url)
         if not url:
@@ -44962,8 +45007,8 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
             "featured": bool(body.featured),
             "price": round(float(body.price), 2),
             "cost": round(float(body.cost), 2) if body.cost is not None else None,
-            "low_stock_threshold": None,
-            "track_inventory": False,
+            "low_stock_threshold": body.low_stock_threshold,
+            "track_inventory": body.track_inventory,
         }
     return {
         "sales_destination": "internal",
@@ -46175,6 +46220,79 @@ def _pos_printify_lines(priced: dict, product_cache: Dict[str, dict]) -> List[di
     ]
 
 
+def _pos_resolve_printify_stock(
+    printify_lines: List[dict], product_cache: Dict[str, dict], resolution_by_key: Dict[tuple, Optional[bool]],
+) -> tuple:
+    """Register-only (owner, 2026-10-18): some Printify-fulfilled items are
+    also physically stocked on a shelf, and selling one of THOSE shouldn't
+    place a real Printify production order at all — just hand over the one
+    already on hand. Nothing here touches the online Shop; that path still
+    always orders fresh from Printify, unconditionally, same as before this
+    existed (see _queue_printify_shop_lines, never calls this).
+
+    Opt-in per product via the SAME track_inventory flag an internal
+    product already uses (price_pos_cart's own stock-refusal check already
+    skips sales_destination=="printify" products entirely — see its
+    docstring — so turning this on never risks a printify sale being
+    hard-refused for insufficient stock the way an internal product would).
+
+    Three outcomes per line, in order:
+      - no stock tracked, or stock_on_hand == 0: nothing to choose between —
+        falls straight through to Printify, exactly like it always has.
+      - stock_on_hand covers the full quantity: sells off the shelf
+        entirely, no production order for this line at all.
+      - SOME stock, not enough to cover it: a genuine choice — resolved
+        from `resolution_by_key` (PosSaleLineIn.printify_use_stock, keyed by
+        (product_id, variant_id)) if the cashier already made one; otherwise
+        it's reported back as a decision the cashier has to make before the
+        sale can commit (see _create_pos_sale_impl's 409).
+
+    Returns (stock_fulfillment, remaining_printify_lines, needs_decision):
+      stock_fulfillment: {(product_id, variant_id): qty_to_deduct_from_stock}
+      remaining_printify_lines: printify_lines with qty reduced to whatever
+        STILL needs a real Printify order — a line fully covered by stock
+        is dropped entirely. Never mutates `printify_lines` itself or
+        anything inside `priced` — the sale's own recorded quantities
+        (receipt, audit) must keep reflecting what was actually sold,
+        regardless of which shelf it came off of.
+      needs_decision: shortfall descriptors for every line the cashier
+        hasn't resolved yet; a sale is never committed while this is
+        non-empty (see the 409 in _create_pos_sale_impl)."""
+    stock_fulfillment: Dict[tuple, float] = {}
+    remaining: List[dict] = []
+    needs_decision: List[dict] = []
+    for li in printify_lines:
+        product = product_cache[li["product_id"]]
+        variant_id = li.get("variant_id")
+        qty = float(li["qty"])
+        if not product.get("track_inventory"):
+            remaining.append(li)
+            continue
+        variant = next((v for v in (product.get("variants") or []) if v.get("id") == variant_id), None)
+        available = float((variant or {}).get("stock_on_hand") or 0)
+        key = (li["product_id"], variant_id)
+        if available <= 0.0005:
+            remaining.append(li)
+            continue
+        if available >= qty - 0.0005:
+            stock_fulfillment[key] = qty
+            continue
+        choice = resolution_by_key.get(key)
+        if choice is None:
+            needs_decision.append({
+                "product_id": li["product_id"], "variant_id": variant_id,
+                "name": product.get("name"), "variant_name": (variant or {}).get("name"),
+                "requested": qty, "available": available,
+            })
+            continue
+        if choice:
+            stock_fulfillment[key] = available
+            remaining.append({**li, "qty": round(qty - available, 3)})
+        else:
+            remaining.append(li)
+    return stock_fulfillment, remaining, needs_decision
+
+
 def _printify_shipping_cart_line(product: dict, variant_id: Optional[str], qty: int) -> dict:
     """One line's shape for printify_client.estimate_cart_shipping_cents —
     shared by the register's and the online Shop's own shipping-cost
@@ -46213,6 +46331,7 @@ async def _estimate_printify_shipping_dollars(cart_lines: List[dict], country: s
 
 async def _price_pos_printify_shipping(
     priced: dict, product_cache: Dict[str, dict], printify_fulfillment: Optional[PrintifyFulfillmentIn],
+    printify_lines_override: Optional[List[dict]] = None,
 ) -> float:
     """The real Printify shipping cost for a priced cart's Printify line(s),
     in dollars — owner request: "pay shipping based on printifys shipping,
@@ -46239,7 +46358,20 @@ async def _price_pos_printify_shipping(
 
     Shared by preview_pos_sale (so the live total the cashier sees already
     includes it before checkout) and _create_pos_sale_impl (which also
-    enforces that a choice was made at all — see there)."""
+    enforces that a choice was made at all — see there).
+
+    printify_lines_override: stocked Printify items (see
+    _pos_resolve_printify_stock) only need a REAL Printify order — and so
+    only need shipping priced — for whatever quantity local stock didn't
+    already cover. _create_pos_sale_impl passes its already-resolved lines
+    here instead of letting this re-derive the full requested quantity from
+    `priced` on its own, which would charge Printify shipping on units that
+    are walking out the door from the shelf right now and were never
+    actually going to be shipped by Printify at all. preview_pos_sale has
+    no resolution yet at preview time, so it leaves this unset and gets
+    today's behavior — priced against the full quantity, the same
+    conservative estimate it always showed before stock-aware Printify
+    items existed."""
     if not printify_fulfillment:
         return 0.0
     if printify_fulfillment.method == "ship" and not printify_fulfillment.shipping_address:
@@ -46248,7 +46380,7 @@ async def _price_pos_printify_shipping(
         # what should surface first for an incomplete choice, not a
         # confusing "can't price this" from here.
         return 0.0
-    printify_lines = _pos_printify_lines(priced, product_cache)
+    printify_lines = printify_lines_override if printify_lines_override is not None else _pos_printify_lines(priced, product_cache)
     if not printify_lines:
         return 0.0
     cart_lines = [
@@ -46331,11 +46463,37 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     product_cache = catalog_caches["products"]
     total = priced["total"]
 
-    # Printify POD — every line whose product is Printify-fulfilled needs a
-    # pickup-or-ship choice before money moves, same as tenders summing to
-    # the total: this is checked against the ACTUAL cart (never trusted from
-    # a client-side guess that the cart has/doesn't have one).
-    printify_lines = _pos_printify_lines(priced, product_cache)
+    # Printify POD — register-only stock-first fulfillment (owner,
+    # 2026-10-17: stock some Printify items, sell them off the shelf
+    # instead of always placing a fresh production order). Resolved BEFORE
+    # the pickup/ship requirement below, so a cart that's fully covered by
+    # stock never has to ask for one at all — nothing is actually being
+    # shipped by Printify. A line with SOME stock but not enough is a real
+    # choice (see _pos_resolve_printify_stock); refused with a 409 the
+    # register can act on until the cashier picks an option.
+    all_printify_lines = _pos_printify_lines(priced, product_cache)
+    printify_stock_fulfillment: Dict[tuple, float] = {}
+    printify_lines = all_printify_lines
+    if all_printify_lines:
+        resolution_by_key = {
+            (line.product_id, line.variant_id): line.printify_use_stock
+            for line in body.lines
+            if line.kind == "retail" and line.printify_use_stock is not None
+        }
+        printify_stock_fulfillment, printify_lines, printify_stock_decisions = _pos_resolve_printify_stock(
+            all_printify_lines, product_cache, resolution_by_key)
+        if printify_stock_decisions:
+            raise HTTPException(status_code=409, detail={
+                "code": "printify_stock_decision_needed",
+                "message": "Some Printify items have stock on hand, but not enough to cover this order.",
+                "lines": printify_stock_decisions,
+            })
+
+    # Every line whose product is STILL Printify-fulfilled after stock
+    # resolution above needs a pickup-or-ship choice before money moves,
+    # same as tenders summing to the total: this is checked against the
+    # ACTUAL cart (never trusted from a client-side guess that the cart
+    # has/doesn't have one).
     if printify_lines:
         if not body.printify_fulfillment:
             raise HTTPException(status_code=400, detail="This cart includes a Printify item — choose pickup or shipping before taking payment.")
@@ -46346,8 +46504,11 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
     # a surprise total at tender time, different from what the cashier saw
     # while building the cart, is exactly the bug class this shares code
     # to avoid). Both pickup and ship charge Printify's own real rate —
-    # see _price_pos_printify_shipping's own docstring.
-    printify_shipping_amount = await _price_pos_printify_shipping(priced, product_cache, body.printify_fulfillment)
+    # see _price_pos_printify_shipping's own docstring. printify_lines is
+    # already resolved down to whatever still needs a real order, so stock-
+    # fulfilled units are never charged Printify shipping.
+    printify_shipping_amount = await _price_pos_printify_shipping(
+        priced, product_cache, body.printify_fulfillment, printify_lines_override=printify_lines)
     total = round(total + printify_shipping_amount, 2)
 
     client_name = ""
@@ -46627,8 +46788,20 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         for (product_id, variant_id), qty in qty_by_variant.items():
             if product_cache.get(product_id, {}).get("sales_destination") == "printify":
                 # Printify makes each one on demand — no real stock to
-                # deduct, and no inventory_movements row for it (matches the
-                # stock-check bypass in price_pos_cart's pricing pass).
+                # deduct, UNLESS this specific line was already resolved
+                # (before payment, above) to ship from stock instead. Only
+                # that resolved amount comes off the shelf — never the full
+                # sold quantity `qty`, which would double-count whatever
+                # portion is still being freshly produced by Printify.
+                stock_qty = printify_stock_fulfillment.get((product_id, variant_id), 0.0)
+                if stock_qty <= 0.0005:
+                    continue
+                await _mutate_product_stock(
+                    product_id, -stock_qty, "SALE",
+                    reason=f"POS Sale #{sale_doc['receipt_number']} — stocked Printify item",
+                    user=user, pos_sale_id=sale_id, variant_id=variant_id,
+                )
+                applied_stock_movements.append((product_id, stock_qty, variant_id))
                 continue
             await _mutate_product_stock(
                 product_id, -qty, "SALE",
@@ -47027,11 +47200,35 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
             continue
         try:
             if li.get("variant_id"):
-                await _mutate_product_stock(
-                    li["product_id"], float(li.get("qty") or 0), "VOID",
-                    reason=f"Void of POS Sale #{original.get('receipt_number')}",
-                    user=user, pos_sale_id=sale_id, allow_negative=True, variant_id=li["variant_id"],
-                )
+                product = await db.pos_products.find_one({"id": li["product_id"]}, {"_id": 0, "sales_destination": 1})
+                if product and product.get("sales_destination") == "printify":
+                    # A printify variant doesn't always deduct the line's
+                    # full qty at sale time the way every other variant
+                    # product's "every sale deducts exactly qty" rule
+                    # assumes — register-only stock-first fulfillment may
+                    # have taken none, some, or all of it off the shelf
+                    # (see _pos_resolve_printify_stock). Restore exactly
+                    # what the original sale's own SALE movement recorded,
+                    # never the line's full qty — voiding a line that was
+                    # entirely Printify-ordered (never touched stock) must
+                    # never credit stock it never took.
+                    movement = await db.inventory_movements.find_one(
+                        {"pos_sale_id": sale_id, "product_id": li["product_id"], "variant_id": li["variant_id"], "type": "SALE"},
+                        {"_id": 0, "quantity_delta": 1},
+                    )
+                    restore_qty = -float(movement["quantity_delta"]) if movement else 0.0
+                    if restore_qty > 0.0005:
+                        await _mutate_product_stock(
+                            li["product_id"], restore_qty, "VOID",
+                            reason=f"Void of POS Sale #{original.get('receipt_number')}",
+                            user=user, pos_sale_id=sale_id, allow_negative=True, variant_id=li["variant_id"],
+                        )
+                else:
+                    await _mutate_product_stock(
+                        li["product_id"], float(li.get("qty") or 0), "VOID",
+                        reason=f"Void of POS Sale #{original.get('receipt_number')}",
+                        user=user, pos_sale_id=sale_id, allow_negative=True, variant_id=li["variant_id"],
+                    )
             else:
                 product = await db.pos_products.find_one({"id": li["product_id"]}, {"_id": 0, "track_inventory": 1})
                 if product and product.get("track_inventory"):

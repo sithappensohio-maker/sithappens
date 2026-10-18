@@ -33,6 +33,7 @@ import ItemThumbnail from "../components/ItemThumbnail";
 import AdminBookingModal from "../components/AdminBookingModal";
 import WalkInModal from "../components/WalkInModal";
 import PrintifyFulfillmentModal from "../components/PrintifyFulfillmentModal";
+import PrintifyStockDecisionModal from "../components/PrintifyStockDecisionModal";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
@@ -356,6 +357,15 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [cartLines, setCartLines] = useState([]);
   const [discount, setDiscount] = useState(null);
   const [priced, setPriced] = useState(null);
+  // A stocked Printify item that came up short (some stock, not enough) —
+  // resolved per line, keyed "productId:variantId" (see cartLinesPayload
+  // below and PrintifyStockDecisionModal). null/absent means "no decision
+  // made/needed yet"; the server only ever actually asks for one when a
+  // line's stock is genuinely partial.
+  const [printifyStockChoices, setPrintifyStockChoices] = useState({});
+  // The shortfall list from a 409 "printify_stock_decision_needed" refusal
+  // — non-null opens PrintifyStockDecisionModal.
+  const [printifyStockDecision, setPrintifyStockDecision] = useState(null);
 
   // Maps a catalog item's `kind` ("product"|"credit_pack"|"training_program")
   // to the cart line "kind" + the id field that line stores it under. Retail
@@ -392,7 +402,17 @@ export default function Pos({ onOpenShopManager } = {}) {
         toast.error(`Only ${variant.stock_on_hand} in stock for ${item.name} (${variant.name}).`);
         return;
       }
-    } else if (item.kind === "product" && item.track_inventory) {
+    } else if (item.kind === "product" && !variant && item.track_inventory) {
+      // `!variant` matters now that a Printify product can carry
+      // track_inventory too (register-only stock-first fulfillment) — a
+      // Printify product always has at least one variant, so it's already
+      // routed through the branch above (which correctly skips it); without
+      // this guard it would ALSO match here and get checked against this
+      // product's own stock_on_hand field, which is never populated for a
+      // variant-based product and would refuse every add outright. Letting
+      // it through here is what lets the actual sale attempt ask the
+      // cashier a real question instead of a client-side guess blocking it
+      // before the register even tries.
       const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id && !l.variant_id)?.qty || 0;
       if (inCart + 1 > Number(item.stock_on_hand || 0) + 0.0005) {
         // stock_on_hand here is what the register can sell: the shelf less
@@ -474,7 +494,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     return copy;
   });
   const removeLine = (i) => setCartLines((lines) => lines.filter((_, idx) => idx !== i));
-  const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); setPrintifyFulfillment(null); };
+  const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); setPrintifyFulfillment(null); setPrintifyStockChoices({}); setPrintifyStockDecision(null); };
 
   const [customOpen, setCustomOpen] = useState(false);
   // Step 4C-1 — a custom line must say what it IS: merchandise (taxable
@@ -611,13 +631,26 @@ export default function Pos({ onOpenShopManager } = {}) {
   // ONE request to POST /pos/checkout, so a mixed cart is always exactly
   // one financial transaction (one sale, one receipt, one register event)
   // instead of several unrelated ones.
-  const cartLinesPayload = () => cartLines.map((l) => {
-    if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
-    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, gift_card_topup: !!l.gift_card_topup, gift_card_recipient_email: l.gift_card_recipient_email || null, qty: 1 };
-    if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
-    if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
-    return { kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty, personalization: l.personalization || null };
-  });
+  const cartLinesPayload = (stockChoicesOverride) => {
+    // A just-resolved decision is passed in directly (see
+    // confirmPrintifyStockDecision) rather than read from state — state set
+    // immediately before this runs in the same tick wouldn't be visible yet.
+    const stockChoices = stockChoicesOverride || printifyStockChoices;
+    return cartLines.map((l) => {
+      if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
+      if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, gift_card_topup: !!l.gift_card_topup, gift_card_recipient_email: l.gift_card_recipient_email || null, qty: 1 };
+      if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
+      if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
+      return {
+        kind: "retail", product_id: l.product_id, variant_id: l.variant_id || null, qty: l.qty, personalization: l.personalization || null,
+        // Set only once the cashier has resolved a stocked Printify item
+        // that came up short — every other line leaves this unset, which
+        // the server reads as "no decision yet" and is fine, since it's
+        // only ever actually consulted for that one case.
+        printify_use_stock: stockChoices[`${l.product_id}:${l.variant_id || ""}`] ?? null,
+      };
+    });
+  };
 
   // A cart with a Printify-fulfilled line needs the pickup-or-ship choice
   // before payment (see _create_pos_sale_impl) — declared here, above the
@@ -939,7 +972,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   };
   const removeTender = (i) => setTenders((t) => t.filter((_, idx) => idx !== i));
 
-  const completeSale = async () => {
+  const completeSale = async (stockChoicesOverride) => {
     if (remaining > 0.005) { toast.error("Tenders must add up to the full total before completing the sale"); return; }
     setSaleBusy(true);
     try {
@@ -952,7 +985,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       // half-completed sale, a double charge, or orphaned credits.
       const { data } = await api.post("/pos/checkout", {
         client_id: selectedClient?.id || null,
-        lines: cartLinesPayload(),
+        lines: cartLinesPayload(stockChoicesOverride),
         discount,
         tenders,
         idempotency_key: saleIdemKey,
@@ -971,9 +1004,25 @@ export default function Pos({ onOpenShopManager } = {}) {
         if (!r.ok) toast.error(r.error || "Cash drawer failed to open");
       }
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not complete the sale");
+      const structured = e?.response?.data?.detail_object;
+      if (structured?.code === "printify_stock_decision_needed") {
+        setPrintifyStockDecision(structured.lines || []);
+      } else {
+        toast.error(e?.response?.data?.detail || "Could not complete the sale");
+      }
     }
     setSaleBusy(false);
+  };
+
+  // From PrintifyStockDecisionModal — records the cashier's per-line choice
+  // and retries the exact same sale, which now includes it (cartLinesPayload
+  // reads printifyStockChoices). Same tenders, same idempotency key: this
+  // is a retry of the one sale attempt, not a new one.
+  const confirmPrintifyStockDecision = (choices) => {
+    const merged = { ...printifyStockChoices, ...choices };
+    setPrintifyStockChoices(merged);
+    setPrintifyStockDecision(null);
+    completeSale(merged);
   };
 
   const retryHardware = async (action) => {
@@ -1341,6 +1390,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // ── Tender screen ────────────────────────────────────────────────────────
   if (tenderOpen) {
     return (
+      <>
       <div className="max-w-xl mx-auto space-y-4 animate-slide-in" data-testid="pos-tender-screen">
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-6 text-center">
           <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Total Due</p>
@@ -1490,6 +1540,20 @@ export default function Pos({ onOpenShopManager } = {}) {
           </button>
         </div>
       </div>
+      {/* completeSale() (above) can refuse with a 409 asking the cashier to
+          resolve a partially-stocked Printify line — this view is an early
+          `return` separate from the catalog view's own tree below, so this
+          needs its own copy of the modal, not just the one down there
+          (which never renders once the cashier has reached the tender
+          screen at all). */}
+      {printifyStockDecision && (
+        <PrintifyStockDecisionModal
+          lines={printifyStockDecision}
+          onClose={() => setPrintifyStockDecision(null)}
+          onConfirm={confirmPrintifyStockDecision}
+        />
+      )}
+      </>
     );
   }
 
@@ -2597,6 +2661,13 @@ export default function Pos({ onOpenShopManager } = {}) {
           onClose={() => setPrintifyModalOpen(false)}
           onConfirm={confirmPrintifyFulfillment}
           initial={printifyFulfillment}
+        />
+      )}
+      {printifyStockDecision && (
+        <PrintifyStockDecisionModal
+          lines={printifyStockDecision}
+          onClose={() => setPrintifyStockDecision(null)}
+          onConfirm={confirmPrintifyStockDecision}
         />
       )}
       {walkInOpen && (

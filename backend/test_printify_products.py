@@ -112,7 +112,11 @@ def test_create_requires_a_printify_variant_id_on_every_size():
         assert "Medium" in e.detail
 
 
-def test_create_keeps_price_variants_and_forces_off_stock_tracking():
+def test_create_keeps_price_and_variants_and_defaults_stock_tracking_off():
+    # Stock tracking is now a real opt-in for a Printify listing (register-
+    # only stock-first fulfillment — see test_printify_stock_fulfillment.py),
+    # not hard-forced off the way shopify_external's fields below still are
+    # — this just confirms nothing turns it on behind the admin's back.
     p = _create()
     try:
         assert p["sales_destination"] == "printify"

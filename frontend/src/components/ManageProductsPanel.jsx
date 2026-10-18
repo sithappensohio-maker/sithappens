@@ -608,20 +608,28 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
           </div>
         )}
-        {form.sales_destination === "internal" && (
+        {(form.sales_destination === "internal" || isPrintify) && (
           <div className="flex items-center gap-2">
             <input type="checkbox" id="track-inv" checked={form.track_inventory}
-                   onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
-            <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
+                   onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))}
+                   data-testid="product-track-inventory" />
+            <label htmlFor="track-inv" className="text-shText text-sm">
+              {isPrintify ? "Also Stocked On Hand (sell it off the shelf at the register before ordering from Printify)" : "Track Inventory"}
+            </label>
           </div>
         )}
-        {form.sales_destination === "internal" && form.track_inventory && (
+        {(form.sales_destination === "internal" || isPrintify) && form.track_inventory && (
           <div>
             <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
             <input type="number" value={form.low_stock_threshold}
                    onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
           </div>
+        )}
+        {isPrintify && form.track_inventory && (
+          <p className="col-span-2 text-[11px] text-shTextMuted -mt-1">
+            Register-only. Online Shop orders always order fresh from Printify regardless of stock — set each size's stock below.
+          </p>
         )}
         {form.sales_destination === "internal" && (
           <div className="col-span-2">
@@ -812,7 +820,7 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                              placeholder={form.price || "0"} data-testid={`product-variant-price-${i}`}
                              className="w-full bg-black/10 border border-shBorder rounded p-1.5 text-shText text-sm" />
                     </div>
-                    {!isPrintify && (
+                    {(!isPrintify || form.track_inventory) && (
                       <div>
                         <label className="text-[10px] text-shTextMuted uppercase tracking-widest">
                           {v.id ? "Stock" : "Starting Stock"}

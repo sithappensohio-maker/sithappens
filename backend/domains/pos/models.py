@@ -58,6 +58,17 @@ class PosSaleLineIn(BaseModel):
     # sale commits.
     gift_card_recipient_email: Optional[str] = Field(default=None, max_length=200)
     recipient_name: Optional[str] = Field(default=None, max_length=120)
+    # Register-only (owner, 2026-10-18): resolves a stocked Printify item
+    # whose shelf stock doesn't fully cover this line's quantity. None
+    # (the default, every other line) means "no decision made/needed yet" —
+    # _pos_resolve_printify_stock treats that as a real choice still owed
+    # whenever stock is PARTIAL, and refuses the sale with a 409 until it's
+    # set. True: ship what's on the shelf, order the rest from Printify.
+    # False: skip the shelf, order the full quantity from Printify. Ignored
+    # for every line that isn't a Printify-fulfilled product with
+    # track_inventory on, and ignored entirely by the online Shop (that
+    # checkout path never looks at stock for a Printify item at all).
+    printify_use_stock: Optional[bool] = None
 
 
 class PosSaleDiscountIn(BaseModel):
