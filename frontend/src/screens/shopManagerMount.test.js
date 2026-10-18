@@ -1026,3 +1026,68 @@ describe("Inline price/stock editing (owner request, 2026-10-18)", () => {
     noReferenceErrors();
   });
 });
+
+// Owner, 2026-10-18: "it would be greatly helpful if these collapsed into
+// the correct categories... this long ass list will get out of hand fast."
+describe("Items grouped by category, collapsible (owner request, 2026-10-18)", () => {
+  const GROUPED_ITEMS = [
+    { kind: "physical_product", id: "p1", name: "Rope Leash", active: true, list_price: 24, category_name: "Care" },
+    { kind: "physical_product", id: "p2", name: "Nail Clippers", active: true, list_price: 12, category_name: "Care" },
+    { kind: "physical_product", id: "p3", name: "Custom Tag", active: true, list_price: 8, category_name: "Customizable Tags" },
+    { kind: "credit_pack", id: "k1", name: "10 Visits", active: true, list_price: 280 },
+  ];
+
+  beforeEach(() => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url.includes("/shop-manager/items")) return Promise.resolve({ data: { items: GROUPED_ITEMS } });
+      return base(url, opts);
+    });
+  });
+
+  test("items are grouped under their real category, each row still shown, uncategorized last", async () => {
+    await mount(<ShopManager />);
+    noReferenceErrors();
+
+    const careHeader = byTestId("sm-category-group-Care");
+    const tagsHeader = byTestId("sm-category-group-Customizable Tags");
+    const uncatHeader = byTestId("sm-category-group-Uncategorized");
+    expect(careHeader).toBeTruthy();
+    expect(tagsHeader).toBeTruthy();
+    expect(uncatHeader).toBeTruthy();
+    expect(careHeader.textContent).toContain("(2)");
+    expect(tagsHeader.textContent).toContain("(1)");
+
+    // Uncategorized sorts after the real categories, not alphabetically
+    // first — it's a fallback bucket, not a filed-under category.
+    const rows = Array.prototype.slice.call(document.querySelectorAll("tbody > tr"));
+    const order = [careHeader, tagsHeader, uncatHeader].map((el) => rows.indexOf(el));
+    expect(order[2]).toBeGreaterThan(order[0]);
+    expect(order[2]).toBeGreaterThan(order[1]);
+
+    expect(byTestId("sm-item-row-p1")).toBeTruthy();
+    expect(byTestId("sm-item-row-p2")).toBeTruthy();
+    expect(byTestId("sm-item-row-p3")).toBeTruthy();
+    expect(byTestId("sm-item-row-k1")).toBeTruthy();
+  });
+
+  test("clicking a category header collapses its rows, and clicking again brings them back", async () => {
+    await mount(<ShopManager />);
+
+    expect(byTestId("sm-item-row-p1")).toBeTruthy();
+    expect(byTestId("sm-item-row-p2")).toBeTruthy();
+    // Collapsing "Care" never touches the unrelated "Customizable Tags" rows.
+    expect(byTestId("sm-item-row-p3")).toBeTruthy();
+
+    await act(async () => { byTestId("sm-category-group-Care").click(); });
+    expect(byTestId("sm-item-row-p1")).toBeFalsy();
+    expect(byTestId("sm-item-row-p2")).toBeFalsy();
+    expect(byTestId("sm-item-row-p3")).toBeTruthy();
+    noReferenceErrors();
+
+    await act(async () => { byTestId("sm-category-group-Care").click(); });
+    expect(byTestId("sm-item-row-p1")).toBeTruthy();
+    expect(byTestId("sm-item-row-p2")).toBeTruthy();
+    noReferenceErrors();
+  });
+});

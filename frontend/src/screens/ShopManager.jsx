@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
@@ -288,6 +288,13 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  // Grouped by category, collapsible (owner, 2026-10-18: "this long ass
+  // list will get out of hand fast... much better if it was organized") —
+  // a catalog with dozens of items in a handful of categories read as one
+  // undifferentiated wall of rows. Collapsed is an explicit opt-OUT set
+  // (empty = everything expanded), so a newly-added category always
+  // starts visible rather than silently defaulting to hidden.
+  const [collapsedCategories, setCollapsedCategories] = useState(() => new Set());
   // Inline price edit — click the Price cell, type, Enter. No reason needed:
   // a price change isn't an audited movement the way stock is.
   const [editingPriceKey, setEditingPriceKey] = useState(null); // "kind:id" of the row being edited
@@ -333,6 +340,32 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     if (!q) return list;
     return list.filter((it) => (it.name || "").toLowerCase().includes(q));
   }, [items, view, search]);
+
+  // Grouped by category, collapsible (owner, 2026-10-18: "this long ass
+  // list will get out of hand fast... much better if it was organized") —
+  // a catalog with dozens of items in a handful of categories read as one
+  // undifferentiated wall of rows. "Uncategorized" always sorts last since
+  // it's a fallback bucket, not a real category someone filed things under.
+  const groupedFiltered = useMemo(() => {
+    const groups = new Map();
+    for (const it of filtered) {
+      const name = it.category_name || "Uncategorized";
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(it);
+    }
+    return Array.from(groups.entries())
+      .map(([name, rows]) => ({ name, rows }))
+      .sort((a, b) => {
+        if (a.name === "Uncategorized") return 1;
+        if (b.name === "Uncategorized") return -1;
+        return a.name.localeCompare(b.name);
+      });
+  }, [filtered]);
+  const toggleCategoryCollapsed = (name) => setCollapsedCategories((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
 
   const priceDisplay = (it) => {
     if (it.kind === "physical_product" && it.sales_destination === "shopify_external") {
@@ -803,7 +836,22 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
           <tbody>
             {loading && <tr><td colSpan={13} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
             {!loading && filtered.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-shTextMuted">No items found.</td></tr>}
-            {filtered.map((it) => {
+            {!loading && groupedFiltered.map((group) => {
+              const collapsed = collapsedCategories.has(group.name);
+              return (
+              <Fragment key={group.name}>
+                <tr className="border-b border-shBorder/60 bg-[var(--sh-card-base)]/40 cursor-pointer select-none"
+                    onClick={() => toggleCategoryCollapsed(group.name)}
+                    data-testid={`sm-category-group-${group.name}`}>
+                  <td colSpan={13} className="py-2 pr-2">
+                    <span className="flex items-center gap-2 text-shText font-black text-[11px] uppercase tracking-widest">
+                      <i className={`fas fa-chevron-${collapsed ? "right" : "down"} text-[9px] text-shTextMuted`} aria-hidden="true" />
+                      {group.name}
+                      <span className="text-shTextMuted font-normal">({group.rows.length})</span>
+                    </span>
+                  </td>
+                </tr>
+                {!collapsed && group.rows.map((it) => {
               const margin = marginDisplay(it);
               const inv = inventoryStatus(it);
               const warnings = itemWarnings(it);
@@ -945,6 +993,9 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                   </div>
                 </td>
               </tr>
+              );
+                })}
+              </Fragment>
               );
             })}
           </tbody>
