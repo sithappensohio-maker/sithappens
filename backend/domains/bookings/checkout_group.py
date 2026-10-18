@@ -192,6 +192,7 @@ def build(server_globals: dict) -> dict:
                     payload["add_ons"] = []
                     payload["base_price"] = None
                     payload["additional_cash_charge"] = 0
+                    payload["tip_amount"] = 0
                     if early_group:
                         settled_target, _rank_fields = await _g("group_rank").settle(_g("db"), target, now=_g("now_iso")())
                         early = await _g("_early_stay_quote")(settled_target)

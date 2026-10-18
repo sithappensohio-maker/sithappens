@@ -520,6 +520,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // never changes old credits, credit lots, or the number of credits redeemed.
   const [checkoutDiscount, setCheckoutDiscount] = useState("");
   const [checkoutDiscountReason, setCheckoutDiscountReason] = useState("");
+  // A tip, added on the spot (owner, 2026-10-18). Plain dollar amount, same
+  // "" = none pattern as checkoutDiscount — preset buttons just fill it in.
+  const [tipAmount, setTipAmount] = useState("");
   // Sprint 110 — fetch multi-dog discount preview (only shows if 2nd+ dog of
   // the same client has already been checked out today).
   const [discountPreview, setDiscountPreview] = useState(null);
@@ -724,7 +727,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
     : 0;
   const salesTaxAmount = Math.round(preTaxChargedToday * (salesTaxRate / 100) * 100) / 100;
-  const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount) * 100) / 100;
+  // Tips, added on the spot (owner, 2026-10-18) — never taxed (gratuities
+  // aren't sales-taxable) and never touched by the one-time discount above
+  // (that already finished reducing preTaxChargedToday before this adds).
+  const tippingCfg = moneyModifierPreview?.tipping || {};
+  const tipAmountNum = isFF ? 0 : Math.max(0, Number(tipAmount) || 0);
+  const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount + tipAmountNum) * 100) / 100;
   // One number at the counter: the stay plus anything bought with it.
   const dueToday = Math.round((chargedToday + shopTotal) * 100) / 100;
   // "Paid with" is asked whenever anything is paid today: the stay, or the
@@ -879,6 +887,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
       }
+      if (tipAmountNum > 0) body.tip_amount = tipAmountNum;
       if (payMethod === "other" && payPickerShown) body.payment_notes = otherNote.trim();   // (only for Other: never stamped on a card payment)
       if (payMethod === "gift_card" && payPickerShown) {
         if (!giftCard) { setErr("Check the gift card's balance first."); setBusy(false); return; }
@@ -970,7 +979,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (isFF) {
         // Nothing is paid at a friends & family pickup (the server refuses money
         // offered here): the visit goes on the paying family's account.
-        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge", "checkout_discount_amount", "checkout_discount_reason", "payment_notes"]) delete body[k];
+        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge", "checkout_discount_amount", "checkout_discount_reason", "payment_notes", "tip_amount"]) delete body[k];
         body.payment_status = "paid_partial";
         body.amount_paid = 0;
         if (ffNoCredits) {
@@ -1935,6 +1944,43 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           )}
         </div>)}
 
+        {/* A tip, added on the spot (owner, 2026-10-18) — never gated behind
+            the pricing permission the discount above needs: anyone taking
+            payment can accept one. Off entirely unless the owner turned it
+            on in Settings (Money Rules → tipping). */}
+        {!isFF && tippingCfg.enabled && (
+          <div className="border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-tip-panel">
+            <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black flex items-center gap-2 mb-3">
+              <StepNumber n={step()} /><span><i className="fas fa-hand-holding-dollar text-shGreen mr-1.5"/>Tip</span>
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {(tippingCfg.presets_pct || []).map((pct) => {
+                const amt = Math.round(preTaxChargedToday * pct) / 100;
+                const active = tipAmount !== "" && Math.abs(Number(tipAmount) - amt) < 0.005;
+                return (
+                  <button key={pct} type="button" onClick={() => setTipAmount(String(amt))}
+                          data-testid={`checkout-tip-preset-${pct}`}
+                          className={`px-3 py-2 rounded border-2 text-[12px] font-black transition ${active ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                    {pct}% · ${amt.toFixed(2)}
+                  </button>
+                );
+              })}
+              {tippingCfg.allow_custom && (
+                <input type="number" min="0" step="0.01" value={tipAmount}
+                       onChange={(e) => setTipAmount(e.target.value)}
+                       data-testid="checkout-tip-custom" placeholder="Custom $"
+                       className="w-28 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+              )}
+              {tipAmount !== "" && Number(tipAmount) > 0 && (
+                <button type="button" onClick={() => setTipAmount("")} data-testid="checkout-tip-clear"
+                        className="text-[11px] font-black uppercase tracking-widest text-gray-500">
+                  No tip
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {btBlock && (
           /* The stay cannot just be waved through, but it must not be a dead
              end either — an owner collecting early leaves sessions that were
@@ -2089,6 +2135,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             {shopTotal > 0 && (
               <p className="text-[12px] text-gray-400 font-bold" data-testid="checkout-total-split">
                 stay ${chargedToday.toFixed(2)} + shop ${shopTotal.toFixed(2)}
+              </p>
+            )}
+            {tipAmountNum > 0 && (
+              <p className="text-[12px] text-shGreen font-bold" data-testid="checkout-tip-included">
+                includes ${tipAmountNum.toFixed(2)} tip
               </p>
             )}
           </div>

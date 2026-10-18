@@ -84,7 +84,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, tips as checkout_tips, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
 from domains.school import ownership as school_ownership, curriculum_moves, structure_gate, mirror_sync as school_mirror
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -1203,6 +1203,7 @@ class BookingOut(BaseModel):
     tax_rate_pct: Optional[float] = None
     taxable_cash_amount: Optional[float] = None
     additional_cash_charge: Optional[float] = None
+    tip_amount: Optional[float] = None
     money_modifier_breakdown: Optional[Dict[str, Any]] = None
     # Sprint 110aw — Board-and-Train. If the chosen service had a
     # `package_program_id`, this is the id of the auto-created program
@@ -1309,6 +1310,10 @@ class CheckoutIn(BaseModel):
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     checkout_discount_amount: float = Field(default=0, ge=0, le=100000)  # one-time discount (domains/bookings/checkout_discount.py)
     checkout_discount_reason: Optional[str] = Field(default=None, max_length=500)
+    # A tip, added on the spot (domains/bookings/tips.py) — deliberately NOT
+    # gated behind the "pricing" permission the way the fields above are:
+    # anyone taking payment can accept a tip.
+    tip_amount: float = Field(default=0, ge=0, le=10000)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
     # computed total, the booking is marked `paid_partial` and the
@@ -1536,7 +1541,7 @@ FINANCIAL_MONEY_FIELDS = {
     "payment_method", "amount_paid", "balance_due", "cash_revenue",
     "tax_amount", "tax_rate_pct", "taxable_cash_amount", "credit_value",
     "credits_deducted", "credit_lot_ids", "credit_lot_redemptions",
-    "multi_dog_discount", "extra_nights", "additional_cash_charge", "credit_covered_value", "checkout_discount",
+    "multi_dog_discount", "extra_nights", "additional_cash_charge", "credit_covered_value", "checkout_discount", "tip_amount",
     "cancellation_charged", "cancellation_fee", "cancellation_fee_pct",
 }
 
@@ -7326,6 +7331,7 @@ def _build_invoice_line_items_from_booking(booking: Dict[str, Any]) -> List[Dict
             "amount": -round(abs(float(discount.get("amount") or 0)), 2), "source": discount,
         })
     lines.extend(checkout_discount.invoice_lines(booking))
+    lines.extend(checkout_tips.invoice_lines(booking))
     tax_amount = float(booking.get("tax_amount") or 0)
     if tax_amount > 0:
         lines.append({
@@ -9585,6 +9591,7 @@ async def _check_out_locked(
         update["actual_price"] = round(prev_price + additional_cash_charge, 2)
         update["additional_cash_charge"] = additional_cash_charge
     checkout_discount.apply(booking, update, body, user, ts)   # after every other price step
+    checkout_tips.apply(booking, update, body)   # dead last — a staff discount must never eat into a tip
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
@@ -12799,7 +12806,7 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         "checked_out_at", "checked_out_by", "checked_out_by_name", "checked_out_lat", "checked_out_lng",
         "checked_out_accuracy_m", "actual_price", "payment_status", "payment_method", "paid_at",
         "amount_paid", "balance_due", "cash_revenue", "tax_amount", "tax_rate_pct",
-        "taxable_cash_amount", "additional_cash_charge", "money_modifier_breakdown",
+        "taxable_cash_amount", "additional_cash_charge", "tip_amount", "money_modifier_breakdown",
         # Surcharges are worked out again at the next checkout (audit #14):
         # left set, checkout skips them and the holiday / late-pickup fee is lost.
         "money_modifiers_applied_at",

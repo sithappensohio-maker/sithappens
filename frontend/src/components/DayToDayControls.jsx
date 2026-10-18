@@ -139,11 +139,14 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       {showSec("money") && (
       <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shPrimary" {...subProps("money")}>
         <Field label="Show tipping prompt at checkout" type="toggle" value={m.tipping_enabled}
-               onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled" disabled unsupported
+               onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled"
                hint="Adds a tip step in the check-out flow with quick-pick percentages." />
         <Field label="Tip preset percentages (comma-separated)" value={(m.tip_presets_pct || []).join(",")}
                onChange={(val) => set("money", "tip_presets_pct", val.split(",").map(x => parseFloat(x.trim())).filter(x => !isNaN(x)))}
-               testId="d2d-tip-presets" disabled unsupported hint="Example: 15,18,20" placeholder="15,18,20" />
+               testId="d2d-tip-presets" hint="Example: 15,18,20" placeholder="15,18,20" />
+        <Field label="Allow a custom tip amount" type="toggle" value={m.tip_allow_custom !== false}
+               onChange={(v) => set("money", "tip_allow_custom", v)} testId="d2d-tip-custom"
+               hint="Off = only the preset percentages above, no typed-in amount." />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Late pickup fee ($/15 min)" type="number" value={m.late_pickup_fee_per_15min}
                  onChange={(v) => set("money", "late_pickup_fee_per_15min", v)} testId="d2d-late-fee"
@@ -553,7 +556,7 @@ function OperatorQuickControls({ d2d }) {
     {
       label: "Money & Checkout",
       lines: [
-        ["Tipping at checkout", "Not available yet", "shAccent"],
+        ["Tipping at checkout", m.tipping_enabled ? `On · ${(m.tip_presets_pct || []).join("/")}%` : "Off", m.tipping_enabled ? "shPrimary" : null],
         ["Late pickup fee", m.late_pickup_fee_per_15min ? `$${m.late_pickup_fee_per_15min}/15min` : "Off"],
         ["No-show fee", "Not available yet", "shAccent"],
       ],

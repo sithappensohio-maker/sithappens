@@ -199,6 +199,14 @@ def build(server_globals: dict) -> dict:
             "label": tax_cfg.get("label") or "Sales Tax",
             "applies": applies,
         }
+        # Tips, added on the spot (owner, 2026-10-18) — the owner's day_to_day
+        # config, read fresh every checkout rather than cached on the screen.
+        money_cfg = ((settings.get("day_to_day") or {}).get("money") or {})
+        result["tipping"] = {
+            "enabled": bool(money_cfg.get("tipping_enabled")),
+            "presets_pct": [float(p) for p in (money_cfg.get("tip_presets_pct") or []) if float(p) > 0],
+            "allow_custom": bool(money_cfg.get("tip_allow_custom", True)),
+        }
         return result
 
     async def checkout_group_preview(

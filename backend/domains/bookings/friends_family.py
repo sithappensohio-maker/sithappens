@@ -410,7 +410,7 @@ async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
     # Extras, a manual price and an extra charge belong to the dog whose button
     # was clicked — as in every combined checkout — never to each dog.
     others = body.model_copy(update={"add_ons": [], "base_price": None, "base_price_reason": None,
-                                     "additional_cash_charge": 0, "retail_lines": []})
+                                     "additional_cash_charge": 0, "tip_amount": 0, "retail_lines": []})
     done = [await _g("check_out")(r["id"], body if r["id"] == anchor["id"] else others, user) for r in rows]
     bill = next((d.get("group_bill") for d in reversed(done) if d.get("group_bill")), None)
     return {"friends_family": True, "bookings": done, "invoice": bill}

@@ -103,6 +103,12 @@ def undo_checkout(booking: Dict[str, Any], *, departure_stands: bool = True
         to_unset["checkout_discount"] = ""
         note["prior_checkout_discount"] = cd
 
+    tip = booking.get("tip_amount")
+    if tip:
+        # Re-asked at the next checkout, same as the discount above.
+        to_unset["tip_amount"] = ""
+        note["prior_tip_amount"] = tip
+
     ext = booking.get("extra_nights") if isinstance(booking.get("extra_nights"), dict) else None
     if ext and int(ext.get("count") or 0) > 0 and not ext.get("in_stay"):
         # The stay keeps its extended end date (any extension, whichever
