@@ -79,6 +79,41 @@ async def quote_for_cart(lines: List[dict], address: ShopShippingAddressIn) -> f
         raise HTTPException(status_code=400, detail="Could not get a shipping rate right now — please choose pickup instead.")
 
 
+def _ship_to_from_order_address(address: dict) -> fedex.ShipToAddress:
+    return fedex.ShipToAddress(
+        street=address.get("address1") or "", city=address.get("city") or "",
+        state=address.get("region") or "", zip=address.get("zip") or "",
+        country=address.get("country") or "US",
+    )
+
+
+async def create_label_for_order(order: dict) -> fedex.ShipmentLabel:
+    """Creates a real FedEx Ground label for a self-fulfilled `order`
+    (owner, 2026-10-18: "do the labels... in the app"). Same fail-closed
+    rules as quote_for_cart — not configured, or nothing to ship, refuses
+    with a clear reason rather than faking a label.
+
+    This is NOT idempotent on its own — every call commits a real
+    shipment against the FedEx account. The one caller
+    (server.create_shop_order_shipping_label) is what makes it safe to
+    click twice, by checking for an already-stored label first and never
+    reaching this function a second time for the same order.
+    """
+    address = order.get("shipping_address")
+    if not address:
+        raise HTTPException(status_code=400, detail="This order has no shipping address on file.")
+    weight = cart_weight_lbs(order.get("lines") or [])
+    if weight <= 0:
+        raise HTTPException(status_code=400, detail="This order has nothing that needs shipping.")
+    if not fedex.FEDEX_ENABLED:
+        raise HTTPException(status_code=400, detail="FedEx shipping isn't configured yet — ship this one manually for now.")
+    try:
+        return await fedex.create_ground_label(
+            ship_to=_ship_to_from_order_address(address), weight_lbs=weight, reference=order.get("id") or "")
+    except fedex.FedexApiError:
+        raise HTTPException(status_code=400, detail="Could not create a FedEx label right now — try again, or ship it manually.")
+
+
 async def email_shipped(db, order: dict) -> Dict[str, Any]:
     """Email the customer that `order` has shipped; never raises. Returns
     what happened, for the staff toast — same contract as

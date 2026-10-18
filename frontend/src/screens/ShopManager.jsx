@@ -1874,6 +1874,29 @@ function shipAddressLine(a) {
   return [a.address1, a.address2, [a.city, a.region, a.zip].filter(Boolean).join(", ")].filter(Boolean).join(", ");
 }
 
+// Opens a FedEx label (base64 PDF/PNG from the server) in its own tab so
+// staff can print it from the browser's own viewer — same Blob + object-URL
+// approach as lib/printGiftCard's openPrintWindow, just for a binary label
+// instead of generated HTML.
+function openShippingLabel(base64, contentType) {
+  try {
+    const bytes = atob(base64 || "");
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], { type: contentType || "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, "_blank", "noopener");
+    if (!win) {
+      URL.revokeObjectURL(url);
+      toast.error("Pop-up blocked — allow pop-ups for this site to view the label.");
+      return;
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch {
+    toast.error("Could not open the label.");
+  }
+}
+
 function OnlineOrdersTab() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1937,6 +1960,36 @@ function OnlineOrdersTab() {
       toast.success("Marked shipped — the customer has been emailed.");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not mark this order shipped");
+    }
+    setBusyId(null);
+  };
+
+  // Owner, 2026-10-18: "do the labels and shit in the app so i dont have
+  // to jump around sites all the time" — creates a REAL FedEx shipment
+  // (not just a quote) and opens the printable label right here. The
+  // server only ever does this once per order (see
+  // create_shop_order_shipping_label's idempotency); clicking it again
+  // just re-opens the same stored label instead of billing a second one.
+  const createLabel = async (orderId) => {
+    setBusyId(orderId);
+    try {
+      const { data } = await api.post(`/admin/shop-orders/${orderId}/shipping-label`);
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, tracking_number: data.tracking_number } : o)));
+      openShippingLabel(data.label_base64, data.label_content_type);
+      toast.success("Label created — opening it to print.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not create a shipping label");
+    }
+    setBusyId(null);
+  };
+
+  const viewLabel = async (orderId) => {
+    setBusyId(orderId);
+    try {
+      const { data } = await api.get(`/admin/shop-orders/${orderId}/shipping-label`);
+      openShippingLabel(data.label_base64, data.label_content_type);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load this order's label");
     }
     setBusyId(null);
   };
@@ -2054,8 +2107,19 @@ function OnlineOrdersTab() {
                     </button>
                   )}
                   {o.shipping_status === "preparing" && (
-                    <div className="flex items-center gap-2" data-testid={`sm-order-shipping-${o.id}`}>
-                      <input value={trackingDrafts[o.id] || ""} maxLength={60}
+                    <div className="flex items-center gap-2 flex-wrap" data-testid={`sm-order-shipping-${o.id}`}>
+                      {o.tracking_number ? (
+                        <button onClick={() => viewLabel(o.id)} disabled={busy} data-testid={`sm-order-view-label-${o.id}`}
+                                className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                          <i className="fas fa-tag mr-1.5" />View / Print Label
+                        </button>
+                      ) : (
+                        <button onClick={() => createLabel(o.id)} disabled={busy} data-testid={`sm-order-create-label-${o.id}`}
+                                className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                          <i className="fas fa-tag mr-1.5" />{busy ? "Creating…" : "Create FedEx Label"}
+                        </button>
+                      )}
+                      <input value={trackingDrafts[o.id] ?? o.tracking_number ?? ""} maxLength={60}
                              onChange={(e) => setTrackingDrafts((d) => ({ ...d, [o.id]: e.target.value }))}
                              placeholder="Tracking # (optional)" data-testid={`sm-order-tracking-input-${o.id}`}
                              className="bg-black/20 border border-shBorder/60 rounded px-2 py-1.5 text-[11px] text-shText w-40" />

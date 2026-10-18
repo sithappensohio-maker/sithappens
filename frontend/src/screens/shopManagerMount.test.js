@@ -779,6 +779,110 @@ describe("Mark Shipped (shipping, Shop gap-list item 5)", () => {
   });
 });
 
+// Owner, 2026-10-18: "do the labels and shit in the app so i dont have to
+// jump around sites all the time" — a real FedEx label, created and
+// reprinted without leaving the Shop Manager.
+describe("Create FedEx Label (owner request, 2026-10-18)", () => {
+  const ORDER = { id: "so-3", status: "paid", fulfillment_status: "fulfilled",
+                  pickup_status: "not_applicable", shipping_status: "preparing",
+                  shipping_address: { address1: "1 Main St", city: "Dayton", region: "OH", zip: "45402" },
+                  client_name: "Dana", total: 58, created_at: "2026-10-01T12:00:00Z",
+                  lines: [{ kind: "product", name: "Dog Bed", quantity: 1 }] };
+
+  beforeEach(() => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => (url.includes("/admin/shop-orders") ? Promise.resolve({ data: { orders: [ORDER] } }) : base(url)));
+    global.URL.createObjectURL = jest.fn(() => "blob:label-x");
+    global.URL.revokeObjectURL = jest.fn();
+  });
+
+  test("creating a label opens it to print and swaps the button to View / Print Label", async () => {
+    const open = jest.spyOn(window, "open").mockReturnValue({});
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { tracking_number: "FDX-1", label_base64: "RkFLRQ==", label_content_type: "application/pdf" } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(byTestId("sm-order-create-label-so-3")).toBeTruthy();
+    expect(byTestId("sm-order-view-label-so-3")).toBeFalsy();
+
+    await act(async () => { byTestId("sm-order-create-label-so-3").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+
+    expect(api.post).toHaveBeenCalledWith("/admin/shop-orders/so-3/shipping-label");
+    expect(open).toHaveBeenCalledWith("blob:label-x", "_blank", "noopener");
+    // The server's own tracking number now shows and the button has
+    // swapped — no second click should ever bill a second shipment.
+    expect(byTestId("sm-order-view-label-so-3")).toBeTruthy();
+    expect(byTestId("sm-order-create-label-so-3")).toBeFalsy();
+    expect(byTestId("sm-order-tracking-input-so-3").value).toBe("FDX-1");
+    noReferenceErrors();
+    open.mockRestore();
+  });
+
+  test("a blocked pop-up is reported, not silently swallowed", async () => {
+    const open = jest.spyOn(window, "open").mockReturnValue(null);
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { tracking_number: "FDX-2", label_base64: "RkFLRQ==", label_content_type: "application/pdf" } });
+    const { toast } = require("sonner");
+    toast.error.mockClear();
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { byTestId("sm-order-create-label-so-3").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Pop-up blocked"));
+    expect(global.URL.revokeObjectURL).toHaveBeenCalledWith("blob:label-x");
+    noReferenceErrors();
+    open.mockRestore();
+  });
+
+  test("a server refusal (e.g. FedEx not configured yet) is shown, not thrown", async () => {
+    api.post.mockReset();
+    api.post.mockRejectedValue({ response: { data: { detail: "FedEx shipping isn't configured yet — ship this one manually for now." } } });
+    const { toast } = require("sonner");
+    toast.error.mockClear();
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { byTestId("sm-order-create-label-so-3").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+
+    expect(toast.error).toHaveBeenCalledWith("FedEx shipping isn't configured yet — ship this one manually for now.");
+    expect(byTestId("sm-order-create-label-so-3")).toBeTruthy();  // still offered — nothing was created
+    noReferenceErrors();
+  });
+
+  test("View / Print Label re-fetches and re-opens the label without creating a new one", async () => {
+    const open = jest.spyOn(window, "open").mockReturnValue({});
+    const SHIPPED_ORDER = { ...ORDER, tracking_number: "FDX-3" };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => {
+      if (url === "/admin/shop-orders/so-3/shipping-label") {
+        return Promise.resolve({ data: { tracking_number: "FDX-3", label_base64: "UkVQUklOVA==", label_content_type: "application/pdf" } });
+      }
+      if (url.includes("/admin/shop-orders")) return Promise.resolve({ data: { orders: [SHIPPED_ORDER] } });
+      return base(url);
+    });
+    api.post.mockReset();
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { byTestId("sm-order-view-label-so-3").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+
+    expect(open).toHaveBeenCalledWith("blob:label-x", "_blank", "noopener");
+    expect(api.post).not.toHaveBeenCalledWith("/admin/shop-orders/so-3/shipping-label");  // reprint, never a re-create
+    noReferenceErrors();
+    open.mockRestore();
+  });
+});
+
 describe("Discount Codes tab", () => {
   const CODE = { id: "dc-1", code: "WELCOME10", kind: "percent", value: 10, active: true,
                  clients_only: true, max_uses_total: null, max_uses_per_client: null,

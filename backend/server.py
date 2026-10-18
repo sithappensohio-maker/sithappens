@@ -44480,7 +44480,12 @@ async def list_shop_orders(fulfillment_status: Optional[str] = None, user: dict 
     q: Dict[str, Any] = {"status": "paid"}
     if fulfillment_status:
         q["fulfillment_status"] = fulfillment_status
-    cursor = db.shop_orders.find(q, {"_id": 0}).sort("created_at", -1)
+    # label_base64 is excluded here on purpose — a printable PDF on every
+    # row would bloat this list for every refresh, long after an order has
+    # shipped. The one place that needs it fetches it by id (see
+    # create/get_shop_order_shipping_label below); tracking_number (a
+    # short string) still comes through, which is all the list view needs.
+    cursor = db.shop_orders.find(q, {"_id": 0, "label_base64": 0}).sort("created_at", -1)
     return {"orders": await cursor.to_list(500)}
 
 
@@ -44687,10 +44692,14 @@ async def mark_shop_order_shipped(order_id: str, body: ShopOrderMarkShippedIn, u
     if order.get("shipping_status") == "shipped":
         return order  # identical action already applied — idempotent no-op
     ts = now_iso()
+    # A manually-typed tracking number always wins; otherwise keep whatever
+    # create_shop_order_shipping_label already stamped on this order rather
+    # than blanking it out just because staff left the field empty.
+    tracking_number = (body.tracking_number or "").strip() or order.get("tracking_number") or None
     result = await db.shop_orders.find_one_and_update(
         {"id": order_id, "shipping_status": "preparing"},
         {"$set": {"shipping_status": "shipped", "shipped_at": ts,
-                  "tracking_number": (body.tracking_number or "").strip() or None, "updated_at": ts}},
+                  "tracking_number": tracking_number, "updated_at": ts}},
         projection={"_id": 0},
         return_document=ReturnDocument.AFTER,
     )
@@ -44698,6 +44707,56 @@ async def mark_shop_order_shipped(order_id: str, body: ShopOrderMarkShippedIn, u
         raise HTTPException(status_code=400, detail="This order's shipping status must be 'preparing' before it can be marked shipped.")
     result["shipped_email"] = await shop_shipping.email_shipped(db, result)
     return result
+
+
+@api.post("/admin/shop-orders/{order_id}/shipping-label")
+async def create_shop_order_shipping_label(order_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Creates a real FedEx label for a self-fulfilled order (owner,
+    2026-10-18: "do the labels... in the app so i dont have to jump
+    around sites"), so staff print-and-pack right here instead of
+    re-entering the same order on FedEx's own site.
+
+    Idempotent by construction: an order that already has a stored label
+    returns that SAME one instead of ever calling FedEx a second time —
+    domains.shop.shipping.create_label_for_order commits a real shipment
+    on every call, so this is the one and only gate that decides whether
+    it's safe to call it at all.
+    """
+    _require_take_payments(user)
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("shipping_status") == "not_applicable":
+        raise HTTPException(status_code=400, detail="This order has nothing to ship.")
+    if order.get("shipping_status") == "shipped":
+        raise HTTPException(status_code=400, detail="This order has already shipped.")
+    if order.get("tracking_number") and order.get("label_base64"):
+        return {"tracking_number": order["tracking_number"], "label_base64": order["label_base64"],
+                "label_content_type": order.get("label_content_type") or "application/pdf"}
+    label = await shop_shipping.create_label_for_order(order)
+    ts = now_iso()
+    await db.shop_orders.update_one(
+        {"id": order_id},
+        {"$set": {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
+                   "label_content_type": label.label_content_type, "label_created_at": ts, "updated_at": ts}},
+    )
+    return {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
+            "label_content_type": label.label_content_type}
+
+
+@api.get("/admin/shop-orders/{order_id}/shipping-label")
+async def get_shop_order_shipping_label(order_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Re-fetches an already-created label (reprint), without ever calling
+    FedEx again — the create endpoint above is the only thing that does
+    that."""
+    _require_take_payments(user)
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0, "tracking_number": 1, "label_base64": 1, "label_content_type": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if not order.get("label_base64"):
+        raise HTTPException(status_code=404, detail="No label has been created for this order yet.")
+    return {"tracking_number": order.get("tracking_number"), "label_base64": order["label_base64"],
+            "label_content_type": order.get("label_content_type") or "application/pdf"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

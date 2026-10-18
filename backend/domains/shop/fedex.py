@@ -119,6 +119,78 @@ async def _access_token() -> str:
     return token
 
 
+@dataclass
+class ShipmentLabel:
+    tracking_number: str
+    label_base64: str
+    label_content_type: str
+
+
+async def create_ground_label(*, ship_to: ShipToAddress, weight_lbs: float, reference: str = "") -> ShipmentLabel:
+    """Creates a REAL FedEx Ground shipment (owner, 2026-10-18: "do the
+    labels... in the app so i dont have to jump around sites") and returns
+    its tracking number plus a printable label — the Ship API's
+    counterpart to quote_ground_rate's rate-ONLY call above.
+
+    Unlike a rate quote, this commits an actual shipment against the
+    account on every call — there is no dry-run. Callers must persist the
+    result and never call this twice for the same package; see
+    domains.shop.shipping.create_label_for_order for the one caller and
+    its idempotency check.
+
+    Same sandbox caveat as quote_ground_rate: written against FedEx's
+    documented Ship API (POST /ship/v1/shipments) shape without a live
+    account to verify against — exercise this in FedEx's sandbox before
+    ever trusting it to commit a real shipment.
+    """
+    if not FEDEX_ENABLED:
+        raise FedexNotConfigured("FedEx shipping is not configured.")
+    from_addr = ship_from()
+    token = await _access_token()
+    body = {
+        "labelResponseOptions": "LABEL",
+        "accountNumber": {"value": FEDEX_ACCOUNT_NUMBER},
+        "requestedShipment": {
+            "shipper": {"address": {
+                "streetLines": [from_addr["street"]], "city": from_addr["city"],
+                "stateOrProvinceCode": from_addr["state"], "postalCode": from_addr["zip"], "countryCode": "US",
+            }},
+            "recipients": [{"address": {
+                "streetLines": [ship_to.street], "city": ship_to.city,
+                "stateOrProvinceCode": ship_to.state, "postalCode": ship_to.zip, "countryCode": ship_to.country,
+            }}],
+            "pickupType": "DROPOFF_AT_FEDEX_LOCATION",
+            "serviceType": "FEDEX_GROUND",
+            "packagingType": "YOUR_PACKAGING",
+            "shippingChargesPayment": {"paymentType": "SENDER"},
+            "labelSpecification": {"labelFormatType": "COMMON2D", "imageType": "PDF"},
+            "requestedPackageLineItems": [{
+                "weight": {"units": "LB", "value": round(float(weight_lbs), 2)},
+                **({"customerReferences": [{"customerReferenceType": "CUSTOMER_REFERENCE", "value": reference}]} if reference else {}),
+            }],
+        },
+    }
+    async with httpx.AsyncClient(base_url=API_BASE, timeout=REQUEST_TIMEOUT_SECONDS) as http:
+        resp = await http.post(
+            "/ship/v1/shipments", json=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "X-locale": "en_US"},
+        )
+    if resp.status_code >= 300:
+        raise FedexApiError(resp.status_code, resp.text)
+    data = resp.json()
+    shipments = (data.get("output") or {}).get("transactionShipments") or []
+    pieces = shipments[0].get("pieceResponses") or [] if shipments else []
+    tracking = ((pieces[0] or {}).get("trackingNumberInfo") or {}).get("trackingNumber") if pieces else None
+    docs = (pieces[0] or {}).get("packageDocuments") or [] if pieces else []
+    label_doc = docs[0] if docs else None
+    label_b64 = (label_doc or {}).get("encodedLabel")
+    if not tracking or not label_b64:
+        raise FedexApiError(resp.status_code, "FedEx's ship response did not include a usable tracking number or label.")
+    doc_type = (label_doc or {}).get("docType", "PDF")
+    content_type = "application/pdf" if str(doc_type).upper() == "PDF" else "image/png"
+    return ShipmentLabel(tracking_number=tracking, label_base64=label_b64, label_content_type=content_type)
+
+
 async def quote_ground_rate(*, ship_to: ShipToAddress, weight_lbs: float) -> float:
     """Dollar cost to ship one package of `weight_lbs` to `ship_to` via
     FedEx Ground — the one service level this offers; a self-fulfilled

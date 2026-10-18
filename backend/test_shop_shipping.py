@@ -62,6 +62,14 @@ def _fedex_configured(rate=15.0):
         yield
 
 
+@contextlib.contextmanager
+def _fedex_label_configured(tracking="123456789012", label_b64="ZmFrZS1wZGY=", content_type="application/pdf"):
+    label = fedex.ShipmentLabel(tracking_number=tracking, label_base64=label_b64, label_content_type=content_type)
+    with patch.object(fedex, "FEDEX_ENABLED", True), \
+         patch.object(fedex, "create_ground_label", AsyncMock(return_value=label)) as mock_create:
+        yield mock_create
+
+
 _made = {"clients": [], "products": []}
 
 
@@ -281,3 +289,159 @@ def test_mark_shipped_refuses_a_pickup_order():
         assert False
     except HTTPException as e:
         assert e.status_code == 400 and "nothing to ship" in e.detail
+
+
+# ──────────────────────────────── shipping labels (owner, 2026-10-18) ──
+# "do the labels and shit in the app so i dont have to jump around
+# sites" — a real FedEx Ground shipment + printable label, created and
+# reprinted without ever leaving the Shop Manager. FedEx's Ship API call
+# itself (fedex.create_ground_label) is always mocked here, same as
+# quote_ground_rate above — see test_fedex_client.py for the API-shape
+# coverage. This file tests the business rules: who's allowed to create
+# one, exactly once per order, and where the result ends up.
+
+def _shipped_order():
+    """A paid, shippable order sitting in shipping_status == 'preparing'."""
+    user = _client()
+    product = _product(price=40.0, weight=2.0)
+    with _fedex_configured(rate=10.0):
+        return _pay(user, [server.ShopCartItemIn(kind="product", ref_id=product["id"], quantity=1)],
+                    shipping_address=ADDRESS)
+
+
+def test_create_label_for_order_refuses_without_a_shipping_address():
+    order = {"id": "x", "shipping_address": None, "lines": [{"kind": "product", "shipping_weight_lbs": 2.0, "quantity": 1}]}
+    with _fedex_label_configured():
+        try:
+            run(shop_shipping.create_label_for_order(order))
+            assert False
+        except HTTPException as e:
+            assert e.status_code == 400 and "no shipping address" in e.detail
+
+
+def test_create_label_for_order_refuses_with_nothing_to_ship():
+    order = {"id": "x", "shipping_address": ADDRESS.model_dump(), "lines": [{"kind": "credit_pack", "quantity": 1}]}
+    with _fedex_label_configured():
+        try:
+            run(shop_shipping.create_label_for_order(order))
+            assert False
+        except HTTPException as e:
+            assert e.status_code == 400 and "nothing" in e.detail
+
+
+def test_create_label_for_order_fails_closed_when_fedex_is_not_configured():
+    order = {"id": "x", "shipping_address": ADDRESS.model_dump(), "lines": [{"kind": "product", "shipping_weight_lbs": 2.0, "quantity": 1}]}
+    with patch.object(fedex, "FEDEX_ENABLED", False):
+        try:
+            run(shop_shipping.create_label_for_order(order))
+            assert False
+        except HTTPException as e:
+            assert e.status_code == 400 and "isn't configured" in e.detail
+
+
+def test_create_label_for_order_returns_the_real_fedex_label():
+    order = {"id": "x", "shipping_address": ADDRESS.model_dump(),
+             "lines": [{"kind": "product", "shipping_weight_lbs": 2.0, "quantity": 2}]}
+    with _fedex_label_configured(tracking="999", label_b64="abc123") as mock_create:
+        label = run(shop_shipping.create_label_for_order(order))
+    assert label.tracking_number == "999" and label.label_base64 == "abc123"
+    assert mock_create.await_args.kwargs["weight_lbs"] == 4.0  # 2.0 lbs x qty 2
+    assert mock_create.await_args.kwargs["ship_to"].city == "Dayton"
+
+
+def test_create_label_for_order_turns_a_fedex_error_into_a_clean_refusal():
+    order = {"id": "x", "shipping_address": ADDRESS.model_dump(),
+             "lines": [{"kind": "product", "shipping_weight_lbs": 2.0, "quantity": 1}]}
+    with patch.object(fedex, "FEDEX_ENABLED", True), \
+         patch.object(fedex, "create_ground_label", AsyncMock(side_effect=fedex.FedexApiError(500, "boom"))):
+        try:
+            run(shop_shipping.create_label_for_order(order))
+            assert False
+        except HTTPException as e:
+            assert e.status_code == 400 and "try again" in e.detail
+
+
+def test_create_shipping_label_endpoint_stores_tracking_and_label_on_the_order():
+    order = _shipped_order()
+    with _fedex_label_configured(tracking="777", label_b64="xyz") as mock_create:
+        out = run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    assert out == {"tracking_number": "777", "label_base64": "xyz", "label_content_type": "application/pdf"}
+    assert mock_create.await_count == 1
+    doc = run(server.db.shop_orders.find_one({"id": order["id"]}, {"_id": 0}))
+    assert doc["tracking_number"] == "777" and doc["label_base64"] == "xyz" and doc["label_created_at"]
+    assert doc["shipping_status"] == "preparing"  # creating a label doesn't itself mark it shipped
+
+
+def test_create_shipping_label_endpoint_is_idempotent_never_calls_fedex_twice():
+    order = _shipped_order()
+    with _fedex_label_configured(tracking="777", label_b64="xyz") as mock_create:
+        first = run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    with _fedex_label_configured(tracking="should-not-be-used", label_b64="should-not-be-used") as mock_second:
+        second = run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    assert first == second
+    assert mock_second.await_count == 0  # the stored label won, FedEx was never called again
+
+
+def test_create_shipping_label_endpoint_refuses_a_pickup_order():
+    user = _client()
+    product = _product(price=40.0)
+    order = _pay(user, [server.ShopCartItemIn(kind="product", ref_id=product["id"], quantity=1)])
+    try:
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+        assert False
+    except HTTPException as e:
+        assert e.status_code == 400 and "nothing to ship" in e.detail
+
+
+def test_create_shipping_label_endpoint_refuses_an_already_shipped_order():
+    order = _shipped_order()
+    run(server.db.shop_orders.update_one({"id": order["id"]}, {"$set": {"shipping_status": "shipped"}}))
+    try:
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+        assert False
+    except HTTPException as e:
+        assert e.status_code == 400 and "already shipped" in e.detail
+
+
+def test_get_shipping_label_endpoint_404s_until_one_exists_then_returns_it():
+    order = _shipped_order()
+    try:
+        run(server.get_shop_order_shipping_label(order["id"], STAFF))
+        assert False
+    except HTTPException as e:
+        assert e.status_code == 404
+
+    with _fedex_label_configured(tracking="555", label_b64="reprint-me"):
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    fetched = run(server.get_shop_order_shipping_label(order["id"], STAFF))
+    assert fetched == {"tracking_number": "555", "label_base64": "reprint-me", "label_content_type": "application/pdf"}
+
+
+def test_mark_shipped_keeps_the_label_tracking_number_when_none_is_typed_in():
+    order = _shipped_order()
+    with _fedex_label_configured(tracking="888", label_b64="abc"):
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    with patch("domains.shop.shipping.email_shipped", AsyncMock(return_value={"state": "sent"})):
+        result = run(server.mark_shop_order_shipped(order["id"], server.ShopOrderMarkShippedIn(), STAFF))
+    assert result["shipping_status"] == "shipped"
+    assert result["tracking_number"] == "888"  # the label's own number, not blanked out
+
+
+def test_mark_shipped_lets_a_manually_typed_tracking_number_override_the_label():
+    order = _shipped_order()
+    with _fedex_label_configured(tracking="888", label_b64="abc"):
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    with patch("domains.shop.shipping.email_shipped", AsyncMock(return_value={"state": "sent"})):
+        result = run(server.mark_shop_order_shipped(
+            order["id"], server.ShopOrderMarkShippedIn(tracking_number="HAND-DELIVERED"), STAFF))
+    assert result["tracking_number"] == "HAND-DELIVERED"
+
+
+def test_shop_orders_list_never_carries_the_label_pdf():
+    order = _shipped_order()
+    with _fedex_label_configured(tracking="321", label_b64="a-whole-pdf-worth-of-bytes"):
+        run(server.create_shop_order_shipping_label(order["id"], STAFF))
+    listing = run(server.list_shop_orders(None, STAFF))
+    row = next(o for o in listing["orders"] if o["id"] == order["id"])
+    assert "label_base64" not in row
+    assert row["tracking_number"] == "321"  # the small, useful field still comes through
