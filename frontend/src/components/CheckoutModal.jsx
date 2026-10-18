@@ -414,6 +414,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [shopItems, setShopItems] = useState([]);
   const [shopCart, setShopCart] = useState({});
   const [shopOpen, setShopOpen] = useState(false);
+  // Barcode scan support at pickup (owner, 2026-10-18) — same text-box-that-
+  // doubles-as-a-scanner-catcher pattern as the Register (Pos.jsx's own
+  // productSearch/scanProductBySku): also filters the tile grid as-you-type,
+  // but only an EXACT sku match on Enter adds to the cart (see shopSearchRef
+  // below) — a USB/Bluetooth scanner is just a keyboard that types the code
+  // then sends Enter, and a cashier typing a partial name and hitting Enter
+  // must never auto-add something a live substring match would have shown.
+  const [shopSearch, setShopSearch] = useState("");
+  const shopSearchRef = useRef(null);
   // One key per open modal, so a retry replays the sale instead of selling
   // the same bag of food twice.
   const [retailKey] = useState(() => `pickup-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`);
@@ -723,6 +732,23 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     if (qty > 0) next[id] = qty; else delete next[id];
     return next;
   });
+  const shopSearchQ = shopSearch.trim().toLowerCase();
+  const shopItemsFiltered = shopSearchQ
+    ? shopItems.filter((it) => [it.name, it.sku, it.category_name, it.category].filter(Boolean).join(" ").toLowerCase().includes(shopSearchQ))
+    : shopItems;
+  const scanShopItemBySku = (e) => {
+    if (e.key !== "Enter") return;
+    const code = shopSearchQ;
+    if (!code) return;
+    const match = shopItems.find((it) => (it.sku || "").trim().toLowerCase() === code);
+    if (match) {
+      setShopQty(match.id, (shopCart[match.id] || 0) + 1);
+      setShopSearch("");
+      shopSearchRef.current?.focus();
+      return;
+    }
+    toast.error(`No product found for code "${shopSearch.trim()}"`);
+  };
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
     : 0;
@@ -1623,8 +1649,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
 
             {(shopOpen || shopLines.length > 0) && (
               <div className="mt-3">
+                <input ref={shopSearchRef} value={shopSearch} onChange={(e) => setShopSearch(e.target.value)}
+                       onKeyDown={scanShopItemBySku} data-testid="checkout-shop-search"
+                       placeholder="Search by name, SKU… or scan a barcode"
+                       className="w-full mb-2 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                {shopSearchQ && shopItemsFiltered.length === 0 && (
+                  <p className="text-[12px] text-gray-500 mb-2" data-testid="checkout-shop-no-matches">
+                    No products match "{shopSearch.trim()}".
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[240px] overflow-y-auto">
-                  {shopItems.map((it) => {
+                  {shopItemsFiltered.map((it) => {
                     const qty = shopCart[it.id] || 0;
                     return (
                       <div key={it.id} data-testid={`checkout-product-${it.id}`}
