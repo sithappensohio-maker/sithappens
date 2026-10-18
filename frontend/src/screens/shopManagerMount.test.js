@@ -91,7 +91,7 @@ afterEach(() => {
   console.error.mockRestore();
 });
 
-const mount = async (el) => {
+const mountRaw = async (el) => {
   await act(async () => {
     root = createRoot(container);
     // The real provider, not a stub: ShopManager's useConfirm throwing
@@ -100,6 +100,24 @@ const mount = async (el) => {
     root.render(<MemoryRouter><ConfirmProvider>{el}</ConfirmProvider></MemoryRouter>);
   });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+};
+
+// Items tab categories default to collapsed (owner, 2026-10-18). Every
+// existing test here predates that and reaches into a row by id right
+// after mounting, so the shared `mount` helper expands every category
+// once up front — the handful of tests that actually care about the
+// collapsed default use `mountRaw` directly instead.
+const expandAllCategories = async () => {
+  const headers = Array.prototype.slice.call(
+    document.querySelectorAll('[data-testid^="sm-category-group-"]')
+  );
+  for (const h of headers) {
+    await act(async () => { h.click(); });
+  }
+};
+const mount = async (el) => {
+  await mountRaw(el);
+  await expandAllCategories();
 };
 
 /** The specific failure this file exists for. */
@@ -1045,8 +1063,8 @@ describe("Items grouped by category, collapsible (owner request, 2026-10-18)", (
     });
   });
 
-  test("items are grouped under their real category, each row still shown, uncategorized last", async () => {
-    await mount(<ShopManager />);
+  test("items are grouped under their real category, collapsed by default, uncategorized last", async () => {
+    await mountRaw(<ShopManager />);
     noReferenceErrors();
 
     const careHeader = byTestId("sm-category-group-Care");
@@ -1065,29 +1083,36 @@ describe("Items grouped by category, collapsible (owner request, 2026-10-18)", (
     expect(order[2]).toBeGreaterThan(order[0]);
     expect(order[2]).toBeGreaterThan(order[1]);
 
+    // Every category starts collapsed — no item row is visible yet.
+    expect(byTestId("sm-item-row-p1")).toBeFalsy();
+    expect(byTestId("sm-item-row-p2")).toBeFalsy();
+    expect(byTestId("sm-item-row-p3")).toBeFalsy();
+    expect(byTestId("sm-item-row-k1")).toBeFalsy();
+
+    await expandAllCategories();
     expect(byTestId("sm-item-row-p1")).toBeTruthy();
     expect(byTestId("sm-item-row-p2")).toBeTruthy();
     expect(byTestId("sm-item-row-p3")).toBeTruthy();
     expect(byTestId("sm-item-row-k1")).toBeTruthy();
+    noReferenceErrors();
   });
 
-  test("clicking a category header collapses its rows, and clicking again brings them back", async () => {
-    await mount(<ShopManager />);
+  test("clicking a collapsed category header expands its rows, and clicking again collapses them", async () => {
+    await mountRaw(<ShopManager />);
 
+    expect(byTestId("sm-item-row-p1")).toBeFalsy();
+    expect(byTestId("sm-item-row-p3")).toBeFalsy();
+
+    await act(async () => { byTestId("sm-category-group-Care").click(); });
     expect(byTestId("sm-item-row-p1")).toBeTruthy();
     expect(byTestId("sm-item-row-p2")).toBeTruthy();
-    // Collapsing "Care" never touches the unrelated "Customizable Tags" rows.
-    expect(byTestId("sm-item-row-p3")).toBeTruthy();
+    // Expanding "Care" never touches the unrelated "Customizable Tags" rows.
+    expect(byTestId("sm-item-row-p3")).toBeFalsy();
+    noReferenceErrors();
 
     await act(async () => { byTestId("sm-category-group-Care").click(); });
     expect(byTestId("sm-item-row-p1")).toBeFalsy();
     expect(byTestId("sm-item-row-p2")).toBeFalsy();
-    expect(byTestId("sm-item-row-p3")).toBeTruthy();
-    noReferenceErrors();
-
-    await act(async () => { byTestId("sm-category-group-Care").click(); });
-    expect(byTestId("sm-item-row-p1")).toBeTruthy();
-    expect(byTestId("sm-item-row-p2")).toBeTruthy();
     noReferenceErrors();
   });
 });

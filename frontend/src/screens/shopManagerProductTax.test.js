@@ -42,6 +42,14 @@ const mount = async (el) => {
     root.render(<MemoryRouter><ConfirmProvider>{el}</ConfirmProvider></MemoryRouter>);
   });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  // Items tab categories default to collapsed (owner, 2026-10-18) — expand
+  // them so a row lookup right after mount still finds the row.
+  const headers = Array.prototype.slice.call(
+    document.querySelectorAll('[data-testid^="sm-category-group-"]')
+  );
+  for (const h of headers) {
+    await act(async () => { h.click(); });
+  }
 };
 
 const byTestId = (id) => document.querySelector(`[data-testid="${id}"]`);

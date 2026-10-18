@@ -288,13 +288,22 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
-  // Grouped by category, collapsible (owner, 2026-10-18: "this long ass
-  // list will get out of hand fast... much better if it was organized") —
-  // a catalog with dozens of items in a handful of categories read as one
-  // undifferentiated wall of rows. Collapsed is an explicit opt-OUT set
-  // (empty = everything expanded), so a newly-added category always
-  // starts visible rather than silently defaulting to hidden.
+  // Grouped by category, collapsible, defaulting to collapsed (owner,
+  // 2026-10-18: "this long ass list will get out of hand fast... much
+  // better if it was organized", then "make them default to the collapsed
+  // state") — a catalog with dozens of items in a handful of categories
+  // read as one undifferentiated wall of rows. The set is populated once,
+  // after the first load completes, with every category seen at that
+  // moment — not recomputed on every refetch, so a category the admin has
+  // already expanded doesn't silently re-collapse under them when a filter
+  // or inline edit triggers a reload.
   const [collapsedCategories, setCollapsedCategories] = useState(() => new Set());
+  const collapseInitRef = useRef(false);
+  useEffect(() => {
+    if (collapseInitRef.current || loading) return;
+    collapseInitRef.current = true;
+    setCollapsedCategories(new Set(items.map((it) => it.category_name || "Uncategorized")));
+  }, [items, loading]);
   // Inline price edit — click the Price cell, type, Enter. No reason needed:
   // a price change isn't an audited movement the way stock is.
   const [editingPriceKey, setEditingPriceKey] = useState(null); // "kind:id" of the row being edited
