@@ -3282,6 +3282,16 @@ html[data-theme-target-staff-portal="true"] .sh-admin-page-header--decorated::be
 .sh-theme-section-header-client {
   position: relative;
   isolation: isolate;
+  /* Owner, 2026-10-18: "way zoomed in and cutting off most of the image" —
+     background-size:cover fills whatever box it's given, and this box had
+     no floor: with just a title/subtitle and (on a page with zero shop
+     departments) no tiles below it, the section could be barely 100px
+     tall, so a landscape photo got covered into a short, wide strip and
+     cropped hard top/bottom. .sh-theme-hero-client already solved this
+     exact problem for the Home hero the same way (min-height: 200px,
+     "so an uploaded hero image actually has room to read as a banner
+     rather than a thin strip") — this just never got the same floor. */
+  min-height: 260px;
 }
 .sh-theme-section-header-client::before {
   content: "";

@@ -152,7 +152,12 @@ export const THEME_ASSET_SLOT_CONFIG = {
   heroBackground:          { cssVar: "--theme-asset-hero-background",           size: "pdp",      scrim: "directional" },
   sidebarAccentTop:        { cssVar: "--theme-asset-sidebar-accent-top",        size: "card" },
   sidebarAccentBottom:     { cssVar: "--theme-asset-sidebar-accent-bottom",     size: "card" },
-  sectionHeaderBackground: { cssVar: "--theme-asset-section-header-background", size: "card",      scrim: "directional" },
+  // Owner, 2026-10-18: "still isnt right its blurry" — this is a full-
+  // bleed background the same way heroBackground/eventBanner/loginBackground
+  // (both "pdp", 900px) are, not a small fixed-size tile the way the other
+  // "card" (400px) slots below genuinely are; it just never got bumped when
+  // those did.
+  sectionHeaderBackground: { cssVar: "--theme-asset-section-header-background", size: "pdp",       scrim: "directional" },
   dashboardCardOverlay:    { cssVar: "--theme-asset-dashboard-card-overlay",    size: "card",      scrim: "flat" },
   eventBanner:             { cssVar: "--theme-asset-event-banner",              size: "pdp",       scrim: "directional" },
   loginBackground:         { cssVar: "--theme-asset-login-background",          size: "pdp",       scrim: "flat" },
