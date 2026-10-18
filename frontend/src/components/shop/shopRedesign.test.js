@@ -179,7 +179,8 @@ describe("cards", () => {
 
 describe("browsing controls", () => {
   test("departments are a labelled navigation with a current page", () => {
-    const depts = DEPARTMENTS.slice(0, 3).map((d) => ({ ...d, count: 2 }));
+    const depts = DEPARTMENTS.filter((d) => ["gear", "training"].includes(d.key))
+      .map((d) => ({ ...d, count: 2 }));
     mount(<DepartmentNav departments={depts} current="gear" onSelect={() => {}} />);
     expect(q('nav[aria-label="Shop departments"]')).toBeTruthy();
     expect(byTestId("shop-dept-gear").getAttribute("aria-current")).toBe("page");
@@ -188,7 +189,10 @@ describe("browsing controls", () => {
 
   test("choosing a department reports it", () => {
     const picked = [];
-    const depts = DEPARTMENTS.slice(0, 2).map((d) => ({ ...d, count: 1 }));
+    // By key, not position — DEPARTMENTS' own order is load-bearing for
+    // match precedence (see shopDepartments.js), not for this test.
+    const depts = DEPARTMENTS.filter((d) => ["gear", "training"].includes(d.key))
+      .map((d) => ({ ...d, count: 1 }));
     mount(<DepartmentNav departments={depts} current={null} onSelect={(k) => picked.push(k)} />);
     act(() => byTestId("shop-dept-training").click());
     expect(picked).toEqual(["training"]);

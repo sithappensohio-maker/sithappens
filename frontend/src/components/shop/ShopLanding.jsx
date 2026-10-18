@@ -59,7 +59,7 @@ function SectionHeading({ eyebrow, title, action, onAction, id }) {
  * being hardcoded here. Capped in height so products are visible on a phone
  * without scrolling past a poster first.
  */
-function Hero({ shopPage, departments, onSelectDepartment, items, isPublic }) {
+function Hero({ shopPage, departments, onSelectDepartment, items, isPublic, categories }) {
   const title = shopPage?.title || "Shop Sit Happens";
   const subtitle = shopPage?.subtitle
     || "Gear we actually use, training that actually works, and visits you can buy up front.";
@@ -83,7 +83,7 @@ function Hero({ shopPage, departments, onSelectDepartment, items, isPublic }) {
              data-testid="shop-department-tiles">
           {departments.map((d, i) => (
             <DepartmentTile key={d.key} dept={d} onSelect={onSelectDepartment}
-                            isPublic={isPublic} coverItem={itemsInDepartment(items, d.key)[0]}
+                            isPublic={isPublic} coverItem={itemsInDepartment(items, d.key, categories)[0]}
                             /* An odd number of departments leaves the last
                                tile alone in a two-up row with a hole beside
                                it. Letting it span both columns turns a
@@ -98,6 +98,12 @@ function Hero({ shopPage, departments, onSelectDepartment, items, isPublic }) {
 
 /** A department as a place you can walk into, for the row under the hero. */
 function DepartmentTile({ dept, coverItem, onSelect, isPublic, wide }) {
+  // A self-service department (shopDepartments.js's effectiveDepartments)
+  // carries its own category photo — prefer that over a representative
+  // item's, same as the admin set it up. ProductImage only reads
+  // `image_id`/`image_ids` off whatever it's given, so a plain
+  // `{image_id}` stands in for a real catalog item here.
+  const cover = dept.coverImageId ? { image_id: dept.coverImageId } : coverItem;
   return (
     <button type="button" onClick={() => onSelect(dept.key)}
             data-testid={`shop-dept-tile-${dept.key}`}
@@ -105,7 +111,7 @@ function DepartmentTile({ dept, coverItem, onSelect, isPublic, wide }) {
                        hover:border-shPrimary/50 transition focus-visible:outline focus-visible:outline-2
                        focus-visible:outline-offset-2 focus-visible:outline-shPrimary`}>
       <div className="relative">
-        <ProductImage item={coverItem} surface="thumb" ratio="16 / 9" isPublic={isPublic} alt=""
+        <ProductImage item={cover} surface="thumb" ratio="16 / 9" isPublic={isPublic} alt=""
                       className="!rounded-none group-hover:[&>img]:scale-[1.04]" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
       </div>
@@ -118,7 +124,7 @@ function DepartmentTile({ dept, coverItem, onSelect, isPublic, wide }) {
 }
 
 export default function ShopLanding({
-  items, departments, shopPage, mode, onSelectDepartment, onOpenDetail,
+  items, departments, categories, shopPage, mode, onSelectDepartment, onOpenDetail,
   onAdd, onRequireAccount, onShopify, baselineVisitPrice, schoolStats,
   // The heart, if this viewer has somewhere to save things to. A function
   // rather than a flag so the landing never has to know what a favourite is.
@@ -128,20 +134,23 @@ export default function ShopLanding({
   recentlyViewed,
 }) {
   const isPublic = mode === "guest";
-  const has = (key) => itemsInDepartment(items, key).length > 0;
-  const top = (key, n) => sortItems(itemsInDepartment(items, key), "featured").slice(0, n);
+  const has = (key) => itemsInDepartment(items, key, categories).length > 0;
+  const top = (key, n) => sortItems(itemsInDepartment(items, key, categories), "featured").slice(0, n);
 
+  // "gear" specifically needs `categories` — without it, items a custom
+  // department (e.g. Grooming) has already claimed would fall back to
+  // matching "gear" here too, undoing the exclusion departments.js applies.
   const gear = top("gear", 8);
   const training = top("training", 2);
   const school = top("online_school", 2);
   const packs = top("prepaid", 3);
-  const gifts = sortItems(itemsInDepartment(items, "gift_cards"), "price_asc").slice(0, 4);
+  const gifts = sortItems(itemsInDepartment(items, "gift_cards", categories), "price_asc").slice(0, 4);
 
   const cardProps = { mode, onOpenDetail, onAdd, onRequireAccount, onShopify, favoriteSlot, bestSellerIds };
 
   return (
     <div className="space-y-10 sm:space-y-14" data-testid="shop-landing">
-      <Hero shopPage={shopPage} departments={departments} items={items}
+      <Hero shopPage={shopPage} departments={departments} items={items} categories={categories}
             onSelectDepartment={onSelectDepartment} isPublic={isPublic} />
 
       {gear.length > 0 && (

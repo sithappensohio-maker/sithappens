@@ -652,7 +652,8 @@ export default function PortalShop({
   const departments = useMemo(() => visibleDepartments(browsableItems, {
     sectionVisible: (sectionKey) =>
       ((shopPage.sections || {})[sectionKey] || {}).visible !== false,
-  }), [browsableItems, shopPage]);
+    categories,
+  }), [browsableItems, shopPage, categories]);
 
   // Changing department resets filters, because a category filter from Gear
   // means nothing in Training and silently hiding half of a department the
@@ -677,15 +678,15 @@ export default function PortalShop({
   // and the item pages.
   useEffect(() => {
     const onPop = () => {
-      setDepartment(resolveDepartmentParam(new URLSearchParams(window.location.search)));
+      setDepartment(resolveDepartmentParam(new URLSearchParams(window.location.search), categories));
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [categories]);
 
   const browsing = useMemo(
-    () => browseItems(browsableItems, { department, query: search, filters, sort }),
-    [browsableItems, department, search, filters, sort],
+    () => browseItems(browsableItems, { department, query: search, filters, sort, categories }),
+    [browsableItems, department, search, filters, sort, categories],
   );
   // Looked up against the already-VISIBLE departments list, never the raw
   // static registry (departmentByKey alone) — `department` comes straight
@@ -1317,6 +1318,7 @@ export default function PortalShop({
         <ShopLanding
           items={browsableItems}
           departments={departments}
+          categories={categories}
           shopPage={shopPage}
           mode={mode}
           baselineVisitPrice={baselineVisitPrice}
@@ -1351,13 +1353,13 @@ export default function PortalShop({
 
           <div className="flex items-center gap-2 mt-4 mb-5">
             <ShopSearch value={search} onChange={setSearch} resultCount={browsing.length} />
-            <FilterControls items={itemsInDepartment(browsableItems, department)}
+            <FilterControls items={itemsInDepartment(browsableItems, department, categories)}
                             filters={filters} onChange={changeFilters} compact />
             <SortSelect value={sort} onChange={changeSort} />
           </div>
 
           <div className="flex gap-7 items-start">
-            <FilterControls items={itemsInDepartment(browsableItems, department)}
+            <FilterControls items={itemsInDepartment(browsableItems, department, categories)}
                             filters={filters} onChange={changeFilters} />
 
             <div className="flex-1 min-w-0">

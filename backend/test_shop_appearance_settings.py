@@ -150,6 +150,49 @@ def test_category_new_fields_round_trip_through_create_update_and_taxonomy():
         run(server.db.shop_categories.delete_one({"id": created["id"]}))
 
 
+# Owner, 2026-10-17: "i need to be able to add these categories my self as
+# well for future stuff" — a Merch & Gear category flagged is_department
+# becomes its own Shop department (frontend/src/lib/shopDepartments.js's
+# effectiveDepartments). Round-trip + the public (guest) taxonomy shape too,
+# since that's a separate endpoint (/public/shop/taxonomy) built on the same
+# _shop_taxonomy_payload — not just the authenticated one.
+def test_is_department_round_trips_through_create_update_and_both_taxonomy_shapes():
+    user = _admin_user()
+    body = server.ShopCategoryIn(name=f"{TAG} Grooming", section="merch", is_department=True)
+    created = run(server.create_shop_category(body, user))
+    try:
+        assert created["is_department"] is True
+        assert created["section"] == "merch"
+
+        payload = run(server._shop_taxonomy_payload())
+        row = next(c for c in payload["categories"] if c["id"] == created["id"])
+        assert row["is_department"] is True
+        assert row["section"] == "merch"
+
+        patch = server.ShopCategoryPatch(is_department=False)
+        updated = run(server.update_shop_category(created["id"], patch, user))
+        assert updated["is_department"] is False
+
+        payload2 = run(server._shop_taxonomy_payload())
+        row2 = next(c for c in payload2["categories"] if c["id"] == created["id"])
+        assert row2["is_department"] is False
+    finally:
+        run(server.db.shop_categories.delete_one({"id": created["id"]}))
+
+
+def test_is_department_defaults_false_and_is_omitted_by_default_in_create():
+    user = _admin_user()
+    created = run(server.create_shop_category(
+        server.ShopCategoryIn(name=f"{TAG} Plain Category", section="merch"), user))
+    try:
+        assert created["is_department"] is False
+        payload = run(server._shop_taxonomy_payload())
+        row = next(c for c in payload["categories"] if c["id"] == created["id"])
+        assert row["is_department"] is False
+    finally:
+        run(server.db.shop_categories.delete_one({"id": created["id"]}))
+
+
 # ---------------------------------------------------------------------------
 # Category/subcategory image-clearing regression tests — covers the bug
 # where update_shop_category/update_shop_subcategory treated a `null`

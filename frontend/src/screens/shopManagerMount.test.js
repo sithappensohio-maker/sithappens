@@ -288,6 +288,73 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
   });
 });
 
+// Owner, 2026-10-17 (follow-up to the Grooming-department fix above):
+// "i need to be able to add these categories my self as well for future
+// stuff" — a Merch & Gear category can now be flagged to become its own
+// Shop department, no code change required per category.
+describe("self-service Shop departments (owner request, 2026-10-17)", () => {
+  const mockCategories = (overrides = {}) => {
+    api.get.mockImplementation((url) => {
+      if (url.includes("/analytics/overview")) return Promise.resolve({ data: OVERVIEW });
+      if (url.includes("/shop-manager/items")) return Promise.resolve({ data: { items: ITEMS } });
+      if (url.includes("/programs/meta")) return Promise.resolve({ data: { types: [], focuses: [] } });
+      if (url.includes("/programs")) return Promise.resolve({ data: [] });
+      if (url.includes("/shop/uncategorized-items")) return Promise.resolve({ data: { items: [] } });
+      if (url.includes("/shop/categories")) return Promise.resolve({ data: { categories: [
+        { id: "cat-groom", name: "Grooming", section: "merch", is_department: false, active: true, item_count: 2, ...overrides },
+      ] } });
+      return Promise.resolve({ data: {} });
+    });
+  };
+
+  test("the department checkbox is offered for a Merch & Gear category, not a Training one", async () => {
+    mockCategories();
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("sm-add-category").click(); });
+    expect(byTestId("sm-category-is-department")).toBeTruthy();
+
+    await act(async () => { byTestId("sm-cat-section-training").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("sm-add-category").click(); });
+    expect(byTestId("sm-category-is-department")).toBeFalsy();
+    noReferenceErrors();
+  });
+
+  test("checking it and saving sends is_department through to the category", async () => {
+    mockCategories();
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { ok: true } });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("sm-add-category").click(); });
+    const setInput = (id, value) => {
+      const el = byTestId(id);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setInput("sm-category-name-input", "Spa Day"); });
+    await act(async () => { byTestId("sm-category-is-department").click(); });
+    await act(async () => { byTestId("sm-save-category").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/shop/categories",
+      expect.objectContaining({ is_department: true }));
+    noReferenceErrors();
+  });
+
+  test("a flagged category shows the Department pill in the list", async () => {
+    mockCategories({ is_department: true });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(text()).toContain("Department");
+    noReferenceErrors();
+  });
+});
+
 describe("CSV import", () => {
   const pickFile = async (text = "name,price\nNew Treats,10.00\n") => {
     const input = byTestId("csv-import-file-input");

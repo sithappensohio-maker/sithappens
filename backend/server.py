@@ -41289,6 +41289,12 @@ class ShopCategoryIn(BaseModel):
     # duplicated as separate fields.
     mobile_image_id: Optional[str] = None
     is_featured: bool = False
+    # Owner, 2026-10-17: self-service Shop departments. A Merch & Gear
+    # category with this set gets its own top-level Shop tile (see
+    # shopDepartments.js's effectiveDepartments), pulling its items out of
+    # the generic "Gear" department. Deliberately NOT is_featured — that
+    # one only reorders category nav, a different concern.
+    is_department: bool = False
     hide_when_empty: Optional[bool] = None
     active: bool = True
     sort_order: Optional[int] = None
@@ -41307,6 +41313,7 @@ class ShopCategoryPatch(BaseModel):
     image_id: Optional[str] = None
     mobile_image_id: Optional[str] = None
     is_featured: Optional[bool] = None
+    is_department: Optional[bool] = None
     hide_when_empty: Optional[bool] = None
     active: Optional[bool] = None
 
@@ -41501,7 +41508,8 @@ async def create_shop_category(body: ShopCategoryIn, user: dict = Depends(requir
         "id": str(uuid.uuid4()), "name": name, "slug": slug, "section": body.section,
         "description": (body.description or "").strip() or None,
         "icon": body.icon, "image_id": body.image_id, "mobile_image_id": body.mobile_image_id,
-        "is_featured": body.is_featured, "hide_when_empty": body.hide_when_empty, "active": body.active,
+        "is_featured": body.is_featured, "is_department": body.is_department,
+        "hide_when_empty": body.hide_when_empty, "active": body.active,
         "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_category_sort_order(),
         "created_at": ts, "updated_at": ts,
         "created_by": user.get("name", "Admin"), "updated_by": user.get("name", "Admin"),
@@ -41544,6 +41552,8 @@ async def update_shop_category(category_id: str, body: ShopCategoryPatch, user: 
         patch["mobile_image_id"] = body.mobile_image_id.strip() or None
     if body.is_featured is not None:
         patch["is_featured"] = body.is_featured
+    if body.is_department is not None:
+        patch["is_department"] = body.is_department
     if body.hide_when_empty is not None:
         patch["hide_when_empty"] = body.hide_when_empty
     if body.active is not None:
@@ -42510,6 +42520,10 @@ async def _shop_taxonomy_payload() -> dict:
         {"id": c["id"], "name": c["name"], "description": c.get("description"), "icon": c.get("icon"),
          "image_id": c.get("image_id"), "mobile_image_id": c.get("mobile_image_id"),
          "is_featured": bool(c.get("is_featured")), "hide_when_empty": c.get("hide_when_empty"),
+         # section + is_department: the client Shop's own department list
+         # (shopDepartments.js's effectiveDepartments) reads these to know
+         # which Merch & Gear categories should be their own top-level tile.
+         "section": c.get("section"), "is_department": bool(c.get("is_department")),
          "subcategories": subs_by_cat.get(c["id"], [])}
         for c in cats
     ]}

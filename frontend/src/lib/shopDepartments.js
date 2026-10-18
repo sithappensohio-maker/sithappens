@@ -73,8 +73,44 @@ export const DEPARTMENTS = [
   },
 ];
 
-export function departmentByKey(key) {
-  return DEPARTMENTS.find((d) => d.key === key) || null;
+/**
+ * Self-service departments (owner, 2026-10-17: "i need to be able to add
+ * these categories my self as well for future stuff").
+ *
+ * A Merch & Gear category with `is_department` set (Shop Manager →
+ * Categories & Layout, next to the existing `is_featured` toggle — a
+ * different concern, shown-first ordering, not this) becomes its own
+ * top-level Shop tile, spliced in immediately before "gear" (the catch-all
+ * for every other physical product — order here is load-bearing, same as
+ * the built-in departments below it). Matched on `category_id`, not name —
+ * stable across a rename, unlike this file's first (now-deleted) one-off
+ * "grooming" special case.
+ *
+ * `categories` is the `/shop/catalog/taxonomy` (or `/public/shop/taxonomy`)
+ * payload's own category list — optional and defaults to none, so every
+ * existing caller that does not pass it sees exactly the 5 built-in
+ * departments, unchanged.
+ */
+export function effectiveDepartments(categories) {
+  const custom = (categories || [])
+    .filter((c) => c.section === "merch" && c.is_department && c.active !== false)
+    .map((c) => ({
+      key: `cat:${c.id}`,
+      label: c.name,
+      tagline: c.description || "",
+      layout: "grid",
+      kinds: ["product"],
+      section: "merch",
+      coverImageId: c.image_id || null,
+      match: (i) => i.category_id === c.id,
+    }));
+  if (!custom.length) return DEPARTMENTS;
+  const gearIndex = DEPARTMENTS.findIndex((d) => d.key === "gear");
+  return [...DEPARTMENTS.slice(0, gearIndex), ...custom, ...DEPARTMENTS.slice(gearIndex)];
+}
+
+export function departmentByKey(key, categories) {
+  return effectiveDepartments(categories).find((d) => d.key === key) || null;
 }
 
 /**
@@ -96,27 +132,27 @@ const SECTION_ALIASES = {
   online_school: "online_school",
 };
 
-export function resolveDepartmentParam(params) {
+export function resolveDepartmentParam(params, categories) {
   if (!params) return null;
   const get = typeof params.get === "function" ? (k) => params.get(k) : (k) => params[k];
   const direct = get("dept");
-  if (departmentByKey(direct)) return direct;
+  if (departmentByKey(direct, categories)) return direct;
   const legacy = SECTION_ALIASES[get("section")] || SECTION_ALIASES[get("tab")];
-  return departmentByKey(legacy) ? legacy : null;
+  return departmentByKey(legacy, categories) ? legacy : null;
 }
 
 /** Which department a catalog item belongs in. One department, never two. */
-export function departmentForItem(item) {
+export function departmentForItem(item, categories) {
   if (!item) return null;
-  return DEPARTMENTS.find(
+  return effectiveDepartments(categories).find(
     (d) => d.kinds.includes(item.kind) && (!d.match || d.match(item)),
   ) || null;
 }
 
-export function itemsInDepartment(items, key) {
-  const dept = departmentByKey(key);
+export function itemsInDepartment(items, key, categories) {
+  const dept = departmentByKey(key, categories);
   if (!dept) return items || [];
-  return (items || []).filter((i) => departmentForItem(i)?.key === key);
+  return (items || []).filter((i) => departmentForItem(i, categories)?.key === key);
 }
 
 /**
@@ -126,9 +162,9 @@ export function itemsInDepartment(items, key) {
  * looks broken rather than well-stocked. `sectionVisible` lets the admin's
  * existing section switches keep working — it is asked, not second-guessed.
  */
-export function visibleDepartments(items, { sectionVisible } = {}) {
-  return DEPARTMENTS
-    .map((d) => ({ ...d, count: itemsInDepartment(items, d.key).length }))
+export function visibleDepartments(items, { sectionVisible, categories } = {}) {
+  return effectiveDepartments(categories)
+    .map((d) => ({ ...d, count: itemsInDepartment(items, d.key, categories).length }))
     .filter((d) => d.count > 0)
     .filter((d) => !d.section || !sectionVisible || sectionVisible(d.section));
 }
@@ -257,8 +293,8 @@ export function activeFilterCount(filters) {
 
 /** Search, then filter, then sort — in that order, so sorting applies to
  *  what is actually on screen rather than to the whole catalog. */
-export function browseItems(items, { department, query, filters, sort } = {}) {
-  let list = department ? itemsInDepartment(items, department) : (items || []);
+export function browseItems(items, { department, query, filters, sort, categories } = {}) {
+  let list = department ? itemsInDepartment(items, department, categories) : (items || []);
   list = searchItems(list, query);
   list = applyFilters(list, filters);
   return sortItems(list, sort);

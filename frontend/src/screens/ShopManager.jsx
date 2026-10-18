@@ -947,7 +947,7 @@ function CategoriesTab() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  const BLANK_CATEGORY_DRAFT = { name: "", description: "", image_id: null, mobile_image_id: null, is_featured: false, hide_when_empty: null };
+  const BLANK_CATEGORY_DRAFT = { name: "", description: "", image_id: null, mobile_image_id: null, is_featured: false, is_department: false, hide_when_empty: null };
   const [addingCategory, setAddingCategory] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState(null); // null = adding new; category.id = editing
   const [categoryDraft, setCategoryDraft] = useState(BLANK_CATEGORY_DRAFT);
@@ -995,7 +995,8 @@ function CategoriesTab() {
     setCategoryDraft({
       name: cat.name || "", description: cat.description || "",
       image_id: cat.image_id || null, mobile_image_id: cat.mobile_image_id || null,
-      is_featured: !!cat.is_featured, hide_when_empty: cat.hide_when_empty ?? null,
+      is_featured: !!cat.is_featured, is_department: !!cat.is_department,
+      hide_when_empty: cat.hide_when_empty ?? null,
     });
     setCategoryOriginalImageId(cat.image_id || null);
     setCategoryOriginalMobileImageId(cat.mobile_image_id || null);
@@ -1024,7 +1025,8 @@ function CategoriesTab() {
       // POST (create) has no such ambiguity, so it keeps sending null.
       image_id: categoryDraft.image_id || (editingCategoryId ? "" : null),
       mobile_image_id: categoryDraft.mobile_image_id || (editingCategoryId ? "" : null),
-      is_featured: categoryDraft.is_featured, hide_when_empty: categoryDraft.hide_when_empty,
+      is_featured: categoryDraft.is_featured, is_department: categoryDraft.is_department,
+      hide_when_empty: categoryDraft.hide_when_empty,
     };
     try {
       if (editingCategoryId) {
@@ -1190,6 +1192,14 @@ function CategoriesTab() {
                          data-testid="sm-category-featured" />
                   <span className="text-shText text-sm">Featured (shown first, before non-featured categories)</span>
                 </label>
+                {section === "merch" && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={categoryDraft.is_department}
+                           onChange={(e) => setCategoryDraft((d) => ({ ...d, is_department: e.target.checked }))}
+                           data-testid="sm-category-is-department" />
+                    <span className="text-shText text-sm">Feature as its own Shop department — items in this category leave Gear and get their own tile</span>
+                  </label>
+                )}
                 <label className="flex items-center gap-2 text-sm text-shText">
                   Hide when empty:
                   <select value={categoryDraft.hide_when_empty === null ? "" : categoryDraft.hide_when_empty ? "true" : "false"}
@@ -1225,6 +1235,7 @@ function CategoriesTab() {
                   <p className="text-shText font-bold text-sm truncate">
                     {cat.name} <span className="text-shTextMuted font-normal">· {cat.item_count} item{cat.item_count === 1 ? "" : "s"}</span>
                     {cat.is_featured && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary/10 text-shPrimary align-middle">Featured</span>}
+                    {cat.is_department && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shSecondary/10 text-shSecondary align-middle">Department</span>}
                   </p>
                 </div>
                 <StatusPill active={cat.active} />

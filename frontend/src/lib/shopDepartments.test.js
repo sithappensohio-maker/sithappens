@@ -13,7 +13,8 @@
  *      is looking at it.
  */
 import {
-  DEPARTMENTS, departmentForItem, itemsInDepartment, visibleDepartments,
+  DEPARTMENTS, effectiveDepartments, departmentForItem, departmentByKey,
+  itemsInDepartment, visibleDepartments, resolveDepartmentParam,
   searchItems, sortItems, SORTS, availableFilters, applyFilters,
   activeFilterCount, browseItems, badgesFor, packValue, EMPTY_FILTERS,
 } from "./shopDepartments";
@@ -86,6 +87,72 @@ describe("departments are what a customer would call them", () => {
   test("turning a section off never hides gift cards, which belong to none", () => {
     const keys = visibleDepartments(ALL, { sectionVisible: () => false }).map((d) => d.key);
     expect(keys).toEqual(["gift_cards"]);
+  });
+
+  // Owner, 2026-10-17: "grooming category isnt showing as an option and
+  // its placing grooming items under gear" (fixed with a one-off hardcoded
+  // "grooming" department), then "i need to be able to add these categories
+  // my self as well for future stuff" — replaced by this general mechanism:
+  // any Merch & Gear category with `is_department` set becomes its own
+  // department, read off Shop Manager's own category data, no code change
+  // needed per category.
+  describe("self-service departments, read off a Merch & Gear category's own is_department flag", () => {
+    const bath = { kind: "product", id: "p4", name: "Bath", price: 20, category_id: "cat-groom" };
+    const plainGear = { kind: "product", id: "p5", name: "Harness", price: 30, category_id: "c1" };
+    const groomingCategory = { id: "cat-groom", name: "Grooming", description: "Bath, nail trims and other grooming extras.",
+                                section: "merch", is_department: true, active: true, image_id: "img-groom" };
+
+    test("a product whose category is flagged lands in that department, not gear", () => {
+      expect(departmentForItem(bath, [groomingCategory]).key).toBe("cat:cat-groom");
+      expect(departmentForItem(bath, [groomingCategory]).label).toBe("Grooming");
+    });
+
+    test("without the categories argument, every product still lands in gear — unchanged default", () => {
+      expect(departmentForItem(bath).key).toBe("gear");
+    });
+
+    test("a product in an unflagged category still lands in gear", () => {
+      expect(departmentForItem(plainGear, [groomingCategory]).key).toBe("gear");
+    });
+
+    test("gear and the custom department never share an item", () => {
+      const items = [bath, plainGear];
+      expect(itemsInDepartment(items, "gear", [groomingCategory]).map((i) => i.id)).toEqual(["p5"]);
+      expect(itemsInDepartment(items, "cat:cat-groom", [groomingCategory]).map((i) => i.id)).toEqual(["p4"]);
+    });
+
+    test("matched by category_id, not name — surviving a rename unlike the old one-off version", () => {
+      const renamed = { ...bath, id: "p6" };
+      const renamedCategory = { ...groomingCategory, name: "Grooming & Spa Day" };
+      expect(departmentForItem(renamed, [renamedCategory]).key).toBe("cat:cat-groom");
+    });
+
+    test("a Training or Prepaid Visits category is never promoted, even if flagged", () => {
+      const trainingCategory = { ...groomingCategory, id: "cat-train", section: "training" };
+      expect(effectiveDepartments([trainingCategory])).toBe(DEPARTMENTS);
+    });
+
+    test("an inactive flagged category is dropped", () => {
+      const inactive = { ...groomingCategory, active: false };
+      expect(effectiveDepartments([inactive])).toBe(DEPARTMENTS);
+    });
+
+    test("the custom department shares the Merch & Gear section switch with gear", () => {
+      const keys = visibleDepartments([bath], { sectionVisible: (s) => s !== "merch", categories: [groomingCategory] })
+        .map((d) => d.key);
+      expect(keys).not.toContain("cat:cat-groom");
+    });
+
+    test("departmentByKey and resolveDepartmentParam resolve the custom key when categories are passed", () => {
+      expect(departmentByKey("cat:cat-groom", [groomingCategory])?.label).toBe("Grooming");
+      expect(departmentByKey("cat:cat-groom")).toBeNull(); // not resolvable without categories
+      const params = new URLSearchParams("?dept=cat:cat-groom");
+      expect(resolveDepartmentParam(params, [groomingCategory])).toBe("cat:cat-groom");
+    });
+
+    test("the department's own cover image comes through for the tile", () => {
+      expect(departmentForItem(bath, [groomingCategory]).coverImageId).toBe("img-groom");
+    });
   });
 });
 
