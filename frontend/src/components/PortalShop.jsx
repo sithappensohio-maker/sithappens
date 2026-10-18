@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
-import ItemThumbnail from "./ItemThumbnail";
+import { ProductImage } from "./shop/ShopPrimitives";
 import { isFreeClaimable } from "../lib/freeCourseClaim";
 import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
@@ -1144,13 +1144,17 @@ export default function PortalShop({
           shop_page.banner_*. Rendered only when there's something to show. */}
       {(shopPage.banner_image_id || shopPage.banner_heading) && (
         <div className="mb-4 rounded-2xl border border-shBorder overflow-hidden relative" data-testid="shop-banner">
-          {/* surface="banner": this is the one variant="banner" image that
-              genuinely spans the page's full width (up to 1152px) — the
-              register's own product tiles and the Online School card use
-              the same variant at far smaller sizes, so the derivative
-              choice is an explicit override here, not ItemThumbnail's
-              shared default (see shopImage.js's own banner plan entry). */}
-          <ItemThumbnail imageId={shopPage.banner_image_id} alt={shopPage.banner_heading || "Shop banner"} variant="banner" surface="banner" size={220} className="w-full" public={mode === "guest"} />
+          {/* ProductImage, not ItemThumbnail: ItemThumbnail's variant="banner"
+              forces a fixed pixel height (cropping via object-cover) sized
+              for the POS register tile, which chopped off the top and
+              bottom of a wide admin-uploaded banner photo. ProductImage's
+              `ratio` reserves a box shaped like the banner artwork itself
+              (2000x667), so the full image shows with nothing cut off.
+              surface="banner" keeps the same full-resolution derivative
+              (see shopImage.js's own banner plan entry). */}
+          <ProductImage item={{ image_id: shopPage.banner_image_id }} surface="banner" ratio="3 / 1"
+                        alt={shopPage.banner_heading || "Shop banner"} isPublic={mode === "guest"}
+                        className="w-full !rounded-none" />
           {(shopPage.banner_heading || (shopPage.banner_cta_text && shopPage.banner_cta_url)) && (
             <div className="p-4 flex items-center justify-between gap-3 flex-wrap">
               {shopPage.banner_heading && <p className="text-shText font-black text-lg">{shopPage.banner_heading}</p>}
