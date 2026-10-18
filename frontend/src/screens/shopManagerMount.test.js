@@ -869,3 +869,107 @@ describe("Reviews tab", () => {
     noReferenceErrors();
   });
 });
+
+// Owner, 2026-10-18: "click a price right in the table, type the new
+// number, done — no opening the full edit screen for a quick price
+// change." update_pos_product is a full-replace PUT (PosProductIn), not a
+// patch — the real risk here was an inline edit that only sent {price}
+// silently wiping every other field (category, variants, visibility, tax...)
+// to its Pydantic default. These tests exist specifically to catch that.
+describe("Inline price/stock editing (owner request, 2026-10-18)", () => {
+  const typeInto = (id, value) => {
+    const el = byTestId(id);
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const pressEnter = (id) => {
+    byTestId(id).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  };
+
+  test("editing a physical product's price inline sends the full product payload, not a partial one", async () => {
+    const RAW_P1 = {
+      id: "p1", name: "Rope Leash", sku: "RL-1", category: "Leashes", description: "A leash",
+      price: 24, cost: 10, low_stock_threshold: 2, track_inventory: true, active: true,
+      show_online: true, online_description: "", image_id: "img1", image_ids: ["img1"],
+      online_sort_order: null, category_id: "cat1", subcategory_id: null, featured: true,
+      show_at_register: true, sales_destination: "internal", shopify_product_url: null,
+      shopify_display_price: null, shopify_from_price: false, printify_product_id: null,
+      printify_blueprint_id: null, printify_print_provider_id: null, printify_print_areas: null,
+      publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
+      requires_approval: false, requires_completed_onboarding: false, taxable: true,
+      tax_exempt_reason: null, shippable: false, shipping_weight_lbs: null, variants: [],
+      stock_on_hand: 24,
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url === "/pos/products" && opts?.params?.include_inactive) return Promise.resolve({ data: [RAW_P1] });
+      return base(url, opts);
+    });
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ok: true } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-price-p1").click(); });
+    await act(async () => { typeInto("sm-price-input-p1", "29.99"); });
+    await act(async () => { pressEnter("sm-price-input-p1"); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(api.put).toHaveBeenCalledWith("/pos/products/p1", expect.objectContaining({
+      name: "Rope Leash", sku: "RL-1", category: "Leashes", price: 29.99,
+      category_id: "cat1", featured: true, show_online: true, image_id: "img1",
+    }));
+    noReferenceErrors();
+  });
+
+  test("editing a credit pack's price inline merges into its raw record, not a bare patch", async () => {
+    const RAW_K1 = { id: "k1", name: "10 Visits", qty: 10, price: 280, service_type: "daycare", active: true };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url === "/credit-packs" && opts?.params?.include_inactive) return Promise.resolve({ data: [RAW_K1] });
+      return base(url, opts);
+    });
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ok: true } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-price-k1").click(); });
+    await act(async () => { typeInto("sm-price-input-k1", "299"); });
+    await act(async () => { pressEnter("sm-price-input-k1"); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(api.put).toHaveBeenCalledWith("/credit-packs/k1", expect.objectContaining({
+      id: "k1", name: "10 Visits", qty: 10, price: 299, service_type: "daycare",
+    }));
+    noReferenceErrors();
+  });
+
+  // Unlike price, stock is an audited movement — the backend requires a
+  // reason for every adjust-stock call. Inline skips the modal, not the
+  // reason requirement.
+  test("inline stock edit requires a reason before it will call adjust-stock", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url.includes("/shop-manager/items")) {
+        return Promise.resolve({ data: { items: ITEMS.map((it) => it.id === "p1" ? { ...it, track_inventory: true, stock_on_hand: 5 } : it) } });
+      }
+      return base(url, opts);
+    });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { stock_on_hand: 10 } });
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-inventory-p1").click(); });
+    await act(async () => { typeInto("sm-stock-inline-qty-p1", "5"); });
+    await act(async () => { byTestId("sm-stock-inline-save-p1").click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.post).not.toHaveBeenCalledWith("/pos/products/p1/adjust-stock", expect.anything());
+
+    await act(async () => { typeInto("sm-stock-inline-reason-p1", "Shipment received"); });
+    await act(async () => { byTestId("sm-stock-inline-save-p1").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/pos/products/p1/adjust-stock",
+      { quantity_delta: 5, reason: "Shipment received", source: "MANUAL_ADJUSTMENT" });
+    noReferenceErrors();
+  });
+});

@@ -55,6 +55,12 @@ const SECTION_TABS = [
   { key: "training", label: "Training" },
 ];
 
+const VIEW_OPTIONS = [
+  ["all", "All"], ["missing_details", "Missing Details"], ["uncategorized", "Uncategorized"],
+  ["low_stock", "Low Stock"], ["out_of_stock", "Out of Stock"], ["hidden", "Hidden"],
+  ["inactive", "Inactive"], ["archived", "Archived"],
+];
+
 const KIND_LABEL = { physical_product: "Product", credit_pack: "Prepaid Pack", training_program: "Training Program" };
 
 const BLANK_PRODUCT_FORM = {
@@ -97,6 +103,53 @@ const blankProgramForm = (type = "private_lessons") => ({
   publicly_visible: false, show_public_price: true,
   requires_dog: false, requires_approval: false, requires_completed_onboarding: false,
 });
+
+// Rebuilds a physical product's full update_pos_product payload from its
+// raw stored record (GET /pos/products), the same field-by-field shape
+// saveProduct() builds from the (string-based) editor form — update_pos_product
+// takes a full PosProductIn replace, not a patch, so an inline edit that only
+// sent `{price}` would reset every other field to its Pydantic default
+// (wiping category, variants, visibility, tax, everything). Kept separate
+// from saveProduct's own body-building rather than unified with it: that one
+// reads string form state (`productForm.price`), this one reads raw numeric
+// DB values (`raw.price`) — different enough input shapes that forcing one
+// shared function would need its own branching anyway.
+function physicalProductPutPayload(raw, overrides = {}) {
+  const r = { ...raw, ...overrides };
+  const isShopify = r.sales_destination === "shopify_external";
+  const isPrintify = r.sales_destination === "printify";
+  return {
+    name: (r.name || "").trim(), sku: isShopify ? null : (r.sku || null),
+    category: isShopify ? "" : (r.category || ""), description: r.description || null,
+    price: isShopify ? 0 : Number(r.price || 0),
+    cost: (!isShopify && r.cost != null && r.cost !== "") ? Number(r.cost) : null,
+    low_stock_threshold: (!isShopify && r.low_stock_threshold != null) ? Number(r.low_stock_threshold) : null,
+    track_inventory: !isShopify && !!r.track_inventory, active: r.active !== false,
+    variants: isShopify ? [] : variantsPayload(r.variants || []),
+    show_online: !!r.show_online, online_description: r.online_description || null,
+    image_id: r.image_id || null, image_ids: r.image_ids || [],
+    online_sort_order: r.online_sort_order ?? null,
+    category_id: r.category_id || null, subcategory_id: r.subcategory_id || null,
+    featured: !!r.featured, show_at_register: r.show_at_register !== false,
+    sales_destination: r.sales_destination || "internal",
+    shopify_product_url: isShopify ? (r.shopify_product_url || "").trim() : null,
+    shopify_display_price: (isShopify && r.shopify_display_price != null && r.shopify_display_price !== "") ? Number(r.shopify_display_price) : null,
+    shopify_from_price: isShopify && !!r.shopify_from_price,
+    printify_product_id: isPrintify ? (r.printify_product_id || "").trim() : null,
+    printify_blueprint_id: isPrintify ? r.printify_blueprint_id : null,
+    printify_print_provider_id: isPrintify ? r.printify_print_provider_id : null,
+    printify_print_areas: isPrintify ? r.printify_print_areas : null,
+    publicly_visible: !!r.publicly_visible,
+    guest_cart_allowed: !isShopify && !!r.publicly_visible && !!r.guest_cart_allowed,
+    show_public_price: r.show_public_price !== false,
+    requires_approval: !isShopify && !!r.publicly_visible && !!r.requires_approval,
+    requires_completed_onboarding: !isShopify && !!r.publicly_visible && !!r.requires_completed_onboarding,
+    taxable: r.taxable !== false,
+    tax_exempt_reason: r.taxable !== false ? null : (r.tax_exempt_reason || "").trim() || null,
+    shippable: !isShopify && !isPrintify && !!r.shippable,
+    shipping_weight_lbs: (!isShopify && !isPrintify && r.shippable) ? Number(r.shipping_weight_lbs || 0) : null,
+  };
+}
 
 function itemKindLabel(it) {
   if (it.kind === "physical_product" && it.sales_destination === "shopify_external") return "Shopify Merchandise";
@@ -227,6 +280,27 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [printLabelTarget, setPrintLabelTarget] = useState(null); // {productId, itemName, initialSku, price} — row-level quick print, non-variant products only
+  // Bulk select — "clean up unused stuff" (owner, 2026-10-17) one row at a
+  // time was the whole reason Delete got added everywhere; it's still one
+  // row at a time without this. Keyed by "kind:id" since credit_pack and
+  // training_program ids aren't guaranteed unique against each other.
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  // Inline price edit — click the Price cell, type, Enter. No reason needed:
+  // a price change isn't an audited movement the way stock is.
+  const [editingPriceKey, setEditingPriceKey] = useState(null); // "kind:id" of the row being edited
+  const [priceDraft, setPriceDraft] = useState("");
+  const [priceSaving, setPriceSaving] = useState(false);
+  // Inline stock edit — NOT a bare "type a number, done" the way price is:
+  // adjust-stock is an audited movement and the backend requires a reason
+  // (3+ chars) for every change, by design, same as the Receive/Adjust
+  // modal. This keeps that invariant but inline, in the row itself, instead
+  // of a popup — qty delta + reason, two fields instead of opening a modal.
+  const [editingStockKey, setEditingStockKey] = useState(null);
+  const [stockDraftQty, setStockDraftQty] = useState("");
+  const [stockDraftReason, setStockDraftReason] = useState("");
+  const [stockDraftSaving, setStockDraftSaving] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -247,6 +321,10 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       .finally(() => setLoading(false));
   }, [section, view]);
   useEffect(() => { load(); }, [load]);
+  // A changed Type/Status filter can make the selected rows disappear from
+  // view entirely — clear the selection rather than leave it acting on
+  // items the admin can no longer see.
+  useEffect(() => { setSelected(new Set()); }, [section, view]);
 
   const filtered = useMemo(() => {
     const list = filterItemsByView(items, view);
@@ -260,6 +338,86 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       return it.shopify_display_price != null ? `${it.shopify_from_price ? "From " : ""}${money(it.shopify_display_price)}` : "—";
     }
     return money(it.list_price);
+  };
+
+  // Click the Price cell, type, Enter (or click away) — no modal. An
+  // archived product has no live price to edit (it's off the Shop/
+  // Register entirely until Restored); a Shopify listing edits its
+  // informational Displayed Price field instead of a real selling price,
+  // same field the full editor's "Displayed Price" controls.
+  const priceEditable = (it) => !(it.kind === "physical_product" && it.archived);
+  const priceEditValue = (it) => {
+    if (it.kind === "physical_product" && it.sales_destination === "shopify_external") {
+      return it.shopify_display_price != null ? String(it.shopify_display_price) : "";
+    }
+    return it.list_price != null ? String(it.list_price) : "";
+  };
+  const beginEditPrice = (it) => {
+    if (!priceEditable(it)) return;
+    setEditingPriceKey(rowKey(it));
+    setPriceDraft(priceEditValue(it));
+  };
+  const cancelPriceEdit = () => setEditingPriceKey(null);
+  const savePriceEdit = async (it) => {
+    const isShopify = it.kind === "physical_product" && it.sales_destination === "shopify_external";
+    const trimmed = priceDraft.trim();
+    if (trimmed === "" && !isShopify) { toast.error("Enter a price"); return; }
+    if (trimmed !== "" && !(Number(trimmed) >= 0)) { toast.error("Enter a valid price"); return; }
+    const n = trimmed === "" ? null : Number(trimmed);
+    // Nothing actually changed — close without a write.
+    if (trimmed === priceEditValue(it).trim()) { setEditingPriceKey(null); return; }
+    setPriceSaving(true);
+    try {
+      if (it.kind === "physical_product") {
+        const { data } = await api.get("/pos/products", { params: { include_inactive: true } });
+        const raw = (data || []).find((p) => p.id === it.id);
+        if (!raw) throw new Error("not found");
+        const overrides = isShopify ? { shopify_display_price: n } : { price: n };
+        await api.put(`/pos/products/${it.id}`, physicalProductPutPayload(raw, overrides));
+      } else {
+        const path = it.kind === "credit_pack" ? "/credit-packs" : "/programs";
+        const raw = it.kind === "credit_pack"
+          ? (await api.get(path, { params: { include_inactive: true } })).data?.find((p) => p.id === it.id)
+          : await fetchProgramById(it.id);
+        if (!raw) throw new Error("not found");
+        await api.put(`${path}/${it.id}`, { ...raw, price: n });
+      }
+      toast.success("Price updated");
+      setEditingPriceKey(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update price");
+    }
+    setPriceSaving(false);
+  };
+
+  // Click the Inventory cell, enter a quantity and a reason, done — still
+  // two fields and not a bare "type a number", because adjust-stock is an
+  // audited movement and the backend requires a reason for every change by
+  // design (same rule the Receive/Adjust Stock modal already enforces).
+  // Inline just skips opening that modal; it doesn't skip the reason.
+  const stockEditable = (it) => it.kind === "physical_product" && it.track_inventory && !it.archived;
+  const beginEditStock = (it) => {
+    if (!stockEditable(it)) return;
+    setEditingStockKey(rowKey(it));
+    setStockDraftQty("");
+    setStockDraftReason("");
+  };
+  const cancelStockEdit = () => setEditingStockKey(null);
+  const saveStockEdit = async (it) => {
+    const qty = Number(stockDraftQty);
+    if (!qty) { toast.error("Enter a non-zero quantity"); return; }
+    if (stockDraftReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
+    setStockDraftSaving(true);
+    try {
+      const { data } = await api.post(`/pos/products/${it.id}/adjust-stock`, { quantity_delta: qty, reason: stockDraftReason.trim(), source: "MANUAL_ADJUSTMENT" });
+      toast.success(`Stock updated — now ${data.stock_on_hand}`);
+      setEditingStockKey(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not adjust stock");
+    }
+    setStockDraftSaving(false);
   };
 
   const duplicateItem = async (it) => {
@@ -398,6 +556,72 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     setBusyId(null);
   };
 
+  const rowKey = (it) => `${it.kind}:${it.id}`;
+  const toggleSelect = (it) => setSelected((prev) => {
+    const next = new Set(prev);
+    const k = rowKey(it);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+  const allFilteredSelected = filtered.length > 0 && filtered.every((it) => selected.has(rowKey(it)));
+  const toggleSelectAll = () => setSelected(() => (allFilteredSelected ? new Set() : new Set(filtered.map(rowKey))));
+  const selectedItems = filtered.filter((it) => selected.has(rowKey(it)));
+
+  // Bulk Archive/Hide — deliberately sets the hidden/archived state rather
+  // than reusing archiveProduct/toggleHidePackOrProgram's single-item
+  // behavior as-is: toggleHidePackOrProgram FLIPS active, which would
+  // reactivate any already-hidden pack/program caught in a mixed
+  // selection. A bulk "clean these up" action should only ever move
+  // things toward hidden, never accidentally the other way.
+  const bulkHideSelected = async () => {
+    if (selectedItems.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0, failed = 0;
+    for (const it of selectedItems) {
+      try {
+        if (it.kind === "physical_product") {
+          if (!it.archived) await api.post(`/pos/products/${it.id}/archive`);
+        } else {
+          const path = it.kind === "credit_pack" ? "/credit-packs" : "/programs";
+          if (it.active) {
+            const { data } = await api.get(path, { params: { include_inactive: true } });
+            const raw = (data || []).find((p) => p.id === it.id);
+            if (raw) await api.put(`${path}/${it.id}`, { ...raw, active: false });
+          }
+        }
+        ok++;
+      } catch { failed++; }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    if (failed === 0) toast.success(`${ok} item${ok === 1 ? "" : "s"} archived/hidden`);
+    else toast.error(`${ok} archived/hidden, ${failed} failed`);
+    load();
+  };
+
+  // Bulk Delete — same permanently-delete-only-with-no-real-history rule
+  // as the single-item flow (deleteEndpointFor), just without that flow's
+  // per-item "Delete Anyway"/Archive-instead prompts: a blocked item is
+  // skipped and counted, not stopped on. Anything blocked still has real
+  // history and needs Archive/Hide instead, same as it always did.
+  const bulkDeleteSelected = async () => {
+    if (selectedItems.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0, blocked = 0;
+    for (const it of selectedItems) {
+      try {
+        await api.delete(deleteEndpointFor(it));
+        ok++;
+      } catch { blocked++; }
+    }
+    setBulkBusy(false);
+    setBulkDeleteConfirm(false);
+    setSelected(new Set());
+    if (blocked === 0) toast.success(`${ok} item${ok === 1 ? "" : "s"} permanently deleted`);
+    else toast.error(`${ok} deleted, ${blocked} blocked — they have real history, use Archive/Hide instead`);
+    load();
+  };
+
   const openReceiveStock = (it) => { setStockModal({ item: it, mode: "receive" }); setStockQty(""); setStockReason("Shipment received"); };
   const openAdjustStock = (it) => { setStockModal({ item: it, mode: "adjust" }); setStockQty(""); setStockReason(""); };
 
@@ -450,27 +674,28 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
-        {SECTION_TABS.map((s) => (
-          <button key={s.key} onClick={() => setSection(s.key)} data-testid={`sm-section-${s.key}`}
-                  className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${section === s.key ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
-            {s.label}
-          </button>
-        ))}
-      </div>
+      {/* Two dropdowns, not twelve buttons — "what kind of thing" (Type)
+          and "what's going on with it" (Status) used to be two unlabeled
+          rows of buttons with identical visual weight, easy to read as one
+          big undifferentiated wall of filters instead of two separate
+          questions. */}
       <div className="flex flex-wrap items-center gap-2">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items"
                className="flex-1 min-w-[160px] bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-        {[
-          ["all", "All"], ["missing_details", "Missing Details"], ["uncategorized", "Uncategorized"],
-          ["low_stock", "Low Stock"], ["out_of_stock", "Out of Stock"], ["hidden", "Hidden"],
-          ["inactive", "Inactive"], ["archived", "Archived"],
-        ].map(([k, label]) => (
-          <button key={k} onClick={() => setView(k)} data-testid={`sm-view-${k}`}
-                  className={`px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest ${view === k ? "bg-shSecondary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
-            {label}
-          </button>
-        ))}
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="sm-section-select" className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Type</label>
+          <select id="sm-section-select" value={section} onChange={(e) => setSection(e.target.value)} data-testid="sm-section-select"
+                  className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+            {SECTION_TABS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="sm-view-select" className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Status</label>
+          <select id="sm-view-select" value={view} onChange={(e) => setView(e.target.value)} data-testid="sm-view-select"
+                  className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+            {VIEW_OPTIONS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </div>
         <button onClick={exportCsv} disabled={exporting} data-testid="sm-export-csv"
                 className="bg-[var(--sh-card-base)] border border-shBorder rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest text-shText disabled:opacity-40">
           {exporting ? "Exporting…" : "Export CSV"}
@@ -520,33 +745,73 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
           </div>
         );
       })()}
+
+      {/* Bulk actions — "can we make it so any item in the shop can be
+          deleted so i can clean up unused stuff" (owner, 2026-10-17) was
+          still one row at a time without this. Only shows once something
+          is actually checked, so it costs nothing for the normal one-row
+          workflow. */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-shPrimary/40 bg-shPrimary/5 px-4 py-2.5" data-testid="sm-bulk-bar">
+          <span className="text-sm text-shText font-black">{selected.size} selected</span>
+          <button onClick={bulkHideSelected} disabled={bulkBusy} data-testid="sm-bulk-hide"
+                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+            Archive / Hide
+          </button>
+          <button onClick={() => setBulkDeleteConfirm(true)} disabled={bulkBusy} data-testid="sm-bulk-delete"
+                  className="text-red-400 text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+            Delete
+          </button>
+          <button onClick={() => setSelected(new Set())} disabled={bulkBusy}
+                  className="ml-auto text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-shTextMuted text-[11px] uppercase tracking-widest text-left border-b border-shBorder">
+              <th className="py-2 pr-2 w-8">
+                <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} data-testid="sm-select-all"
+                       aria-label="Select all shown items" />
+              </th>
               <th className="py-2 pr-2">Item</th>
               <th className="py-2 pr-2">Type</th>
-              <th className="py-2 pr-2">Section</th>
-              <th className="py-2 pr-2">Category</th>
+              <th className="py-2 pr-2" title="Which part of the catalog this is sold through (Merch & Gear, Prepaid Visits, Training).">
+                Section <i className="fas fa-circle-info text-[9px] text-shTextMuted/60" aria-hidden="true" />
+              </th>
+              <th className="py-2 pr-2" title="The Shop category/subcategory this item is filed under, for browsing in the client Shop.">
+                Category <i className="fas fa-circle-info text-[9px] text-shTextMuted/60" aria-hidden="true" />
+              </th>
               <th className="py-2 pr-2 text-right">Price</th>
               <th className="py-2 pr-2 text-right">Cost</th>
               <th className="py-2 pr-2 text-right">Margin</th>
               <th className="py-2 pr-2">Inventory</th>
-              <th className="py-2 pr-2">Shop</th>
-              <th className="py-2 pr-2">Register</th>
+              <th className="py-2 pr-2" title="Visible in the online client Shop. Independent of Register — an item can be shown in one and hidden in the other.">
+                Shop <i className="fas fa-circle-info text-[9px] text-shTextMuted/60" aria-hidden="true" />
+              </th>
+              <th className="py-2 pr-2" title="Sellable from the in-person register. Independent of Shop — an item can be shown in one and hidden in the other.">
+                Register <i className="fas fa-circle-info text-[9px] text-shTextMuted/60" aria-hidden="true" />
+              </th>
               <th className="py-2 pr-2">Status</th>
               <th className="py-2 pr-2"></th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={12} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={12} className="py-6 text-center text-shTextMuted">No items found.</td></tr>}
+            {loading && <tr><td colSpan={13} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-shTextMuted">No items found.</td></tr>}
             {filtered.map((it) => {
               const margin = marginDisplay(it);
               const inv = inventoryStatus(it);
               const warnings = itemWarnings(it);
               return (
               <tr key={`${it.kind}:${it.id}`} className="border-b border-shBorder/60" data-testid={`sm-item-row-${it.id}`}>
+                <td className="py-2 pr-2">
+                  <input type="checkbox" checked={selected.has(rowKey(it))} onChange={() => toggleSelect(it)} data-testid={`sm-select-${it.id}`}
+                         aria-label={`Select ${it.name}`} />
+                </td>
                 <td className="py-2 pr-2 text-shText font-bold cursor-pointer" onClick={() => onEditItem(it)}>
                   <div className="flex items-center gap-2">
                     <ItemThumbnail imageId={it.image_id} alt={it.name} size={40} />
@@ -565,7 +830,20 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                 <td className="py-2 pr-2 text-shTextMuted">{it.section_label}</td>
                 <td className="py-2 pr-2 text-shTextMuted">{it.category_name || "Uncategorized"}{it.subcategory_name ? ` / ${it.subcategory_name}` : ""}</td>
                 <td className="py-2 pr-2 text-right text-shText">
-                  {priceDisplay(it)}
+                  {editingPriceKey === rowKey(it) ? (
+                    <input type="number" autoFocus value={priceDraft} disabled={priceSaving}
+                           onChange={(e) => setPriceDraft(e.target.value)}
+                           onBlur={() => savePriceEdit(it)}
+                           onKeyDown={(e) => { if (e.key === "Enter") savePriceEdit(it); else if (e.key === "Escape") cancelPriceEdit(); }}
+                           data-testid={`sm-price-input-${it.id}`}
+                           className="w-20 bg-[var(--sh-card-base)] border border-shPrimary rounded p-1 text-right text-shText text-sm" />
+                  ) : (
+                    <span onClick={() => beginEditPrice(it)} data-testid={`sm-price-${it.id}`}
+                          className={priceEditable(it) ? "cursor-pointer hover:underline decoration-dotted decoration-shTextMuted/50" : ""}
+                          title={priceEditable(it) ? "Click to edit" : undefined}>
+                      {priceDisplay(it)}
+                    </span>
+                  )}
                   {it.pricing_variable && <span className="ml-1 text-[10px] text-shSecondary" title="Client-specific/grandfathered pricing may apply">*</span>}
                 </td>
                 <td className="py-2 pr-2 text-right text-shTextMuted" data-testid={`sm-cost-${it.id}`}>
@@ -575,8 +853,27 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                   {margin && margin.gm ? margin.gm : "—"}
                 </td>
                 <td className="py-2 pr-2 text-shTextMuted">
-                  {inv ? (
-                    <span className={inv.tone === "bad" ? "text-red-400" : inv.tone === "warn" ? "text-shOrange" : inv.tone === "ok" ? "text-shPrimary" : "text-shTextMuted"}>
+                  {editingStockKey === rowKey(it) ? (
+                    <div className="flex items-center gap-1" data-testid={`sm-stock-inline-${it.id}`}>
+                      <input type="number" autoFocus placeholder="+/-" value={stockDraftQty} disabled={stockDraftSaving}
+                             onChange={(e) => setStockDraftQty(e.target.value)}
+                             onKeyDown={(e) => { if (e.key === "Escape") cancelStockEdit(); }}
+                             data-testid={`sm-stock-inline-qty-${it.id}`}
+                             className="w-14 bg-[var(--sh-card-base)] border border-shPrimary rounded p-1 text-shText text-sm" />
+                      <input type="text" placeholder="Reason" value={stockDraftReason} disabled={stockDraftSaving}
+                             onChange={(e) => setStockDraftReason(e.target.value)}
+                             onKeyDown={(e) => { if (e.key === "Enter") saveStockEdit(it); else if (e.key === "Escape") cancelStockEdit(); }}
+                             data-testid={`sm-stock-inline-reason-${it.id}`}
+                             className="w-24 bg-[var(--sh-card-base)] border border-shBorder rounded p-1 text-shText text-sm" />
+                      <button onClick={() => saveStockEdit(it)} disabled={stockDraftSaving} data-testid={`sm-stock-inline-save-${it.id}`}
+                              className="text-shPrimary text-[11px] disabled:opacity-40"><i className="fas fa-check" /></button>
+                      <button onClick={cancelStockEdit} disabled={stockDraftSaving} data-testid={`sm-stock-inline-cancel-${it.id}`}
+                              className="text-shTextMuted text-[11px] disabled:opacity-40"><i className="fas fa-xmark" /></button>
+                    </div>
+                  ) : inv ? (
+                    <span onClick={() => beginEditStock(it)} data-testid={`sm-inventory-${it.id}`}
+                          className={`${inv.tone === "bad" ? "text-red-400" : inv.tone === "warn" ? "text-shOrange" : inv.tone === "ok" ? "text-shPrimary" : "text-shTextMuted"} ${stockEditable(it) ? "cursor-pointer hover:underline decoration-dotted" : ""}`}
+                          title={stockEditable(it) ? "Click to adjust stock" : undefined}>
                       {inv.label}
                     </span>
                   ) : "—"}
@@ -785,6 +1082,26 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
         </div>
         );
       })()}
+
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="sm-bulk-delete-confirm">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-sm p-5 space-y-3">
+            <p className="text-shText font-black uppercase tracking-widest">Delete {selectedItems.length} item{selectedItems.length === 1 ? "" : "s"}?</p>
+            <p className="text-shTextMuted text-sm">
+              Permanently removes every selected item with no order/sale/enrollment history. Anything with real
+              history is skipped and left alone — use Archive/Hide for those instead.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setBulkDeleteConfirm(false)} disabled={bulkBusy}
+                      className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3 disabled:opacity-40">Cancel</button>
+              <button onClick={bulkDeleteSelected} disabled={bulkBusy} data-testid="sm-bulk-delete-confirm-submit"
+                      className="flex-1 bg-red-500 text-white rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                {bulkBusy ? "Deleting…" : "Permanently Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2103,6 +2420,28 @@ function ShopSettingsTab() {
   const setField = (patch) => setSp((s) => ({ ...s, ...patch }));
   const setSection = (key, patch) => setSp((s) => ({ ...s, sections: { ...(s.sections || {}), [key]: { ...((s.sections || {})[key] || {}), ...patch } } }));
 
+  // Same up/down-arrow reorder Categories already uses, instead of the raw
+  // "Order" number field this used to be — a plain integer input meant an
+  // admin had to type "3" into a box and guess what that put next to what.
+  // Reassigns every key a fresh 0..n sequence from its CURRENT sorted
+  // position rather than swapping the two raw stored numbers directly, so
+  // it still works correctly even when sections start out tied at the same
+  // order value (e.g. all default to 0 before anyone has ever reordered).
+  const orderedSectionKeys = [...SHOP_SETTINGS_SECTION_KEYS]
+    .sort((a, b) => (sp?.sections?.[a]?.order ?? 0) - (sp?.sections?.[b]?.order ?? 0));
+  const moveSection = (key, direction) => {
+    const keys = [...orderedSectionKeys];
+    const idx = keys.indexOf(key);
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= keys.length) return;
+    [keys[idx], keys[swapIdx]] = [keys[swapIdx], keys[idx]];
+    setSp((s) => {
+      const nextSections = { ...(s.sections || {}) };
+      keys.forEach((k, i) => { nextSections[k] = { ...(nextSections[k] || {}), order: i }; });
+      return { ...s, sections: nextSections };
+    });
+  };
+
   const save = async () => {
     setErr("");
     if (sp.banner_cta_url && !(/^\/(?!\/)/.test(sp.banner_cta_url) || /^https:\/\//.test(sp.banner_cta_url))) {
@@ -2206,20 +2545,23 @@ function ShopSettingsTab() {
 
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-4">
         <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Sections</p>
-        {SHOP_SETTINGS_SECTION_KEYS.map((key) => {
+        {orderedSectionKeys.map((key, idx) => {
           const row = sp.sections?.[key] || {};
           return (
             <div key={key} className="border-t border-shBorder pt-3 first:border-t-0 first:pt-0 space-y-2" data-testid={`sm-section-row-${key}`}>
-              <p className="text-[11px] text-shTextMuted uppercase tracking-widest">Permanent key: <span className="text-shText font-bold">{key}</span></p>
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] text-shTextMuted uppercase tracking-widest">Permanent key: <span className="text-shText font-bold">{key}</span></p>
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => moveSection(key, -1)} disabled={idx === 0} data-testid={`sm-section-up-${key}`}
+                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted disabled:opacity-30"><i className="fas fa-chevron-up text-[11px]" /></button>
+                  <button type="button" onClick={() => moveSection(key, 1)} disabled={idx === orderedSectionKeys.length - 1} data-testid={`sm-section-down-${key}`}
+                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted disabled:opacity-30"><i className="fas fa-chevron-down text-[11px]" /></button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="col-span-2">
                   <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Customer-Facing Name</label>
                   <input value={row.label || ""} onChange={(e) => setSection(key, { label: e.target.value })} data-testid={`sm-section-label-${key}`}
-                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                </div>
-                <div>
-                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Order</label>
-                  <input type="number" value={row.order ?? 0} onChange={(e) => setSection(key, { order: parseInt(e.target.value, 10) || 0 })} data-testid={`sm-section-order-${key}`}
                          className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 </div>
                 <div className="col-span-2">
@@ -2656,6 +2998,15 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
           { key: "printify_orders", label: "Printify Orders", icon: "fa-shirt", testid: "sm-tab-printify_orders", accent: "orange" },
           { key: "preview", label: "Client Preview", icon: "fa-mobile-screen", testid: "sm-tab-preview", accent: "cyan" },
+        ]}
+        // 10 flat tabs made "where do I even look for X" a real question —
+        // Catalog (what you sell), Sales (money/orders), Storefront (how it
+        // looks/behaves to a customer). Same tabs, same testids, just
+        // visibly clustered.
+        groups={[
+          { label: "Catalog", keys: ["items", "categories"] },
+          { label: "Sales", keys: ["insights", "register_sales", "orders", "printify_orders"] },
+          { label: "Storefront", keys: ["shop_settings", "discounts", "reviews", "preview"] },
         ]}
       />
 
