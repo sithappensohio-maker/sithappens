@@ -3282,34 +3282,29 @@ html[data-theme-target-staff-portal="true"] .sh-admin-page-header--decorated::be
 .sh-theme-section-header-client {
   position: relative;
   isolation: isolate;
-  /* A min-height floor (like .sh-theme-hero-client's own 200px) stops the
-     box from ever being TOO SHORT, but Shop's hero also has a department-
-     tiles grid inside it whose row count — and so the box's actual height
-     — varies with how many departments exist. background-size:cover fills
-     whatever height that turns out to be, so the fraction of the photo
-     that's actually visible kept changing with it: still "way zoomed in
-     and cutting off most of the image" on an owner's real catalog, even
-     past the floor. Kept as a sane minimum for Photography's hero (fixed-
-     height content, no variable grid — see PortalPhotography.jsx), which
-     has no such problem. Shop's own hero stopped relying on this sizing
-     entirely — see .sh-theme-section-header-client--banner below. */
+  /* Owner, 2026-10-18: "way zoomed in and cutting off most of the image" —
+     background-size:cover fills whatever box it's given, and this box had
+     no floor: with just a title/subtitle and (on a page with zero shop
+     departments) no tiles below it, the section could be barely 100px
+     tall, so a landscape photo got covered into a short, wide strip and
+     cropped hard top/bottom. .sh-theme-hero-client already solved this
+     exact problem for the Home hero the same way (min-height: 200px,
+     "so an uploaded hero image actually has room to read as a banner
+     rather than a thin strip") — this just never got the same floor.
+     A fixed-ratio-box variant of this (same idea as the Shop banner
+     image) was tried and reverted — splitting the department tiles out
+     from the decorated card read as disjointed. Root cause found after
+     that: the upload panel tells the admin to supply a 1600×300 image
+     (a thin letterbox strip, ~5.3:1) — nowhere near this box's own actual
+     shape once department tiles are in it (often taller than it is wide
+     at mobile sizes). `cover` with `center` positioning scales a letterbox
+     image up until it fills that much taller box and then crops the
+     SAME amount off both the top and bottom — on this specific art (moon/
+     bats near the top, treeline near the bottom, plain sky in between),
+     centered cropping was cutting off both ends and keeping the least
+     interesting middle band, which read as "cutting off most of the
+     image" even though technically nothing was zoomed wrong. */
   min-height: 260px;
-}
-/* Shop's hero only — the decorated zone is now its OWN fixed-ratio box,
-   same idea as the Shop banner image (ProductImage ratio="3 / 1"): the
-   admin can compose/crop art for a known, constant shape instead of
-   whatever height the department-tiles grid underneath happens to need
-   this week. Applied to a wrapper around just the title/subtitle text;
-   the tiles render as a separate sibling below it now (ShopLanding.jsx),
-   on the plain page background, not inside this box. */
-.sh-theme-section-header-client--banner {
-  /* min-height still wins at narrow widths — at 3/1 a 340px-wide phone
-     works out to ~113px, not enough room for the eyebrow/title/subtitle
-     stack without it. min-height and aspect-ratio both apply; the larger
-     of the two determines the actual height, the same way a plain
-     min-height always has. */
-  min-height: 160px;
-  aspect-ratio: 3 / 1;
 }
 .sh-theme-section-header-client::before {
   content: "";
@@ -3318,7 +3313,10 @@ html[data-theme-target-staff-portal="true"] .sh-admin-page-header--decorated::be
   border-radius: inherit;
   background-repeat: no-repeat;
   background-size: cover;
-  background-position: center;
+  /* `top`, not `center` — see the comment above. A letterbox-shaped image
+     stretched to cover a much taller box keeps its top edge in frame this
+     way instead of losing an equal slice off both the top and bottom. */
+  background-position: top;
   opacity: var(--theme-decoration-opacity);
   pointer-events: none;
   z-index: -2;

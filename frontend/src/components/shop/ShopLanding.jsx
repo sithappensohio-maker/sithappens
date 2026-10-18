@@ -64,26 +64,24 @@ function Hero({ shopPage, departments, onSelectDepartment, items, isPublic, cate
   const subtitle = shopPage?.subtitle
     || "Gear we actually use, training that actually works, and visits you can buy up front.";
   return (
-    <section data-testid="shop-hero" className="mb-9" aria-labelledby="shop-hero-h">
+    <section data-testid="shop-hero" className="mb-9 rounded-2xl p-4 sm:p-6 sh-theme-section-header-client" aria-labelledby="shop-hero-h">
       {/* Deliberately short. A separate hero band and a separate departments
           row were 878px between them — a full desktop screen, and nearly two
           phone screens, before anything for sale. They said the same thing
           twice, so they are one thing now: who we are, and where to go.
 
-          The decorated art zone is its own fixed-ratio box now (owner,
-          2026-10-18: "make it work like the banner") — same idea as the
-          Shop banner image, ratio="3 / 1": the admin composes/crops art for
-          a known, constant shape instead of whatever height the department-
-          tiles grid below used to force it to stretch/crop into. The tiles
-          are a plain sibling now, outside the decorated box entirely. */}
-      <div className="rounded-2xl p-4 sm:p-6 flex flex-col justify-center sh-theme-section-header-client sh-theme-section-header-client--banner">
-        <div className="max-w-[54ch]">
-          <p className="text-[10px] font-black uppercase tracking-[0.28em] text-shPrimary">Sit Happens</p>
-          <h1 id="shop-hero-h" className="sh-display text-[26px] sm:text-[34px] lg:text-[38px] text-shText leading-[1.05] mt-1.5">
-            {title}
-          </h1>
-          <p className="text-[14px] text-shTextMuted leading-relaxed mt-2">{subtitle}</p>
-        </div>
+          Owner, 2026-10-18: splitting the art into its own fixed-ratio box
+          above the tiles (ratio="3 / 1", like the banner) read as "all out
+          of place looking" once the tiles sat on the plain page background
+          below it, disconnected from the card — and it didn't actually fix
+          the crop either. Reverted to one card; the background-image/crop
+          question itself is still open. */}
+      <div className="max-w-[54ch]">
+        <p className="text-[10px] font-black uppercase tracking-[0.28em] text-shPrimary">Sit Happens</p>
+        <h1 id="shop-hero-h" className="sh-display text-[26px] sm:text-[34px] lg:text-[38px] text-shText leading-[1.05] mt-1.5">
+          {title}
+        </h1>
+        <p className="text-[14px] text-shTextMuted leading-relaxed mt-2">{subtitle}</p>
       </div>
 
       {departments.length > 0 && (
