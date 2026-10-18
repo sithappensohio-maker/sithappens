@@ -355,6 +355,59 @@ describe("self-service Shop departments (owner request, 2026-10-17)", () => {
     expect(text()).toContain("Department");
     noReferenceErrors();
   });
+
+  // Owner, 2026-10-18: "i would like for it to show me what items are in
+  // the category when expanded" — expanding used to only offer "Add
+  // Subcategory"; the items actually filed under the category were nowhere
+  // on screen.
+  test("expanding a category lists the items filed under it", async () => {
+    api.get.mockImplementation((url) => {
+      if (url.includes("/shop-manager/items")) {
+        return Promise.resolve({ data: { items: [
+          { kind: "physical_product", id: "p1", name: "Rope Leash", active: true, list_price: 24, category_id: "cat-groom" },
+          { kind: "credit_pack", id: "k1", name: "10 Visits", active: true, list_price: 280, category_id: null },
+        ] } });
+      }
+      if (url.includes("/shop/uncategorized-items")) return Promise.resolve({ data: { items: [] } });
+      if (url.includes("/shop/categories")) return Promise.resolve({ data: { categories: [
+        { id: "cat-groom", name: "Grooming", section: "merch", is_department: false, active: true, item_count: 1 },
+      ] } });
+      return Promise.resolve({ data: {} });
+    });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(byTestId("sm-category-item-cat-groom-p1")).toBeFalsy(); // collapsed by default
+
+    await act(async () => { byTestId("sm-expand-category-cat-groom").click(); });
+    expect(byTestId("sm-category-item-cat-groom-p1")).toBeTruthy();
+    expect(text()).toContain("Rope Leash");
+    expect(text()).not.toContain("10 Visits"); // uncategorized, not in this category
+    noReferenceErrors();
+  });
+
+  // /shop-manager/items needs the "pricing" permission; this tab
+  // deliberately doesn't (ItemsTab's own forbidden message points staff
+  // without it here). Expanding a category should degrade quietly, not
+  // break the tab's own load.
+  test("a 403 on the items list degrades to 'no items' instead of breaking the Categories tab", async () => {
+    api.get.mockImplementation((url) => {
+      if (url.includes("/shop-manager/items")) return Promise.reject({ response: { status: 403 } });
+      if (url.includes("/shop/uncategorized-items")) return Promise.resolve({ data: { items: [] } });
+      if (url.includes("/shop/categories")) return Promise.resolve({ data: { categories: [
+        { id: "cat-groom", name: "Grooming", section: "merch", is_department: false, active: true, item_count: 1 },
+      ] } });
+      return Promise.resolve({ data: {} });
+    });
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(byTestId("sm-category-cat-groom")).toBeTruthy();
+
+    await act(async () => { byTestId("sm-expand-category-cat-groom").click(); });
+    expect(text()).toContain("No items in this category yet.");
+    noReferenceErrors();
+  });
 });
 
 describe("CSV import", () => {

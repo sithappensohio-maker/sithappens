@@ -1273,6 +1273,11 @@ function CategoriesTab() {
   const [section, setSection] = useState("merch");
   const [categories, setCategories] = useState([]);
   const [uncategorized, setUncategorized] = useState([]);
+  // Every item in this section, so an expanded category can show what's
+  // actually IN it — owner: "i would like for it to show me what items are
+  // in the category when expanded". Same /shop-manager/items ItemsTab
+  // already uses, just filtered client-side by category_id per row.
+  const [sectionItems, setSectionItems] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -1308,6 +1313,15 @@ function CategoriesTab() {
     } finally {
       setLoading(false);
     }
+    // Separate call, separate failure: /shop-manager/items needs the
+    // "pricing" permission and this tab deliberately doesn't (see
+    // ItemsTab's forbidden message — "use the Categories & Layout tab if
+    // you only need to organize categories"). A staffer without it still
+    // gets categories/uncategorized above; expanding a category just shows
+    // no item list instead of breaking the whole tab's load.
+    api.get("/shop-manager/items", { params: { section } })
+      .then(({ data }) => setSectionItems(data.items || []))
+      .catch(() => setSectionItems([]));
   }, [section]);
   useEffect(() => { load(); }, [load]);
 
@@ -1557,7 +1571,7 @@ function CategoriesTab() {
           {categories.map((cat, idx) => (
             <div key={cat.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden" data-testid={`sm-category-${cat.id}`}>
               <div className="flex flex-wrap items-center gap-3 p-3">
-                <button onClick={() => toggleExpand(cat.id)} className="text-shTextMuted hover:text-shText">
+                <button onClick={() => toggleExpand(cat.id)} data-testid={`sm-expand-category-${cat.id}`} className="text-shTextMuted hover:text-shText">
                   <i className={`fas fa-chevron-${expanded[cat.id] ? "down" : "right"} text-[12px]`} />
                 </button>
                 <ItemThumbnail imageId={cat.image_id} alt={cat.name} size={36} />
@@ -1578,7 +1592,25 @@ function CategoriesTab() {
                 <button onClick={() => openRemoveCategory(cat)} className="text-red-400 text-[11px] font-black uppercase tracking-widest">Remove</button>
               </div>
               {expanded[cat.id] && (
-                <div className="border-t border-shBorder p-3 pl-9 space-y-2">
+                <div className="border-t border-shBorder p-3 pl-9 space-y-3">
+                  <div className="space-y-1.5" data-testid={`sm-category-items-${cat.id}`}>
+                    <p className="text-[10px] text-shTextMuted uppercase tracking-widest font-black">Items in this category</p>
+                    {sectionItems.filter((it) => it.category_id === cat.id).length === 0 ? (
+                      <p className="text-[12px] text-shTextMuted italic">No items in this category yet.</p>
+                    ) : (
+                      sectionItems.filter((it) => it.category_id === cat.id).map((it) => (
+                        <div key={`${it.kind}:${it.id}`} className="flex items-center gap-2 text-[13px]" data-testid={`sm-category-item-${cat.id}-${it.id}`}>
+                          <ItemThumbnail imageId={it.image_id} alt={it.name} size={32} />
+                          <span className="flex-1 text-shText truncate">
+                            {it.name}
+                            {it.subcategory_name && <span className="text-shTextMuted"> · {it.subcategory_name}</span>}
+                          </span>
+                          <span className="text-[10px] uppercase tracking-widest text-shTextMuted">{itemKindLabel(it)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="border-t border-shBorder pt-3 space-y-2">
                   {(cat.subcategories || []).map((sub, sidx) => (
                     <div key={sub.id} className="flex items-center gap-2 text-[13px]">
                       <span className="flex-1 text-shText">{sub.name} <span className="text-shTextMuted">· {sub.item_count}</span></span>
@@ -1604,6 +1636,7 @@ function CategoriesTab() {
                       <i className="fas fa-plus mr-1" />Add Subcategory
                     </button>
                   )}
+                  </div>
                 </div>
               )}
             </div>
