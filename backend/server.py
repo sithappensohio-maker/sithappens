@@ -34340,6 +34340,11 @@ async def startup():
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
         (db.bookings, "financial_reopened_at", {"sparse": True, "name": "bookings_financial_reopened_at"}),
+        # Register Hub's day summary (_register_day_summary) filters/sorts
+        # paid_bookings by this field every poll — sparse because most
+        # legacy rows predate paid_at and never carry it (see that
+        # function's own "legacy fallback" comment).
+        (db.bookings, "paid_at", {"sparse": True, "name": "bookings_paid_at"}),
         (db.bookings_archive, "financial_reopened_at", {"sparse": True, "name": "bookings_archive_financial_reopened_at"}),
         (db.bookings, "status", {}),
         # Phase 6 global search: one batch lookup finds each matched dog's
@@ -34420,6 +34425,10 @@ async def startup():
         # a brand-new idempotency_key) is rejected at the index level.
         (db.payment_void_claims, "payment_id", {"unique": True}),
         (db.payment_ledger, "invoice_id", {}),
+        # Same Register Hub day summary — ledger_payments filters type +
+        # created_at range on every poll (every open Register screen, every
+        # 90 seconds).
+        (db.payment_ledger, [("type", 1), ("created_at", 1)], {"name": "payment_ledger_type_created_at"}),
         # retail_sales.payment_id's unique-partial index is handled by
         # _ensure_retail_sales_payment_id_unique_index() below instead of
         # this generic best-effort loop — it needs a real duplicate
