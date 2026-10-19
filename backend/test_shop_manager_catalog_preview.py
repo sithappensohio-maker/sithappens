@@ -12,6 +12,7 @@ shop_manager_catalog_preview_item, built the same way the grid one is.
 """
 import uuid
 import contextlib
+from unittest.mock import patch
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
@@ -77,3 +78,48 @@ def test_preview_item_detail_rejects_an_unknown_preview_client_id():
             raise AssertionError("expected 404 for a bogus preview_client_id")
         except HTTPException as e:
             assert e.status_code == 404
+
+
+# Performance pass, 2026-10-19: _build_shop_catalog called resolve_client_price()
+# once per product and once per pack, and that resolver re-fetches the SAME
+# client document on every call (one query per item on the shelf). Fetched
+# once up front now and threaded through instead.
+def test_shop_catalog_fetches_the_pricing_client_once_not_once_per_item():
+    cid = str(uuid.uuid4())
+    tier_id = str(uuid.uuid4())
+    run(server.db.pricing_tiers.insert_one({"id": tier_id, "name": f"{TAG} VIP", "active": True, "tag": TAG}))
+    run(server.db.clients.insert_one({"id": cid, "name": f"{TAG} Client", "email": f"{uuid.uuid4().hex[:8]}@example.com",
+                                      "client_status": "active", "pricing_tier_id": tier_id, "tag": TAG}))
+    try:
+        with _product() as p1, _product() as p2, _product() as p3:
+            run(server.db.pricing_tier_prices.insert_one({"id": str(uuid.uuid4()), "tier_id": tier_id,
+                                                           "target_kind": "pos_product", "target_code": p1["id"],
+                                                           "override_price": 5.0, "tag": TAG}))
+            # Motor hands back a fresh AsyncIOMotorCollection wrapper on every
+            # `db.clients` attribute access (not a cached singleton), so an
+            # instance-level patch of `server.db.clients.find_one` silently
+            # never intercepts the call `_build_shop_catalog` makes through
+            # ITS OWN `db.clients` access — the class method has to be patched.
+            counts = {"n": 0}
+            orig_find_one = type(server.db.clients).find_one
+
+            async def counted(self, *a, **kw):
+                if self.name == "clients":
+                    counts["n"] += 1
+                return await orig_find_one(self, *a, **kw)
+
+            with patch.object(type(server.db.clients), "find_one", counted):
+                catalog = run(server.get_shop_catalog({"role": "client", "client_id": cid}))
+
+            assert counts["n"] == 1, f"expected exactly one client lookup for the whole catalog, got {counts['n']}"
+            by_id = {it["id"]: it for it in catalog["items"] if it.get("kind") == "product"}
+            # The tier override still resolves correctly from the one shared fetch...
+            assert by_id[p1["id"]]["effective_price"] == 5.0
+            assert by_id[p1["id"]]["pricing_source"] == "tier"
+            # ...and an item with no override still gets its own standard price, not p1's.
+            assert by_id[p2["id"]]["effective_price"] == p2["price"]
+            assert by_id[p3["id"]]["effective_price"] == p3["price"]
+    finally:
+        run(server.db.pricing_tier_prices.delete_many({"tag": TAG}))
+        run(server.db.pricing_tiers.delete_many({"tag": TAG}))
+        run(server.db.clients.delete_one({"id": cid}))

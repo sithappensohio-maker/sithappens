@@ -566,6 +566,8 @@ async def resolve_client_price(
     target_kind: str,
     target_code: str,
     list_price: float,
+    *,
+    client: Optional[dict] = None,
 ) -> dict:
     """Return `{effective_price, list_price, override_id, override_row,
     pricing_source, tier_id, tier_name}` for the given client + catalog item.
@@ -581,7 +583,14 @@ async def resolve_client_price(
     When no active override/tier price exists, effective == list. Used by
     booking-create, credit-pack-sell, and Shop cart pricing so every one of
     these paths shares the exact same source of truth — never a second,
-    competing pricing formula."""
+    competing pricing formula.
+
+    `client`, when given, must be `client_id`'s own document (at least its
+    `pricing_tier_id` field) and is used instead of a fresh lookup — a
+    caller resolving many items for the SAME client in one request (the
+    Shop catalog, built once per page load) fetches it once up front rather
+    than once per item. Every other caller omits it and gets the original
+    one-lookup-per-call behavior unchanged."""
     out = {
         "effective_price": float(list_price or 0),
         "list_price": float(list_price or 0),
@@ -610,7 +619,8 @@ async def resolve_client_price(
         out["pricing_source"] = "client_override"
         return out
     # No individual override — fall through to the client's pricing tier, if any.
-    client = await _db.clients.find_one({"id": client_id}, {"_id": 0, "pricing_tier_id": 1})
+    if client is None:
+        client = await _db.clients.find_one({"id": client_id}, {"_id": 0, "pricing_tier_id": 1})
     tier_id = (client or {}).get("pricing_tier_id")
     if tier_id:
         tier = await _db.pricing_tiers.find_one({"id": tier_id, "active": True}, {"_id": 0, "name": 1})

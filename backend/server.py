@@ -42248,6 +42248,12 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
 
     items = []
 
+    # One client lookup for the whole catalog rather than one per item —
+    # resolve_client_price() otherwise re-fetches this SAME document on
+    # every product/pack/program on the shelf (50-100+ redundant queries
+    # on one page load). Every call below passes it through unchanged.
+    _pricing_client = await db.clients.find_one({"id": client_id}, {"_id": 0, "pricing_tier_id": 1}) if client_id else None
+
     products = await db.pos_products.find(
         {"show_online": True, "active": True, "archived": {"$ne": True}},
         {"_id": 0},
@@ -42370,7 +42376,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
         # raw catalog price. Unauthenticated visitors never reach this route
         # at all (client account required, checked above), so they only
         # ever see the public price via other surfaces.
-        pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price)
+        pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price, client=_pricing_client)
         effective_price = round(float(pricing["effective_price"]), 2)
         has_override = pricing["pricing_source"] != "standard"
         # Exposed so an internal product with real options (size, color…)
@@ -42439,7 +42445,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
         # (front-desk sell-pack, booking checkout) already trusts — a
         # grandfathered client must see and be charged their locked rate
         # here too, never the raw catalog price.
-        pricing = await resolve_client_price(client_id, "credit_pack", pk["id"], list_price)
+        pricing = await resolve_client_price(client_id, "credit_pack", pk["id"], list_price, client=_pricing_client)
         effective_price = round(float(pricing["effective_price"]), 2)
         has_override = bool(pricing["override_id"])
         items.append({
@@ -51106,10 +51112,11 @@ async def _apply_client_overrides(
 
 async def resolve_client_price(
     client_id: Optional[str], target_kind: str, target_code: str, list_price: float,
+    *, client: Optional[dict] = None,
 ) -> dict:
     """Compatibility facade for the canonical Phase-5 pricing resolver."""
     return await pricing_domain_services.resolve_client_price(
-        client_id, target_kind, target_code, list_price
+        client_id, target_kind, target_code, list_price, client=client,
     )
 
 
