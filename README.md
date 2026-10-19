@@ -133,4 +133,4 @@ That's it. Same domain, same data, same everything.
 
 ---
 
-Built with FastAPI + React + MongoDB. Runs in 3 Docker containers. ~6 MB Mongo footprint per 100 clients.
+Built with FastAPI + React + MongoDB. Runs in 4 Docker containers (mongo, backend, email-worker, frontend). ~6 MB Mongo footprint per 100 clients.
