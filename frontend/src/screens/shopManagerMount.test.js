@@ -365,6 +365,54 @@ describe("self-service Shop departments (owner request, 2026-10-17)", () => {
     noReferenceErrors();
   });
 
+  // A double-click (or a slow network) must not create the category twice —
+  // saveCategory had no busy guard at all.
+  test("double-clicking Save Category only creates the category once", async () => {
+    mockCategories();
+    let release;
+    api.post.mockReset();
+    api.post.mockImplementation(() => new Promise((r) => { release = () => r({ data: { ok: true } }); }));
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("sm-add-category").click(); });
+    const setInput = (id, value) => {
+      const el = byTestId(id);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setInput("sm-category-name-input", "Spa Day"); });
+    await act(async () => { byTestId("sm-save-category").click(); byTestId("sm-save-category").click(); });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); await Promise.resolve(); });
+    noReferenceErrors();
+  });
+
+  // Same gap, the Subcategory Save button right next to it.
+  test("double-clicking Save on a new Subcategory only creates it once", async () => {
+    mockCategories();
+    let release;
+    api.post.mockReset();
+    api.post.mockImplementation(() => new Promise((r) => { release = () => r({ data: { ok: true } }); }));
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-categories").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("sm-expand-category-cat-groom").click(); });
+    await act(async () => { byTestId("sm-add-subcategory-cat-groom").click(); });
+    const setInput = (id, value) => {
+      const el = byTestId(id);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setInput("sm-subcategory-name-input-cat-groom", "Nail Trims"); });
+    await act(async () => { byTestId("sm-save-subcategory-cat-groom").click(); byTestId("sm-save-subcategory-cat-groom").click(); });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); await Promise.resolve(); });
+    noReferenceErrors();
+  });
+
   test("a flagged category shows the Department pill in the list", async () => {
     mockCategories({ is_department: true });
     await mount(<ShopManager />);
@@ -1145,6 +1193,32 @@ describe("Inline price/stock editing (owner request, 2026-10-18)", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(api.post).toHaveBeenCalledWith("/pos/products/p1/adjust-stock",
       { quantity_delta: 5, reason: "Shipment received", source: "MANUAL_ADJUSTMENT" });
+    noReferenceErrors();
+  });
+
+  // A double-click (or a slow network) must not double the stock delta —
+  // the inline Save above already guards this with disabled={stockDraftSaving};
+  // the Receive/Adjust Stock modal's own Save button was missing the same guard.
+  test("double-clicking Save in the Receive/Adjust Stock modal only adjusts stock once", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url.includes("/shop-manager/items")) {
+        return Promise.resolve({ data: { items: ITEMS.map((it) => it.id === "p1" ? { ...it, track_inventory: true, stock_on_hand: 5 } : it) } });
+      }
+      return base(url, opts);
+    });
+    let release;
+    api.post.mockReset();
+    api.post.mockImplementation(() => new Promise((r) => { release = () => r({ data: { stock_on_hand: 10 } }); }));
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-row-p1-more").click(); });
+    await act(async () => { byTestId("sm-adjust-stock-p1").click(); });
+    await act(async () => { typeInto("sm-stock-qty-input", "5"); });
+    await act(async () => { typeInto("sm-stock-reason-input", "Shipment received"); });
+    await act(async () => { byTestId("sm-stock-save").click(); byTestId("sm-stock-save").click(); });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); await Promise.resolve(); });
     noReferenceErrors();
   });
 });

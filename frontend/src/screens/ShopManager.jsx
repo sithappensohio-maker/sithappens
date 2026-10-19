@@ -265,6 +265,9 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [stockModal, setStockModal] = useState(null); // { item, mode: "receive" | "adjust" }
   const [stockQty, setStockQty] = useState("");
   const [stockReason, setStockReason] = useState("");
+  const [stockModalSaving, setStockModalSaving] = useState(false);
+  const stockModalSavingRef = useRef(false); // a state flag alone is re-render-delayed: two clicks dispatched before React
+                                              // re-renders the disabled button both read the same stale "false" closure.
   const [historyItem, setHistoryItem] = useState(null);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -669,12 +672,15 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const openAdjustStock = (it) => { setStockModal({ item: it, mode: "adjust" }); setStockQty(""); setStockReason(""); };
 
   const submitStock = async () => {
+    if (stockModalSavingRef.current) return;
     const qty = Number(stockQty);
     if (!qty) { toast.error("Enter a non-zero quantity"); return; }
     if (stockModal.mode === "receive" && qty <= 0) { toast.error("Receive Stock only accepts a positive quantity"); return; }
     if (stockReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
     const delta = stockModal.mode === "receive" ? Math.abs(qty) : qty;
     const source = stockModal.mode === "receive" ? "RESTOCK" : "MANUAL_ADJUSTMENT";
+    stockModalSavingRef.current = true;
+    setStockModalSaving(true);
     try {
       const { data } = await api.post(`/pos/products/${stockModal.item.id}/adjust-stock`, { quantity_delta: delta, reason: stockReason.trim(), source });
       toast.success(`Stock updated — now ${data.stock_on_hand}`);
@@ -683,6 +689,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not adjust stock");
     }
+    stockModalSavingRef.current = false;
+    setStockModalSaving(false);
   };
 
   const openStockHistory = (it) => {
@@ -1044,8 +1052,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
               </p>
             )}
             <div className="flex gap-3 pt-1">
-              <button onClick={() => setStockModal(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
-              <button onClick={submitStock} data-testid="sm-stock-save" className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">Save</button>
+              <button onClick={() => setStockModal(null)} disabled={stockModalSaving} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3 disabled:opacity-40">Cancel</button>
+              <button onClick={submitStock} disabled={stockModalSaving} data-testid="sm-stock-save" className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">{stockModalSaving ? "Saving…" : "Save"}</button>
             </div>
           </div>
         </div>
@@ -1349,8 +1357,12 @@ function CategoriesTab() {
   const [categoryDraft, setCategoryDraft] = useState(BLANK_CATEGORY_DRAFT);
   const [categoryOriginalImageId, setCategoryOriginalImageId] = useState(null);
   const [categoryOriginalMobileImageId, setCategoryOriginalMobileImageId] = useState(null);
+  const [categorySaving, setCategorySaving] = useState(false);
+  const categorySavingRef = useRef(false); // see stockModalSavingRef above — same stale-closure reason
   const [addingSubFor, setAddingSubFor] = useState(null);
   const [subDraft, setSubDraft] = useState({ name: "", description: "" });
+  const [subcategorySaving, setSubcategorySaving] = useState(false);
+  const subcategorySavingRef = useRef(false);
 
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeAction, setRemoveAction] = useState("deactivate");
@@ -1421,6 +1433,7 @@ function CategoriesTab() {
   };
 
   const saveCategory = async () => {
+    if (categorySavingRef.current) return;
     setErr("");
     if (!categoryDraft.name.trim()) return setErr("Category name is required.");
     const body = {
@@ -1433,6 +1446,8 @@ function CategoriesTab() {
       is_featured: categoryDraft.is_featured, is_department: categoryDraft.is_department,
       hide_when_empty: categoryDraft.hide_when_empty,
     };
+    categorySavingRef.current = true;
+    setCategorySaving(true);
     try {
       if (editingCategoryId) {
         await api.put(`/shop/categories/${editingCategoryId}`, body);
@@ -1451,17 +1466,24 @@ function CategoriesTab() {
       setCategoryDraft(BLANK_CATEGORY_DRAFT);
       load();
     } catch (e) { setErr(formatErr(e)); }
+    categorySavingRef.current = false;
+    setCategorySaving(false);
   };
 
   const saveSubcategory = async (categoryId) => {
+    if (subcategorySavingRef.current) return;
     setErr("");
     if (!subDraft.name.trim()) return setErr("Subcategory name is required.");
+    subcategorySavingRef.current = true;
+    setSubcategorySaving(true);
     try {
       await api.post("/shop/subcategories", { category_id: categoryId, name: subDraft.name.trim(), description: subDraft.description || null });
       setAddingSubFor(null);
       setSubDraft({ name: "", description: "" });
       load();
     } catch (e) { setErr(formatErr(e)); }
+    subcategorySavingRef.current = false;
+    setSubcategorySaving(false);
   };
 
   const toggleCategoryActive = async (cat) => {
@@ -1618,9 +1640,9 @@ function CategoriesTab() {
                 </label>
               </div>
               <div className="flex gap-2 justify-end">
-                <button onClick={cancelCategoryForm} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-3 py-2">Cancel</button>
-                <button onClick={saveCategory} data-testid="sm-save-category"
-                        className="bg-shPrimary text-bgBase px-4 py-2 rounded font-black uppercase text-[12px] tracking-widest">Save Category</button>
+                <button onClick={cancelCategoryForm} disabled={categorySaving} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-3 py-2 disabled:opacity-40">Cancel</button>
+                <button onClick={saveCategory} disabled={categorySaving} data-testid="sm-save-category"
+                        className="bg-shPrimary text-bgBase px-4 py-2 rounded font-black uppercase text-[12px] tracking-widest disabled:opacity-40">{categorySaving ? "Saving…" : "Save Category"}</button>
               </div>
             </div>
           )}
@@ -1687,8 +1709,8 @@ function CategoriesTab() {
                       <input value={subDraft.name} onChange={(e) => setSubDraft((d) => ({ ...d, name: e.target.value }))}
                              placeholder="Subcategory name" data-testid={`sm-subcategory-name-input-${cat.id}`}
                              className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                      <button onClick={() => setAddingSubFor(null)} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-2">Cancel</button>
-                      <button onClick={() => saveSubcategory(cat.id)} className="bg-shPrimary text-bgBase px-3 py-1.5 rounded font-black uppercase text-[12px] tracking-widest">Save</button>
+                      <button onClick={() => setAddingSubFor(null)} disabled={subcategorySaving} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-2 disabled:opacity-40">Cancel</button>
+                      <button onClick={() => saveSubcategory(cat.id)} disabled={subcategorySaving} data-testid={`sm-save-subcategory-${cat.id}`} className="bg-shPrimary text-bgBase px-3 py-1.5 rounded font-black uppercase text-[12px] tracking-widest disabled:opacity-40">{subcategorySaving ? "Saving…" : "Save"}</button>
                     </div>
                   ) : (
                     <button onClick={() => { setAddingSubFor(cat.id); setSubDraft({ name: "", description: "" }); }}
