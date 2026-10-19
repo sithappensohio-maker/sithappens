@@ -44861,10 +44861,16 @@ async def create_shop_order_shipping_label(order_id: str, user: dict = Depends(r
     re-entering the same order on FedEx's own site.
 
     Idempotent by construction: an order that already has a stored label
-    returns that SAME one instead of ever calling FedEx a second time —
-    domains.shop.shipping.create_label_for_order commits a real shipment
-    on every call, so this is the one and only gate that decides whether
-    it's safe to call it at all.
+    returns that SAME one instead of ever calling FedEx a second time.
+    domains.shop.shipping.create_label_for_order commits a real shipment on
+    every call, so a plain read-then-write "no label yet" check isn't
+    enough — two near-simultaneous requests (double-click, retry, two
+    staff tabs) could both pass that check before either one writes.
+    shop_shipping.label_claim_held takes an atomic per-order claim first,
+    the same pattern pos.sale_claims uses for refunds/voids, so only one
+    request at a time can ever reach create_label_for_order for a given
+    order; the one that loses the race simply re-reads the order (now
+    carrying the label the winner just saved) instead of calling FedEx.
     """
     _require_take_payments(user)
     order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
@@ -44877,15 +44883,22 @@ async def create_shop_order_shipping_label(order_id: str, user: dict = Depends(r
     if order.get("tracking_number") and order.get("label_base64"):
         return {"tracking_number": order["tracking_number"], "label_base64": order["label_base64"],
                 "label_content_type": order.get("label_content_type") or "application/pdf"}
-    label = await shop_shipping.create_label_for_order(order)
-    ts = now_iso()
-    await db.shop_orders.update_one(
-        {"id": order_id},
-        {"$set": {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
-                   "label_content_type": label.label_content_type, "label_created_at": ts, "updated_at": ts}},
-    )
-    return {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
-            "label_content_type": label.label_content_type}
+    async with shop_shipping.label_claim_held(db, order_id):
+        # Re-read inside the claim: a request that lost the race above may
+        # have waited here while the winner already created the label.
+        order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+        if order.get("tracking_number") and order.get("label_base64"):
+            return {"tracking_number": order["tracking_number"], "label_base64": order["label_base64"],
+                    "label_content_type": order.get("label_content_type") or "application/pdf"}
+        label = await shop_shipping.create_label_for_order(order)
+        ts = now_iso()
+        await db.shop_orders.update_one(
+            {"id": order_id},
+            {"$set": {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
+                       "label_content_type": label.label_content_type, "label_created_at": ts, "updated_at": ts}},
+        )
+        return {"tracking_number": label.tracking_number, "label_base64": label.label_base64,
+                "label_content_type": label.label_content_type}
 
 
 @api.get("/admin/shop-orders/{order_id}/shipping-label")

@@ -22,15 +22,23 @@ charges $0 or guesses a rate.
 from __future__ import annotations
 
 import logging
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+from pymongo.errors import DuplicateKeyError
 
 from domains.shop import fedex
 from domains.shop import pickup as shop_pickup
 
 logger = logging.getLogger(__name__)
+
+LABEL_CLAIM_COLLECTION = "shop_label_claims"
+LABEL_CLAIM_SECONDS = 180
+LABEL_BUSY_DETAIL = "A FedEx label for this order is already being created. Wait a moment and try again."
 
 
 class ShopShippingAddressIn(BaseModel):
@@ -85,6 +93,53 @@ def _ship_to_from_order_address(address: dict) -> fedex.ShipToAddress:
         state=address.get("region") or "", zip=address.get("zip") or "",
         country=address.get("country") or "US",
     )
+
+
+async def _try_insert_label_claim(db, doc: dict) -> bool:
+    try:
+        await db[LABEL_CLAIM_COLLECTION].insert_one(dict(doc))
+        return True
+    except DuplicateKeyError:
+        return False
+
+
+async def _take_label_claim(db, order_id: str, token: str) -> bool:
+    now = datetime.now(timezone.utc)
+    doc = {"order_id": order_id, "token": token,
+           "claimed_at": now, "expires_at": now + timedelta(seconds=LABEL_CLAIM_SECONDS)}
+    if await _try_insert_label_claim(db, doc):
+        return True
+    # Someone holds it. Only a claim that has run past its expiry may be taken over.
+    # find_one_and_delete is atomic, so two takers can't both win the same stale claim.
+    stale = await db[LABEL_CLAIM_COLLECTION].find_one_and_delete({"order_id": order_id, "expires_at": {"$lt": now}})
+    if stale is None:
+        return False
+    return await _try_insert_label_claim(db, doc)
+
+
+@asynccontextmanager
+async def label_claim_held(db, order_id: str):
+    """Hold the one-FedEx-label-call-at-a-time claim for `order_id`.
+
+    create_label_for_order commits a real, non-idempotent FedEx shipment on
+    every call. Without this, two near-simultaneous requests for the same
+    order (a double-click, a retry, two staff tabs) could each read "no
+    label yet" and each call FedEx for real before either one writes the
+    result — same shape as pos.sale_claims, which this mirrors. Raises 409
+    if another request already holds the claim; a claim left behind by a
+    crash expires on its own.
+    """
+    await db[LABEL_CLAIM_COLLECTION].create_index("order_id", unique=True)
+    token = uuid.uuid4().hex
+    if not await _take_label_claim(db, order_id, token):
+        raise HTTPException(status_code=409, detail=LABEL_BUSY_DETAIL)
+    try:
+        yield
+    finally:
+        try:
+            await db[LABEL_CLAIM_COLLECTION].delete_one({"order_id": order_id, "token": token})
+        except Exception:
+            logger.exception("Could not release the shipping-label claim on order %s; it expires on its own", order_id)
 
 
 async def create_label_for_order(order: dict) -> fedex.ShipmentLabel:

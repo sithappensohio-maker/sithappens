@@ -13,6 +13,7 @@ that).
 
 Disposable tag TEST_SHOP_SHIPPING.
 """
+import asyncio
 import contextlib
 import uuid
 from unittest.mock import AsyncMock, patch
@@ -380,6 +381,40 @@ def test_create_shipping_label_endpoint_is_idempotent_never_calls_fedex_twice():
         second = run(server.create_shop_order_shipping_label(order["id"], STAFF))
     assert first == second
     assert mock_second.await_count == 0  # the stored label won, FedEx was never called again
+
+
+def test_create_shipping_label_endpoint_claims_so_two_concurrent_calls_cant_both_hit_fedex():
+    """Two near-simultaneous requests for the same order (double-click, a
+    retry, two staff tabs) must never both reach the real, non-idempotent
+    FedEx call — only one may win; the other must see the claim already
+    held rather than racing past the "no label yet" check. Without
+    shop_shipping.label_claim_held this reproduces as mock_create.await_count
+    == 2 (a real double-billed FedEx shipment)."""
+    order = _shipped_order()
+    release = asyncio.Event()
+
+    async def _slow_create(**kwargs):
+        await release.wait()
+        return fedex.ShipmentLabel(tracking_number="999", label_base64="abc", label_content_type="application/pdf")
+
+    with patch.object(fedex, "FEDEX_ENABLED", True), \
+         patch.object(fedex, "create_ground_label", AsyncMock(side_effect=_slow_create)) as mock_create:
+
+        async def _race():
+            first = asyncio.ensure_future(server.create_shop_order_shipping_label(order["id"], STAFF))
+            await asyncio.sleep(0)  # let `first` start and take the claim before `second` is created
+            second = asyncio.ensure_future(server.create_shop_order_shipping_label(order["id"], STAFF))
+            await asyncio.sleep(0)  # let `second` hit the already-held claim
+            release.set()
+            return await asyncio.gather(first, second, return_exceptions=True)
+
+        results = run(_race())
+
+    assert mock_create.await_count == 1  # FedEx was only ever actually called once
+    successes = [r for r in results if isinstance(r, dict)]
+    busy = [r for r in results if isinstance(r, HTTPException) and r.status_code == 409]
+    assert len(successes) == 1 and successes[0]["tracking_number"] == "999"
+    assert len(busy) == 1
 
 
 def test_create_shipping_label_endpoint_refuses_a_pickup_order():
