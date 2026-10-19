@@ -191,6 +191,24 @@ def test_the_early_checkout_quote_for_a_friends_dog_uses_the_payers_rates():
         assert quote["applicable"] and quote["unit_price"] == 45.0
 
 
+def test_a_tip_offered_at_the_friends_dog_solo_checkout_is_stripped_not_charged():
+    """Nothing is paid at a friends & family pickup — the payer's one bill
+    covers it later — so a tip has nothing to attach to here, same rule
+    tips.py documents. A combined pickup (checkout_group.py,
+    check_out_together) already zeroes tip_amount on every dog but the
+    anchor; this is the other path to the same booking: the friend's dog
+    picked up alone, straight through the single-booking checkout
+    endpoint. Without on_the_payers_tab stripping it too, the tip would
+    silently inflate this booking's actual_price even though no one paid
+    it — the payer's bill was never asked for a tip and the friend's
+    family pays nothing here at all."""
+    with _group() as (_payer, friend, _day_svc):
+        result = _checkout(friend["booking"], tip_amount=20.0)
+        assert not result.get("tip_amount")
+        booking = run(server.db.bookings.find_one({"id": friend["booking"]}, {"_id": 0}))
+        assert not booking.get("tip_amount")
+
+
 def test_extras_at_check_in_and_the_checkout_preview_use_the_payers_rates():
     with _group(friend_rates={"day": 36.0}, checked_in=False) as (_payer, friend, day_svc):
         trim = {"id": str(uuid.uuid4()), "name": f"{TAG} Nail trim", "service_type": "grooming", "base_price": 10.0,

@@ -213,7 +213,14 @@ def expected(body: Any, ff_row: bool) -> None:
 def on_the_payers_tab(body: Any) -> Any:
     """The checkout of a friends & family dog: nothing is paid here — the
     whole visit goes on the payer's account (and never on prepaid credits).
-    Money offered at this checkout is refused rather than silently ignored."""
+    Money offered at this checkout is refused rather than silently ignored.
+
+    A tip is stripped rather than refused, same as a combined checkout
+    already strips it off every dog but the anchor (checkout_group.py,
+    friends_family.check_out_together) — there is nothing to tip at a
+    pickup where nothing is paid. This is the one checkout path those two
+    don't cover: a friend's dog picked up on its own, straight through the
+    single-booking checkout endpoint."""
     if body.retail_lines:
         raise HTTPException(status_code=400, detail=MSG_REGISTER)
     checkout_discount.refuse_on_friends_family(body)
@@ -222,7 +229,7 @@ def on_the_payers_tab(body: Any) -> Any:
     if offered:
         raise HTTPException(status_code=400, detail=MSG_PAY_ON_BILL)
     return body.model_copy(update={"payment_status": "paid_partial", "amount_paid": 0.0,
-                                   "use_credits": False, "extra_nights_use_credits": False})
+                                   "use_credits": False, "extra_nights_use_credits": False, "tip_amount": 0})
 
 
 def _stale_before() -> str:
