@@ -28634,14 +28634,24 @@ async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = 
             continue
         relevant.append(b)
 
-    # Enrich with dog care data + client
+    # Enrich with dog care data + client — batched with $in instead of one
+    # round trip per booking (same pattern care.care_board_today already
+    # uses): a dozen bookings is a dozen extra round trips today, hundreds
+    # of bookings is hundreds of sequential awaits on one request.
+    dog_ids = list({b["dog_id"] for b in relevant if b.get("dog_id")})
+    client_ids = list({b["client_id"] for b in relevant if b.get("client_id")})
+    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0}).to_list(len(dog_ids) or 1)} if dog_ids else {}
+    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0}).to_list(len(client_ids) or 1)} if client_ids else {}
+    program_ids = list({d["active_program_id"] for d in dogs.values() if d.get("active_program_id")})
+    programs = {p["id"]: p for p in await db.dog_programs.find({"id": {"$in": program_ids}}, {"_id": 0}).to_list(len(program_ids) or 1)} if program_ids else {}
+
     out = []
     for b in relevant:
-        dog = await db.dogs.find_one({"id": b["dog_id"]}, {"_id": 0})
-        client = await db.clients.find_one({"id": b["client_id"]}, {"_id": 0})
+        dog = dogs.get(b.get("dog_id"))
+        client = clients.get(b.get("client_id"))
         active_program_name = None
         if dog and dog.get("active_program_id"):
-            enr = await db.dog_programs.find_one({"id": dog["active_program_id"]}, {"_id": 0})
+            enr = programs.get(dog["active_program_id"])
             if enr and enr.get("status") == "active":
                 active_program_name = (enr.get("program_snapshot") or {}).get("name")
         out.append({
