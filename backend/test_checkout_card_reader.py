@@ -231,6 +231,14 @@ def test_a_matching_succeeded_charge_checks_the_dog_out_and_records_the_real_pro
     assert cash_row["method"] == "stripe_terminal"
     assert cash_row["processor"] == "stripe_terminal"
     assert cash_row["processor_payment_id"] == "pi_test1"
+    # The exact validation FastAPI performs on the way out to the browser —
+    # calling server.check_out directly (as every test above does) skips
+    # straight past it, which is exactly how a real prod bug shipped: the
+    # DB write succeeded, but BookingOut.payment_method's own Literal had
+    # never been taught "stripe_terminal", so the response itself 500'd on
+    # a real, successfully-charged checkout (ResponseValidationError).
+    validated = server.BookingOut.model_validate(row)
+    assert validated.payment_method == "stripe_terminal"
 
 
 def test_an_amount_mismatch_refuses_and_checks_out_nothing():

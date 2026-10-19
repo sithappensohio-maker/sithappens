@@ -1115,13 +1115,13 @@ class BookingOut(BaseModel):
     service_name: Optional[str] = None
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "stripe_terminal"]] = None
     # Mixed credits+cash checkout stores the real tender for the cash
     # portion here (payment_method itself stays "credits") — already used
     # internally for register/P&L tender resolution; exposed here so API
     # consumers (tests, future UI) can see it too, without changing any
     # pricing/money computation.
-    cash_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = None
+    cash_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other", "stripe_terminal"]] = None
     paid_at: Optional[str] = None
     # Sprint 110di-51 — Partial-payment / tab support. When a booking is
     # checked out and the client only paid part of the bill, `amount_paid`
