@@ -1196,6 +1196,31 @@ describe("Inline price/stock editing (owner request, 2026-10-18)", () => {
     noReferenceErrors();
   });
 
+  // Same stale-closure gap as the modal's Save below, one row up: a state
+  // flag alone isn't enough to stop two clicks dispatched before React
+  // re-renders the disabled button.
+  test("double-clicking Save on the inline stock edit only adjusts stock once", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, opts) => {
+      if (url.includes("/shop-manager/items")) {
+        return Promise.resolve({ data: { items: ITEMS.map((it) => it.id === "p1" ? { ...it, track_inventory: true, stock_on_hand: 5 } : it) } });
+      }
+      return base(url, opts);
+    });
+    let release;
+    api.post.mockReset();
+    api.post.mockImplementation(() => new Promise((r) => { release = () => r({ data: { stock_on_hand: 10 } }); }));
+
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-inventory-p1").click(); });
+    await act(async () => { typeInto("sm-stock-inline-qty-p1", "5"); });
+    await act(async () => { typeInto("sm-stock-inline-reason-p1", "Shipment received"); });
+    await act(async () => { byTestId("sm-stock-inline-save-p1").click(); byTestId("sm-stock-inline-save-p1").click(); });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); await Promise.resolve(); });
+    noReferenceErrors();
+  });
+
   // A double-click (or a slow network) must not double the stock delta —
   // the inline Save above already guards this with disabled={stockDraftSaving};
   // the Receive/Adjust Stock modal's own Save button was missing the same guard.

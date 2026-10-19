@@ -321,6 +321,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [stockDraftQty, setStockDraftQty] = useState("");
   const [stockDraftReason, setStockDraftReason] = useState("");
   const [stockDraftSaving, setStockDraftSaving] = useState(false);
+  const stockDraftSavingRef = useRef(false); // see stockModalSavingRef elsewhere in this file — same stale-closure reason
 
   const load = useCallback(() => {
     setLoading(true);
@@ -451,9 +452,11 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   };
   const cancelStockEdit = () => setEditingStockKey(null);
   const saveStockEdit = async (it) => {
+    if (stockDraftSavingRef.current) return;
     const qty = Number(stockDraftQty);
     if (!qty) { toast.error("Enter a non-zero quantity"); return; }
     if (stockDraftReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
+    stockDraftSavingRef.current = true;
     setStockDraftSaving(true);
     try {
       const { data } = await api.post(`/pos/products/${it.id}/adjust-stock`, { quantity_delta: qty, reason: stockDraftReason.trim(), source: "MANUAL_ADJUSTMENT" });
@@ -463,6 +466,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not adjust stock");
     }
+    stockDraftSavingRef.current = false;
     setStockDraftSaving(false);
   };
 
