@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, formatErr } from "./api";
 import { toast } from "sonner";
 
 /* Shared /admin/today-brain CTA-routing — extracted from the copy that used
@@ -58,7 +58,9 @@ export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate
   else if (cta.type === "send_monday_digest") {
     api.post("/admin/homework/send-monday-digest")
       .then(({ data }) => showMondayBriefResult(data))
-      .catch((e) => toast.error("Failed to send: " + (e.response?.data?.detail || e.message)));
+      // formatErr reads the server's own message, never a raw Axios string
+      // like "Network Error" (same trap its own docstring names, audit #92).
+      .catch((e) => toast.error("Failed to send: " + formatErr(e)));
   }
 }
 
@@ -70,5 +72,8 @@ export function showMondayBriefResult(data) {
   else if (data?.skipped_already_sent) toast.info("The Monday brief already went out this week.");
   else if (data?.reason === "held_quiet_hours") toast.info("Quiet Hours are on. The Monday brief will go out when they end.");
   else if (data?.reason === "email_send_failed") toast.error("Email send failed — check Resend domain verification.");
-  else toast.error(`Result: ${JSON.stringify(data)}`);
+  // An unrecognized shape used to dump the raw JSON at the owner. This can
+  // only mean the backend changed its response without this list being
+  // updated to match — a plain message beats a wall of braces either way.
+  else toast.error("Something unexpected happened sending the Monday brief — check the admin email, or try again.");
 }
