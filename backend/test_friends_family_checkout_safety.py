@@ -209,6 +209,20 @@ def test_a_tip_offered_at_the_friends_dog_solo_checkout_is_stripped_not_charged(
         assert not booking.get("tip_amount")
 
 
+def test_an_extra_cash_charge_offered_at_the_friends_dog_solo_checkout_is_stripped_not_charged():
+    """additional_cash_charge is cash collected on the spot, same as a tip
+    (checkout_prices.py's own description: "an extra cash amount on top")
+    — nothing is collected at a friends & family pickup either way. OWNER
+    carries the "pricing" permission additional_cash_charge is gated
+    behind (checkout_prices.refuse_price_changes), so this reaches
+    on_the_payers_tab rather than being refused there first."""
+    with _group() as (_payer, friend, _day_svc):
+        result = _checkout(friend["booking"], additional_cash_charge=15.0)
+        assert not result.get("additional_cash_charge")
+        booking = run(server.db.bookings.find_one({"id": friend["booking"]}, {"_id": 0}))
+        assert not booking.get("additional_cash_charge")
+
+
 def test_extras_at_check_in_and_the_checkout_preview_use_the_payers_rates():
     with _group(friend_rates={"day": 36.0}, checked_in=False) as (_payer, friend, day_svc):
         trim = {"id": str(uuid.uuid4()), "name": f"{TAG} Nail trim", "service_type": "grooming", "base_price": 10.0,
