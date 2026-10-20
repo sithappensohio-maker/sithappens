@@ -5219,7 +5219,11 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
     await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
     # Credits are deducted at CHECKOUT, not approval. Approval just confirms
     # the spot is reserved.
-    update = {"status": "approved"}
+    update = {
+        "status": "approved",
+        "approved_at": now_iso(),
+        "approved_by_name": user.get("display_name") or user.get("name"),
+    }
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
     # Best-effort confirmation email to the client

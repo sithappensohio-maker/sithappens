@@ -137,7 +137,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   const onPremises = booking.checked_in_at && !booking.checked_out_at;
   const done = !!booking.checked_out_at;
   const statusTone = done ? "default" : onPremises ? "green" : "orange";
-  const statusLabel = done ? "Checked out" : onPremises ? "On premises" : booking.approved ? "Scheduled" : "Awaiting approval";
+  const statusLabel = done ? "Checked out" : onPremises ? "On premises" : booking.status === "approved" ? "Scheduled" : "Awaiting approval";
 
   // Compute totals
   const addOns = booking.add_ons || [];
