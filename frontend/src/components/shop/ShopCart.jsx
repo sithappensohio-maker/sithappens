@@ -447,11 +447,12 @@ export default function CartPanel({
   const canCheckout = !previewMode && lines.length > 0 && (!guestMode || blocked.length === 0)
     && !shippingIncomplete && !printifyIncomplete;
 
-  // Every code today is clients_only — gift cards never count (money, not
-  // a purchase, same rule the server applies). Estimate only; see
+  // Retail (physical goods) only, same scope the server applies — a gift
+  // card is money, not a purchase, and a credit pack or training program
+  // is prepaid service, never discounted either. Estimate only; see
   // CartSummary's own note on this.
   const discountableSubtotal = lines
-    .filter((l) => l.item?.kind !== "gift_card")
+    .filter((l) => l.item?.kind === "product")
     .reduce((sum, l) => sum + cartLineUnitPrice(l.item, l.variant_id) * l.quantity, 0);
   const codeEstimate = appliedDiscount
     ? (appliedDiscount.kind === "percent"

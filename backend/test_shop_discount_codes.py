@@ -43,7 +43,7 @@ def _stripe_mocked():
         server.stripe.Customer.create, server.stripe.checkout.Session.create = orig_c, orig_s
 
 
-_made = {"clients": [], "products": [], "codes": []}
+_made = {"clients": [], "products": [], "codes": [], "packs": []}
 
 
 def setup_module(_module):
@@ -58,6 +58,7 @@ def teardown_module(_module):
         run(server.db[coll].delete_many({"client_id": {"$in": cids}}))
     run(server.db.clients.delete_many({"id": {"$in": cids}}))
     run(server.db.pos_products.delete_many({"id": {"$in": _made["products"]}}))
+    run(server.db.credit_packs.delete_many({"id": {"$in": _made["packs"]}}))
     run(server.db.shop_discount_codes.delete_many({"id": {"$in": _made["codes"]}}))
     run(server.db.shop_discount_code_redemptions.delete_many({"code_id": {"$in": _made["codes"]}}))
 
@@ -77,6 +78,16 @@ def _product(price):
         name=f"{TAG} Item {uuid.uuid4().hex[:6]}", price=price, show_online=True, active=True, starting_stock=0), ADMIN))
     _made["products"].append(p["id"])
     return p
+
+
+def _pack(price):
+    pid = str(uuid.uuid4())
+    run(server.db.credit_packs.insert_one({
+        "id": pid, "name": f"{TAG} Pack", "price": price, "qty": 5, "active": True,
+        "available_online": True, "service_type": "daycare", "category_id": None, "subcategory_id": None,
+    }))
+    _made["packs"].append(pid)
+    return {"id": pid}
 
 
 def _code(**overrides):
@@ -111,14 +122,22 @@ def test_compute_discount_amount_percent_and_fixed():
     assert shop_discount_codes.compute_discount_amount("percent", 10, 0) == 0.0
 
 
-def test_apply_to_lines_excludes_gift_cards_and_allocates_proportionally_with_remainder():
+def test_apply_to_lines_is_retail_only_and_allocates_proportionally_with_remainder():
+    # Owner report 2026-10-20: a daycare credit pack rode the 10% retail
+    # discount it was never meant to get. Only kind=="product" lines (retail,
+    # physical goods) may be discounted — a gift card is money, a credit pack
+    # or training program is prepaid service, neither is retail.
     lines = [
         {"kind": "product", "line_subtotal": 10.0},
         {"kind": "product", "line_subtotal": 20.0},
         {"kind": "gift_card", "line_subtotal": 50.0},
+        {"kind": "credit_pack", "line_subtotal": 100.0},
+        {"kind": "training_program", "line_subtotal": 300.0},
     ]
-    shop_discount_codes.apply_to_lines(lines, 3.0)  # 10% of the $30 discountable total
+    shop_discount_codes.apply_to_lines(lines, 3.0)  # 10% of the $30 retail total
     assert lines[2]["allocated_discount"] == 0.0
+    assert lines[3]["allocated_discount"] == 0.0
+    assert lines[4]["allocated_discount"] == 0.0
     assert lines[0]["allocated_discount"] + lines[1]["allocated_discount"] == 3.0
     assert lines[0]["allocated_discount"] == 1.0   # 10/30 share
     assert lines[1]["allocated_discount"] == 2.0   # 20/30 share (+ remainder)
@@ -197,6 +216,28 @@ def test_price_shop_cart_applies_a_valid_code():
     assert priced["total"] == 72.0
     assert priced["lines"][0]["allocated_discount"] == 8.0
     assert priced["lines"][0]["line_total"] == 72.0
+
+
+def test_price_shop_cart_never_discounts_a_credit_pack_in_a_mixed_cart():
+    # Owner report 2026-10-20: a cart with both a retail item and a daycare
+    # credit pack must discount only the retail item's $80, never the pack's
+    # $100 — the pack line keeps its full price, zero allocated_discount.
+    user = _client()
+    product = _product(80.0)
+    pack = _pack(100.0)
+    code = _code(value=10.0)
+    priced = run(server._price_shop_cart(
+        [server.ShopCartItemIn(kind="product", ref_id=product["id"], quantity=1),
+         server.ShopCartItemIn(kind="credit_pack", ref_id=pack["id"], quantity=1)],
+        client_id=user["client_id"], discount_code=code["code"], is_guest=False,
+    ))
+    assert priced["discount_amount"] == 8.0   # 10% of the $80 product only, never the $100 pack
+    assert priced["total"] == 172.0           # (80 - 8) + 100
+    product_line = next(l for l in priced["lines"] if l["kind"] == "product")
+    pack_line = next(l for l in priced["lines"] if l["kind"] == "credit_pack")
+    assert product_line["allocated_discount"] == 8.0
+    assert pack_line["allocated_discount"] == 0.0
+    assert pack_line["line_total"] == 100.0
 
 
 def test_price_shop_cart_refuses_an_invalid_code():

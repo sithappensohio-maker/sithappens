@@ -43558,9 +43558,13 @@ async def _price_shop_cart(
     # checkout. A cart gets whichever is larger: a client-entered code, or
     # the automatic loyalty discount regular clients qualify for just by
     # being signed in (domains.shop.loyalty_discount) — they never stack,
-    # see that module's docstring for why. Gift-card lines are never
-    # discounted either way (money, not a purchase, same rule as tax).
-    discountable_now = round(sum(l["line_subtotal"] for l in lines if l["kind"] != "gift_card"), 2)
+    # see that module's docstring for why. Retail (physical goods) only:
+    # a gift card is money, not a purchase (same rule as tax), and a credit
+    # pack or training program is prepaid service, not retail — discounting
+    # either is effectively giving away cash the client will redeem 1-for-1
+    # later (owner report 2026-10-20: a daycare credit pack must never ride
+    # the 10% retail discount).
+    discountable_now = round(sum(l["line_subtotal"] for l in lines if l["kind"] == "product"), 2)
 
     discount_doc = None
     code_amount = 0.0

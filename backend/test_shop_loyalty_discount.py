@@ -43,7 +43,7 @@ def _stripe_mocked():
         server.stripe.Customer.create, server.stripe.checkout.Session.create = orig_c, orig_s
 
 
-_made = {"clients": [], "products": [], "codes": []}
+_made = {"clients": [], "products": [], "codes": [], "packs": []}
 
 
 def setup_module(_module):
@@ -62,6 +62,7 @@ def teardown_module(_module):
         run(server.db[coll].delete_many({"client_id": {"$in": cids}}))
     run(server.db.clients.delete_many({"id": {"$in": cids}}))
     run(server.db.pos_products.delete_many({"id": {"$in": _made["products"]}}))
+    run(server.db.credit_packs.delete_many({"id": {"$in": _made["packs"]}}))
     run(server.db.shop_discount_codes.delete_many({"id": {"$in": _made["codes"]}}))
     run(server.db.shop_discount_code_redemptions.delete_many({"code_id": {"$in": _made["codes"]}}))
 
@@ -90,6 +91,16 @@ def _product(price):
         name=f"{TAG} Item {uuid.uuid4().hex[:6]}", price=price, show_online=True, active=True, starting_stock=0), ADMIN))
     _made["products"].append(p["id"])
     return p
+
+
+def _pack(price):
+    pid = str(uuid.uuid4())
+    run(server.db.credit_packs.insert_one({
+        "id": pid, "name": f"{TAG} Pack", "price": price, "qty": 5, "active": True,
+        "available_online": True, "service_type": "daycare", "category_id": None, "subcategory_id": None,
+    }))
+    _made["packs"].append(pid)
+    return {"id": pid}
 
 
 def _code(**overrides):
@@ -156,6 +167,26 @@ def test_price_shop_cart_auto_applies_loyalty_discount_with_no_code():
     assert priced["loyalty_discount_pct"] == PCT
     assert priced["discount_code"] is None
     assert priced["total"] == 72.0
+
+
+def test_loyalty_discount_never_applies_to_a_credit_pack_in_the_cart():
+    # Owner report 2026-10-20: the loyalty discount is retail-only too, same
+    # rule as a discount code — a regular client's auto 10% must not touch a
+    # daycare credit pack bought alongside a retail item.
+    user = _client(visits=THRESHOLD)
+    product = _product(80.0)
+    pack = _pack(100.0)
+    priced = run(server._price_shop_cart(
+        [server.ShopCartItemIn(kind="product", ref_id=product["id"], quantity=1),
+         server.ShopCartItemIn(kind="credit_pack", ref_id=pack["id"], quantity=1)],
+        client_id=user["client_id"],
+    ))
+    assert priced["discount_amount"] == 8.0   # 10% of the $80 product only
+    assert priced["discount_source"] == "loyalty"
+    assert priced["total"] == 172.0           # (80 - 8) + 100
+    pack_line = next(l for l in priced["lines"] if l["kind"] == "credit_pack")
+    assert pack_line["allocated_discount"] == 0.0
+    assert pack_line["line_total"] == 100.0
 
 
 def test_price_shop_cart_a_client_below_threshold_gets_no_auto_discount():

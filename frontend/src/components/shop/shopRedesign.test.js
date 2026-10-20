@@ -398,6 +398,24 @@ describe("the cart", () => {
     expect(blocked.map((l) => l.ref_id)).toEqual(["k1", "t1"]);
   });
 
+  test("a discount estimate counts only retail lines, never a credit pack (owner report 2026-10-20)", () => {
+    mount(<CartPanel lines={[line(leash), line(pack)]} subtotal={304} guestMode={false}
+                     appliedDiscount={{ kind: "percent", value: 10 }}
+                     onQtyChange={() => {}} onRemove={() => {}} onCheckout={() => {}}
+                     onClose={() => {}} onSignIn={() => {}} />);
+    // 10% of the $24 leash only ($2.40) — never 10% of the $304 cart total ($30.40).
+    expect(byTestId("cart-discount").textContent).toContain("$2.40");
+    expect(byTestId("cart-discount").textContent).not.toContain("$30.40");
+  });
+
+  test("a discount estimate also excludes a training program, not just a credit pack", () => {
+    mount(<CartPanel lines={[line(leash), line(program)]} subtotal={974} guestMode={false}
+                     appliedDiscount={{ kind: "percent", value: 10 }}
+                     onQtyChange={() => {}} onRemove={() => {}} onCheckout={() => {}}
+                     onClose={() => {}} onSignIn={() => {}} />);
+    expect(byTestId("cart-discount").textContent).toContain("$2.40");
+  });
+
   test("an empty cart offers somewhere to go", () => {
     mount(<CartPanel lines={[]} subtotal={0} onQtyChange={() => {}} onRemove={() => {}}
                      onCheckout={() => {}} onClose={() => {}} onSignIn={() => {}} />);

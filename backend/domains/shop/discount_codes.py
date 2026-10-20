@@ -1,9 +1,13 @@
 """Shop discount codes — a customer-entered code that takes money off a
-Shop cart, same two shapes (percent/fixed) and the same cart-wide,
-gift-cards-excluded discount math the register already uses
-(domains.pos.services.price_pos_cart) — ported here rather than shared
-directly, since the register's version is staff-entered per sale and this
-one is a stored, reusable, limited code with its own eligibility rules.
+Shop cart's retail (physical-goods) lines, same two shapes (percent/fixed)
+as the register's discount math (domains.pos.services.price_pos_cart) —
+ported here rather than shared directly, since the register's version is
+staff-entered per sale and applies cart-wide at the staff's discretion,
+while this one is a stored, reusable, unattended code scoped to retail
+only: a gift card is money, not a purchase (same rule as tax), and a
+credit pack or training program is prepaid service, not retail —
+discounting either gives away cash the client redeems 1-for-1 later
+(owner report 2026-10-20).
 
 A code is a plain document:
 
@@ -127,18 +131,21 @@ def compute_discount_amount(kind: str, value: float, discountable: float) -> flo
 
 def apply_to_lines(lines: List[dict], discount_amount: float) -> None:
     """Mutates `lines` in place, setting `allocated_discount` on each —
-    mirrors domains.pos.services.price_pos_cart's own discount allocation
-    (proportional to each line's pre-discount line_subtotal, the last
-    discountable line absorbs the rounding remainder) so the Shop and the
-    register compute a cart discount identically. Gift-card lines are
-    never discounted — they're money, not a purchase, same rule as tax.
-    Must run before tax is computed: the caller derives the taxable base
-    from each taxable line's line_subtotal minus this allocated_discount."""
+    proportional to each line's pre-discount line_subtotal, the last
+    discountable line absorbs the rounding remainder. Retail (kind
+    "product") lines only: unlike the register's broader, staff-discretion
+    discount (domains.pos.services.price_pos_cart), this one drives an
+    unattended, client-facing discount that must never apply to a gift
+    card (money, not a purchase, same rule as tax) or to a credit pack /
+    training program (prepaid service — discounting it gives away cash the
+    client redeems 1-for-1 later). Must run before tax is computed: the
+    caller derives the taxable base from each taxable line's line_subtotal
+    minus this allocated_discount."""
     for line in lines:
         line["allocated_discount"] = 0.0
     if discount_amount <= 0:
         return
-    discountable_lines = [l for l in lines if l["kind"] != "gift_card"]
+    discountable_lines = [l for l in lines if l["kind"] == "product"]
     discountable = round(sum(l["line_subtotal"] for l in discountable_lines), 2)
     if discountable <= 0 or not discountable_lines:
         return
