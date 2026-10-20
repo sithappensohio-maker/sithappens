@@ -45,7 +45,7 @@ def _stripe_mocked():
         server.stripe.Customer.create, server.stripe.checkout.Session.create = orig_c, orig_s
 
 
-_made = {"clients": [], "products": []}
+_made = {"clients": [], "products": [], "packs": []}
 
 
 def setup_module(_module):
@@ -65,6 +65,7 @@ def teardown_module(_module):
         run(server.db[coll].delete_many({"client_id": {"$in": cids}}))
     run(server.db.clients.delete_many({"id": {"$in": cids}}))
     run(server.db.pos_products.delete_many({"id": {"$in": _made["products"]}}))
+    run(server.db.credit_packs.delete_many({"id": {"$in": _made["packs"]}}))
 
 
 def _client():
@@ -83,6 +84,29 @@ def _product(price):
         name=f"{TAG} Item {uuid.uuid4().hex[:6]}", price=price, show_online=True, active=True, starting_stock=0), ADMIN))
     _made["products"].append(p["id"])
     return p
+
+
+def _pack(price, qty=10):
+    pid = str(uuid.uuid4())
+    run(server.db.credit_packs.insert_one({
+        "id": pid, "name": f"{TAG} Pack", "price": price, "qty": qty, "active": True,
+        "available_online": True, "service_type": "daycare", "category_id": None, "subcategory_id": None,
+    }))
+    _made["packs"].append(pid)
+    return {"id": pid}
+
+
+def _pay_pack(user, pack, qty=1):
+    item = server.ShopCartItemIn(kind="credit_pack", ref_id=pack["id"], quantity=qty)
+    with _stripe_mocked():
+        out = run(server.create_shop_checkout(server.ShopCheckoutIn(items=[item], idempotency_key=f"{TAG}-{uuid.uuid4().hex}"), user))
+    order = run(server.db.shop_orders.find_one({"id": out["order_id"]}, {"_id": 0}))
+    attempt = run(server.db.shop_payment_attempts.find_one({"shop_order_id": order["id"]}, {"_id": 0}))
+    session = _FakeStripeObj(id=attempt["stripe_checkout_session_id"], payment_status="paid", currency="usd",
+                              amount_total=server._stripe_amount_cents(order["total"]),
+                              metadata={"sithappens_shop_order_id": order["id"], "sithappens_attempt_id": attempt["id"]})
+    run(server._apply_shop_payment(attempt, session))
+    return order["id"], attempt, session
 
 
 def _pay(user, product, qty=1):
@@ -201,3 +225,38 @@ def test_gift_card_lines_never_count_toward_progress():
     run(server._apply_shop_reward_progress(order))
     client = _client_doc(user["client_id"])
     assert client["shop_reward_progress"] == 30.0  # the gift card's $50 never counted
+
+
+def test_credit_pack_and_training_program_lines_never_count_toward_progress():
+    # Owner report 2026-10-20: a $220 online daycare-pack purchase crossed
+    # the $75 threshold and minted 2 bonus credits on top of the pack's own
+    # 10 — "credit purchases get no extra rewards, that's our base of how
+    # things operate." Only retail (kind=="product") may build progress,
+    # same scope as the 10% retail discount.
+    user = _client()
+    order = {
+        "id": str(uuid.uuid4()), "is_guest_order": False, "client_id": user["client_id"],
+        "lines": [
+            {"kind": "product", "line_total": 30.0},
+            {"kind": "credit_pack", "line_total": 220.0},
+            {"kind": "training_program", "line_total": 950.0},
+        ],
+    }
+    run(server._apply_shop_reward_progress(order))
+    client = _client_doc(user["client_id"])
+    assert client["shop_reward_progress"] == 30.0  # only the $30 retail line counted
+    assert client["credits"] == 0
+    assert _rewards(user["client_id"]) == []
+
+
+def test_buying_a_credit_pack_online_grants_exactly_its_own_qty_no_bonus():
+    # The real end-to-end shape of the reported bug: one online purchase of
+    # a 10-credit pack, well over the $75 threshold on its own, must leave
+    # the client with exactly 10 daycare credits — not 12.
+    user = _client()
+    pack = _pack(220.0, qty=10)
+    _pay_pack(user, pack)
+    client = _client_doc(user["client_id"])
+    assert client["credits"] == 10
+    assert client["shop_reward_progress"] == 0
+    assert _rewards(user["client_id"]) == []

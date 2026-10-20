@@ -44125,14 +44125,21 @@ async def _queue_new_shop_order_notification(order: dict) -> None:
 async def _apply_shop_reward_progress(order: dict) -> None:
     """Shop purchases build up toward a free service credit instead of
     handing one out per order (owner request 2026-10-15: a whole credit per
-    order "gives away too much" — should accumulate). Every paid order's
-    eligible total — everything except gift_card lines, which are money,
-    not a purchase, same rule _price_shop_cart already applies for tax —
-    adds to a running balance kept on the client doc; once it crosses the
-    configured threshold, a credit is granted (via the SAME mechanism a
-    referral bonus already uses) and the remainder carries forward to the
-    next one. A guest order has no client/credit balance to build progress
-    on, so it's skipped entirely — never an error, just a no-op.
+    order "gives away too much" — should accumulate). Merchandise (retail,
+    physical goods) only — same scope the 10% retail discount uses
+    (_price_shop_cart's discountable_now), and for the same reason: a
+    credit pack or training program is itself already a credit/service
+    grant, and a gift card is money, not a purchase, so none of them may
+    ALSO build toward a bonus credit (owner report 2026-10-20: a daycare
+    credit pack purchase minted 2 free bonus credits on top of its own 10 —
+    "credit purchases get no extra rewards, that's our base of how things
+    operate"). Every paid order's eligible total — retail (kind=="product")
+    lines only — adds to a running balance kept on the client doc; once it
+    crosses the configured threshold, a credit is granted (via the SAME
+    mechanism a referral bonus already uses) and the remainder carries
+    forward to the next one. A guest order has no client/credit balance to
+    build progress on, so it's skipped entirely — never an error, just a
+    no-op.
 
     Called from the ONE place a Shop order transitions to paid (see
     _apply_shop_payment's Step A), which already guarantees this runs
@@ -44148,7 +44155,7 @@ async def _apply_shop_reward_progress(order: dict) -> None:
     if threshold <= 0:
         return
     eligible = round(sum(
-        float(line.get("line_total") or 0) for line in (order.get("lines") or []) if line.get("kind") != "gift_card"
+        float(line.get("line_total") or 0) for line in (order.get("lines") or []) if line.get("kind") == "product"
     ), 2)
     if eligible <= 0:
         return
