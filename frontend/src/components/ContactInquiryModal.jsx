@@ -11,8 +11,13 @@ import { api, formatErr } from "../lib/api";
  * The choices come from /public/contact-inquiry-options so the words here,
  * in the operator's email and in the admin list are always the same.
  */
+// Also the Meet & Greet quick-request form's interest picker — same
+// vocabulary as the server's INQUIRY_INTERESTS so an admin reading either
+// flow sees the same words.
+export const INTEREST_OPTIONS = { daycare: "Daycare", boarding: "Boarding", in_person_training: "In-person training", online_school: "Online School", grooming: "Grooming", not_sure: "Not sure — help me choose" };
+
 const FALLBACK_OPTIONS = {
-  interests: { daycare: "Daycare", boarding: "Boarding", in_person_training: "In-person training", online_school: "Online School", grooming: "Grooming", not_sure: "Not sure — help me choose" },
+  interests: INTEREST_OPTIONS,
   concerns: { puppy_basics: "Puppy basics", leash_pulling: "Pulling on leash", jumping: "Jumping", barking: "Barking", recall: "Not coming when called", house_training: "House training", separation_anxiety: "Separation anxiety", reactivity: "Reactive to dogs or people", bite_history: "Has growled, snapped, or bitten", other: "Other" },
   preferred_contact: { call: "Call", text: "Text", email: "Email" },
   start_timing: { asap: "As soon as possible", next_month: "In the next month", exploring: "Just exploring" },
@@ -30,7 +35,7 @@ const EMPTY = {
 const inputCls = "w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-[16px] sm:text-sm focus:border-shGreen outline-none";
 const labelCls = "text-[12px] font-black text-gray-500 uppercase tracking-widest";
 
-function Chips({ options, value, onChange, testid, multi = true }) {
+export function Chips({ options, value, onChange, testid, multi = true }) {
   const toggle = (k) => {
     if (!multi) { onChange(value === k ? "" : k); return; }
     onChange(value.includes(k) ? value.filter((v) => v !== k) : [...value, k]);

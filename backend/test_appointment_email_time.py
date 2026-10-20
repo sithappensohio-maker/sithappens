@@ -103,7 +103,8 @@ def test_the_meet_and_greet_request_email_repeats_the_day_and_time_asked_for(sen
     run(server.db.auth_rate_limits.delete_many({}))
     try:
         r = run(_http.post("/api/public/meet-greet-request", json={"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101",
-                                                                   "dog_name": "Waffles", "date": day.isoformat(), "time": "10:30"}))
+                                                                   "dog_name": "Waffles", "date": day.isoformat(), "time": "10:30",
+                                                                   "interests": ["daycare"]}))
         assert r.status_code == 200, r.text
         mail = next(m for m in sent if m["slug"] == "meet_greet_request_received")
         assert mail["rows"]["You asked for"] == f"{pretty_date(day.isoformat())} at 10:30 AM"

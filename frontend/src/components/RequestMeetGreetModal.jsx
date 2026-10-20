@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
+import { Chips, INTEREST_OPTIONS } from "./ContactInquiryModal";
 
 function formatSlotTime(hhmm) {
   const [h, m] = hhmm.split(":").map(Number);
@@ -21,6 +22,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [dogName, setDogName] = useState("");
+  const [interests, setInterests] = useState([]);
   const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [slotInfo, setSlotInfo] = useState(null); // { enabled, closed, slot_minutes, slots }
@@ -45,6 +47,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (interests.length === 0) { setErr("Pick at least one thing you're interested in."); return; }
     if (!time) { setErr("Please pick an available time."); return; }
     setBusy(true); setErr("");
     try {
@@ -55,6 +58,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
         dog_name: dogName,
         date,
         time,
+        interests,
       });
       setDone(true);
     } catch (e) {
@@ -65,7 +69,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
 
   const close = () => {
     setDone(false); setErr("");
-    setOwnerName(""); setEmail(""); setPhone(""); setDogName("");
+    setOwnerName(""); setEmail(""); setPhone(""); setDogName(""); setInterests([]);
     setDate(todayISO()); setTime(""); setSlotInfo(null);
     onClose();
   };
@@ -125,6 +129,10 @@ export default function RequestMeetGreetModal({ open, onClose }) {
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
             </div>
             <div>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">What are you interested in?</label>
+              <Chips options={INTEREST_OPTIONS} value={interests} onChange={setInterests} testid="meet-greet-interest"/>
+            </div>
+            <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Date</label>
               <input type="date" required min={todayISO()} value={date} onChange={(e) => setDate(e.target.value)}
                      data-testid="meet-greet-date-input"
@@ -162,7 +170,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
             </div>
 
             {err && <div className="text-[14px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black" data-testid="meet-greet-error">{err}</div>}
-            <button type="submit" disabled={busy || !time} data-testid="meet-greet-submit"
+            <button type="submit" disabled={busy || !time || interests.length === 0} data-testid="meet-greet-submit"
                     className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-sm uppercase tracking-widest shadow-lg disabled:opacity-50">
               {busy ? "Sending…" : "Request Meet & Greet"}
             </button>

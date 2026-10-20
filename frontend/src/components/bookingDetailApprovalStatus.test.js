@@ -1,7 +1,9 @@
 /**
- * The booking details status chip said "Awaiting approval" even after a
- * booking was approved, because it checked a field (`booking.approved`)
- * that never exists on a booking document — only `booking.status` does.
+ * Two booking-details bugs reported together: (1) the status chip said
+ * "Awaiting approval" even after a booking was approved, because it checked
+ * a field (`booking.approved`) that never exists on a booking document —
+ * only `booking.status` does; (2) a Meet & Greet showed "Service: Other"
+ * with no sign of what the family is actually interested in.
  * Mounted, not source-pinned: a clean build is not a working screen.
  */
 import { act } from "react";
@@ -61,4 +63,11 @@ test("an approved booking shows Scheduled, not stuck on Awaiting approval", asyn
   await mount({ ...BASE, status: "approved", approved_at: "2026-10-16T09:00:00Z", approved_by_name: "Admin" });
   expect(container.textContent).toContain("Scheduled");
   expect(container.textContent).not.toContain("Awaiting approval");
+});
+
+test("a Meet & Greet shows what the family is interested in, not just Other", async () => {
+  await mount({ ...BASE, status: "pending", is_meet_greet: true, interested_services: ["boarding", "grooming"] });
+  expect(container.textContent).toContain("Interested in");
+  expect(container.textContent).toContain("Boarding");
+  expect(container.textContent).toContain("Grooming");
 });

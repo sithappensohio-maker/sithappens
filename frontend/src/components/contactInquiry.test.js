@@ -52,8 +52,16 @@ test("the vocabulary in the modal's fallback matches the server's", () => {
     return src.slice(start, end).match(/"([a-z_]+)":/g).map((k) => k.slice(1, -2)).sort();
   };
   const jsKeys = (name) => {
-    const m = modal.match(new RegExp(`${name}: \\{([^}]*)\\}`));
-    return m[1].match(/([a-z_]+):/g).map((k) => k.slice(0, -1)).sort();
+    // `interests` is pulled out into its own exported const (reused by the
+    // Meet & Greet form's picker too) — follow the reference if it's not inline.
+    const m = modal.match(new RegExp(`${name}: \\{([^}]*)\\}|${name}: (\\w+)`));
+    let body = m[1];
+    if (!body) {
+      const ref = modal.match(new RegExp(`${m[2]} = \\{([^}]*)\\}`));
+      expect(ref).not.toBeNull();
+      body = ref[1];
+    }
+    return body.match(/([a-z_]+):/g).map((k) => k.slice(0, -1)).sort();
   };
   expect(jsKeys("interests")).toEqual(keys(py, "INQUIRY_INTERESTS"));
   expect(jsKeys("concerns")).toEqual(keys(py, "INQUIRY_CONCERNS"));

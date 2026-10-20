@@ -124,6 +124,7 @@ class TestMeetGreetRequest:
             "dog_name": "Biscuit",
             "date": target_date,
             "time": target_time,
+            "interests": ["daycare", "boarding"],
         }, timeout=15)
         assert r.status_code == 200, r.text
         assert r.json() == {"ok": True}
@@ -168,6 +169,7 @@ class TestMeetGreetRequest:
             "dog_name": "Rex",
             "date": target_date,
             "time": target_time,
+            "interests": ["in_person_training"],
         }, timeout=15)
         assert r.status_code == 200, r.text
 
@@ -227,6 +229,7 @@ class TestMeetGreetRequest:
                 "dog_name": f"Dog{i}",
                 "date": target_date,
                 "time": target_time,
+                "interests": ["daycare"],
             }, timeout=15)
             statuses.append(r.status_code)
         # register_email_ip-style limit is 5/hour for this endpoint too —
@@ -294,6 +297,7 @@ class TestMeetGreetScheduling:
                 "dog_name": "Fido",
                 "date": target_date,
                 "time": target_time,
+                "interests": ["daycare"],
             }, timeout=15)
             assert r.status_code == 400, r.text
             assert _clients_by_email(admin_token, email) == [], "rejected request must not create a client"

@@ -9,6 +9,7 @@ import {
 import CareLogStrip from "./CareLogStrip";
 import GroupDogAdd from "./GroupDogAdd";
 import { CancelBookingModal } from "./CheckoutModal";
+import { INTEREST_OPTIONS } from "./ContactInquiryModal";
 
 // Sprint 110aq — One-stop overview of a single booking, opened by clicking
 // any row on the Today's Check-in Board (and reusable from other screens).
@@ -345,6 +346,12 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
               {booking.dropoff_time && <Pill icon="fa-right-to-bracket" label="Drop-off" value={fmtTime(`${booking.date}T${booking.dropoff_time}`)}/>}
               {booking.pickup_time && <Pill icon="fa-right-from-bracket" label="Pickup" value={fmtTime(`${booking.date}T${booking.pickup_time}`)}/>}
             </div>
+            {booking.interested_services?.length > 0 && (
+              <div className="mt-2">
+                <Pill icon="fa-heart" label="Interested in"
+                      value={booking.interested_services.map((k) => INTEREST_OPTIONS[k] || k).join(", ")}/>
+              </div>
+            )}
           </section>
 
           {/* The booking's dogs — each family, who pays, add / take out / close the bill */}

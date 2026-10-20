@@ -2986,6 +2986,9 @@ class MeetGreetRequestIn(BaseModel):
     dog_name: str = Field(min_length=1)
     date: str = Field(min_length=1)  # YYYY-MM-DD — must be an open Meet & Greet slot
     time: str = Field(min_length=1)  # HH:MM
+    # Same vocabulary as the contact questionnaire's INQUIRY_INTERESTS, so staff
+    # always see what the family is actually interested in, not just "Other".
+    interests: List[Literal["daycare", "boarding", "in_person_training", "online_school", "grooming", "not_sure"]] = Field(min_length=1)
 
 
 @api.post("/public/meet-greet-request")
@@ -3096,6 +3099,7 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
                 " This family is archived — restore them (Clients → Show archived) before approving." if existing_client and existing_client.get("deleted_at") else ""),
             "created_at": now_iso(),
             "is_meet_greet": True,
+            "interested_services": body.interests,
         }
         await db.bookings.insert_one(dict(mg_booking))
 

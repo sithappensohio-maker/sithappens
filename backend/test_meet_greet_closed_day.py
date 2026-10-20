@@ -81,7 +81,8 @@ def test_a_request_for_a_closed_day_is_refused_and_writes_nothing():
     day = _day()
     email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
     run(server.db.auth_rate_limits.delete_many({}))
-    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00"}
+    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00",
+            "interests": ["daycare"]}
     try:
         with _settings(**_mg_settings([day])):
             r = run(_http.post("/api/public/meet-greet-request", json=body))

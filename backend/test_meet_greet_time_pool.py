@@ -186,7 +186,8 @@ def test_a_meet_and_greet_request_waits_for_the_days_time_pool():
     email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
     hours = {d: {"closed": False, "open": "09:00", "close": "17:00"} for d in server.DEFAULT_DAYS}
     run(server.db.auth_rate_limits.delete_many({}))
-    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00"}
+    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00",
+            "interests": ["daycare"]}
     with _settings(meet_greet={"enabled": True, "slot_minutes": 30, "min_lead_hours": 0, "max_advance_days": 900, "hours": hours}):
         owner = run(server._acquire_capacity_locks([f"timepool:{day}"]))
         try:
@@ -211,7 +212,8 @@ def test_a_lesson_booked_while_a_request_waits_wins_and_the_request_writes_nothi
     email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
     hours = {d: {"closed": False, "open": "09:00", "close": "17:00"} for d in server.DEFAULT_DAYS}
     run(server.db.auth_rate_limits.delete_many({}))
-    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00"}
+    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00",
+            "interests": ["daycare"]}
 
     async def _race():
         owner = await server._acquire_capacity_locks([f"timepool:{day}"])
@@ -263,7 +265,8 @@ def test_an_archived_familys_request_is_kept_for_staff_but_sends_no_sign_up_link
                                       "deleted_at": server.now_iso(), "created_at": server.now_iso()}))
     hours = {d: {"closed": False, "open": "09:00", "close": "17:00"} for d in server.DEFAULT_DAYS}
     run(server.db.auth_rate_limits.delete_many({}))
-    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00"}
+    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00",
+            "interests": ["daycare"]}
     try:
         with _settings(meet_greet={"enabled": True, "slot_minutes": 30, "min_lead_hours": 0, "max_advance_days": 900, "hours": hours}):
             r = run(_http.post("/api/public/meet-greet-request", json=body))

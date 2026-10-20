@@ -170,6 +170,7 @@ def _submit_meet_greet(email, days_out=3, time="10:00", dog="Waffles"):
     r = run(_http.post("/api/public/meet-greet-request", json={
         "owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101",
         "dog_name": dog, "date": _future(days_out), "time": time,
+        "interests": ["daycare"],
     }))
     assert r.status_code == 200, r.text
     row = run(server.db.bookings.find_one({"is_meet_greet": True, "client_name": f"{TAG} Owner",
