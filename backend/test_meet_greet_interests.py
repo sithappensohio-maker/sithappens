@@ -16,6 +16,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`
 import pytest
+import email_service
 import server
 from _test_loop import run
 
@@ -34,6 +35,17 @@ def _day():
 def _cleanup():
     yield
     run(server.db.bookings.delete_many({"notes": {"$regex": TAG}}))
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    out = []
+
+    async def capture(*, slug, to_email, ctx=None, rows=None, **kw):
+        out.append({"slug": slug, "to": to_email, "rows": dict(rows or [])})
+        return True
+    monkeypatch.setattr(email_service, "_dispatch", capture)
+    return out
 
 
 @pytest.fixture
@@ -73,3 +85,16 @@ def test_the_chosen_interests_are_stored_on_the_booking(_open_hours):
     row = run(server.db.bookings.find_one({"is_meet_greet": True, "date": day}, {"_id": 0}))
     assert row, "Meet & Greet booking record must exist"
     assert row["interested_services"] == ["boarding", "grooming"]
+
+
+def test_the_admin_alert_email_says_what_they_are_interested_in(sent, _open_hours):
+    day = _day()
+    email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
+    r = run(_http.post("/api/public/meet-greet-request", json={
+        "owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101",
+        "dog_name": f"{TAG} Dog", "date": day, "time": "10:00",
+        "interests": ["boarding", "grooming"],
+    }))
+    assert r.status_code == 200, r.text
+    mail = next(m for m in sent if m["slug"] == "admin_meet_greet_request")
+    assert mail["rows"]["Interested in"] == "Boarding, Grooming"

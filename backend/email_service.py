@@ -1107,6 +1107,15 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
 
 
+# Same vocabulary as domains/public_site/routes.py's INQUIRY_INTERESTS — kept
+# as its own small copy (not an import) so this module doesn't take on a
+# dependency on domains.public_site, which itself imports email_service.
+_MEET_GREET_INTEREST_LABELS = {
+    "daycare": "Daycare", "boarding": "Boarding", "in_person_training": "In-person training",
+    "online_school": "Online School", "grooming": "Grooming", "not_sure": "Not sure — help me choose",
+}
+
+
 async def notify_admin_meet_greet_request(booking: dict, client: dict) -> bool:
     """A Meet & Greet was requested from the public landing page — the
     operator must know IMMEDIATELY (when the request is CREATED, never on
@@ -1134,6 +1143,9 @@ async def notify_admin_meet_greet_request(booking: dict, client: dict) -> bool:
         ("Requested for", when),
         ("Received", _utc_now_iso()),
     ]
+    interests = booking.get("interested_services") or []
+    if interests:
+        rows.append(("Interested in", ", ".join(_MEET_GREET_INTEREST_LABELS.get(k, k) for k in interests)))
     if booking.get("notes"):
         rows.append(("Notes", booking["notes"]))
     key = f"admin_meet_greet_request:{booking.get('id')}"
