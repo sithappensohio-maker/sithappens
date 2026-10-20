@@ -35852,7 +35852,13 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     # P&L outstanding and Today's amount due (end_of_day.window_owed; each
     # bill's live balance). Client account balances (tabs) are NOT added: they
     # are reported beside the tile as ar_outstanding_*, and live on the AR screen.
-    unpaid_total = round(await end_of_day_domain.window_owed(rows), 2)
+    # Sourced from window_unpaid_detail so the total and its drill-down list
+    # are computed from the exact same rows and always foot to each other —
+    # a single ledger row's own stored balance_due can disagree once a shared
+    # family bill or a tab credit is involved, which is confusing without a
+    # breakdown to point at.
+    unpaid_detail = await end_of_day_domain.window_unpaid_detail(rows)
+    unpaid_total = round(sum(r.get("amount", 0) for r in unpaid_detail), 2)
     # Summed in Mongo over every client (no result ceiling) — see
     # _account_balance_totals; the old to_list(5000) slice understated AR.
     _ar = await _account_balance_totals()
@@ -35866,6 +35872,7 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         "booked_total": round(booked_total, 2),
         "paid_total": round(paid_total, 2),
         "unpaid_total": unpaid_total,
+        "unpaid_detail": unpaid_detail,
         "ar_outstanding_total": ar_outstanding_total,
         "ar_outstanding_count": ar_outstanding_count,
         "credits_redeemed": credits_redeemed,

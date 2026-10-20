@@ -586,13 +586,25 @@ async def owed(visits: List[Dict[str, Any]]) -> float:
 
 
 async def window_owed(visits: List[Dict[str, Any]]) -> float:
-    """The one "still owed" figure for a service-date window. The weekly Unpaid
-    tile (server.weekly_summary) and the P&L outstanding line
-    (pl_report.build_pl_data) both call this on every row their window holds
-    (archive included, nothing filtered out), so the two read one rule and
-    cannot drift. Client account balances (tabs) are NOT part of it: they stay
-    on the AR screen."""
+    """The one "still owed" figure for a service-date window. The P&L
+    outstanding line (pl_report.build_pl_data) calls this on every row its
+    window holds (archive included, nothing filtered out). The weekly Unpaid
+    tile (server.weekly_summary) instead calls window_unpaid_detail below and
+    sums its rows directly, so its drill-down list and its total can never
+    disagree — same rule either way. Client account balances (tabs) are NOT
+    part of it: they stay on the AR screen."""
     return await owed(visits)
+
+
+async def window_unpaid_detail(visits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The booking-level rows behind window_owed's one total for a
+    service-date window — same population (status == completed) and the same
+    unpaid() rule, so a drill-down built from this always foots to the total.
+    Used by the weekly Unpaid tile (server.weekly_summary) so staff can see
+    exactly which visit(s) a confusing total is made of, instead of having to
+    eyeball the transactions ledger, whose own stored balance_due can read
+    differently once a shared family bill or a tab credit is involved."""
+    return await unpaid([b for b in visits if b.get("status") == "completed"])
 
 
 async def owing_visit_count() -> int:

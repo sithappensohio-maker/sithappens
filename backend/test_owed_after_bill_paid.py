@@ -581,6 +581,25 @@ def test_bill_paid_later_leaves_weekly_summary_unpaid():
         assert round(before - _weekly_unpaid(day), 2) == 40.0, "a paid bill must stop the visit counting as unpaid"
 
 
+def test_weekly_unpaid_total_foots_to_its_own_drill_down_detail():
+    # The Unpaid tile's drill-down (owner request — a confusing total needs a
+    # way to see which booking(s) it's actually made of, since a shared-bill
+    # or tab-credit visit can leave no single ledger row reading the same
+    # number) must name the exact booking and sum to the tile's own total.
+    with _plain(), _daycare_service(40.0), _visit() as v:
+        bid = v["booking_id"]
+        _on_the_tab_then_paid(v)
+        day = server.business_today().isoformat()
+        summary = run(server.weekly_summary(ADMIN, ref_date=day))
+        detail = summary["unpaid_detail"]
+        assert round(sum(r["amount"] for r in detail), 2) == summary["unpaid_total"]
+        row = next((r for r in detail if r["booking_id"] == bid), None)
+        assert row, "the unpaid visit must be named in the drill-down"
+        assert row["dog_name"] == "Pip"
+        assert row["client_name"] == f"{TAG} owner"
+        assert row["amount"] == 40.0
+
+
 def test_bill_paid_later_leaves_pl_outstanding_and_agrees_with_weekly():
     with _plain(), _daycare_service(40.0), _visit() as v:
         bill, _ = _on_the_tab_then_paid(v)

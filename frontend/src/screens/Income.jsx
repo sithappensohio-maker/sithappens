@@ -46,6 +46,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
     return "transactions";
   });
   const [summary, setSummary] = useState(null);
+  const [unpaidOpen, setUnpaidOpen] = useState(false);
   const [refDate, setRefDate] = useState(todayISO());
   const [rangeSummary, setRangeSummary] = useState(null);
   const [rangePreset, setRangePreset] = useState("month"); // month | quarter | ytd | custom
@@ -439,14 +440,36 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
               <span className="text-[15px] text-shTextMuted">Paid</span>
               <span className="text-[17px] font-black text-shSecondary">{fmt(summary.paid_total)}</span>
             </div>
-            <div className="flex items-baseline justify-between py-2.5 gap-3">
-              <div>
-                <p className="text-[15px] text-shAccent">Unpaid</p>
-                {summary.ar_outstanding_total > 0 && (
-                  <p className="text-[12px] text-shTextMuted">excl. {fmt(summary.ar_outstanding_total)} on {summary.ar_outstanding_count} client tab{summary.ar_outstanding_count===1?"":"s"}</p>
-                )}
-              </div>
-              <span className="text-[17px] font-black text-shAccent whitespace-nowrap">{fmt(summary.unpaid_total)}</span>
+            <div className="py-2.5">
+              <button type="button" onClick={() => setUnpaidOpen(o => !o)} disabled={!summary.unpaid_detail?.length}
+                      data-testid="unpaid-tile-toggle"
+                      className="w-full flex items-baseline justify-between gap-3 text-left disabled:cursor-default">
+                <div>
+                  <p className="text-[15px] text-shAccent flex items-center gap-1.5">
+                    Unpaid
+                    {summary.unpaid_detail?.length > 0 && (
+                      <i className={`fas fa-chevron-${unpaidOpen ? "up" : "down"} text-[10px] opacity-70`}/>
+                    )}
+                  </p>
+                  {summary.ar_outstanding_total > 0 && (
+                    <p className="text-[12px] text-shTextMuted">excl. {fmt(summary.ar_outstanding_total)} on {summary.ar_outstanding_count} client tab{summary.ar_outstanding_count===1?"":"s"}</p>
+                  )}
+                </div>
+                <span className="text-[17px] font-black text-shAccent whitespace-nowrap">{fmt(summary.unpaid_total)}</span>
+              </button>
+              {unpaidOpen && summary.unpaid_detail?.length > 0 && (
+                <div className="mt-2 space-y-1.5 bg-black/20 rounded-lg p-2.5" data-testid="unpaid-detail-list">
+                  {summary.unpaid_detail.map(r => (
+                    <div key={r.booking_id} className="flex items-center justify-between gap-2 text-[13px]" data-testid={`unpaid-detail-row-${r.booking_id}`}>
+                      <span className="text-shText truncate">
+                        {r.dog_name || "—"} <span className="text-shTextMuted">· {r.client_name || "—"}</span>
+                        {r.billed_to && r.billed_to !== r.client_name && <span className="text-shTextMuted"> (billed to {r.billed_to})</span>}
+                      </span>
+                      <span className="text-shAccent font-black whitespace-nowrap">{fmt(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex items-baseline justify-between py-2.5">
               <span className="text-[15px] text-shTextMuted">Booked (upcoming)</span>
