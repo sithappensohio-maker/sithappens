@@ -2989,6 +2989,7 @@ class MeetGreetRequestIn(BaseModel):
     # Same vocabulary as the contact questionnaire's INQUIRY_INTERESTS, so staff
     # always see what the family is actually interested in, not just "Other".
     interests: List[Literal["daycare", "boarding", "in_person_training", "online_school", "grooming", "not_sure"]] = Field(min_length=1)
+    message: str = Field(default="", max_length=4000)  # optional — keeps the quick form quick
 
 
 @api.post("/public/meet-greet-request")
@@ -3096,7 +3097,8 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
             "service_type": "other",
             "status": "pending",
             "notes": "Meet & Greet requested via the public landing page." + (
-                " This family is archived — restore them (Clients → Show archived) before approving." if existing_client and existing_client.get("deleted_at") else ""),
+                " This family is archived — restore them (Clients → Show archived) before approving." if existing_client and existing_client.get("deleted_at") else ""
+            ) + (f" Note from family: {body.message.strip()}" if body.message.strip() else ""),
             "created_at": now_iso(),
             "is_meet_greet": True,
             "interested_services": body.interests,

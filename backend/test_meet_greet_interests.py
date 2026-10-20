@@ -34,7 +34,8 @@ def _day():
 @pytest.fixture(autouse=True)
 def _cleanup():
     yield
-    run(server.db.bookings.delete_many({"notes": {"$regex": TAG}}))
+    run(server.db.bookings.delete_many({"client_name": {"$regex": TAG}}))
+    run(server.db.clients.delete_many({"name": {"$regex": TAG}}))
 
 
 @pytest.fixture
@@ -85,6 +86,32 @@ def test_the_chosen_interests_are_stored_on_the_booking(_open_hours):
     row = run(server.db.bookings.find_one({"is_meet_greet": True, "date": day}, {"_id": 0}))
     assert row, "Meet & Greet booking record must exist"
     assert row["interested_services"] == ["boarding", "grooming"]
+
+
+def test_an_optional_note_is_kept_on_the_booking(_open_hours):
+    day = _day()
+    email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
+    r = run(_http.post("/api/public/meet-greet-request", json={
+        "owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101",
+        "dog_name": f"{TAG} Dog", "date": day, "time": "10:00",
+        "interests": ["boarding"],
+        "message": "We're moving next month and need boarding ASAP.",
+    }))
+    assert r.status_code == 200, r.text
+    row = run(server.db.bookings.find_one({"is_meet_greet": True, "date": day}, {"_id": 0}))
+    assert "We're moving next month and need boarding ASAP." in row["notes"]
+
+
+def test_no_note_given_is_fine_too(_open_hours):
+    day = _day()
+    email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
+    r = run(_http.post("/api/public/meet-greet-request", json={
+        "owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101",
+        "dog_name": f"{TAG} Dog", "date": day, "time": "10:00", "interests": ["boarding"],
+    }))
+    assert r.status_code == 200, r.text
+    row = run(server.db.bookings.find_one({"is_meet_greet": True, "date": day}, {"_id": 0}))
+    assert row["notes"] == "Meet & Greet requested via the public landing page."
 
 
 def test_the_admin_alert_email_says_what_they_are_interested_in(sent, _open_hours):

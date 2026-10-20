@@ -23,6 +23,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
   const [phone, setPhone] = useState("");
   const [dogName, setDogName] = useState("");
   const [interests, setInterests] = useState([]);
+  const [message, setMessage] = useState("");
   const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [slotInfo, setSlotInfo] = useState(null); // { enabled, closed, slot_minutes, slots }
@@ -59,6 +60,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
         date,
         time,
         interests,
+        message,
       });
       setDone(true);
     } catch (e) {
@@ -69,7 +71,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
 
   const close = () => {
     setDone(false); setErr("");
-    setOwnerName(""); setEmail(""); setPhone(""); setDogName(""); setInterests([]);
+    setOwnerName(""); setEmail(""); setPhone(""); setDogName(""); setInterests([]); setMessage("");
     setDate(todayISO()); setTime(""); setSlotInfo(null);
     onClose();
   };
@@ -131,6 +133,12 @@ export default function RequestMeetGreetModal({ open, onClose }) {
             <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">What are you interested in?</label>
               <Chips options={INTEREST_OPTIONS} value={interests} onChange={setInterests} testid="meet-greet-interest"/>
+            </div>
+            <div>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Anything else we should know? (optional)</label>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} maxLength={4000}
+                        data-testid="meet-greet-message-input"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
             </div>
             <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Date</label>
