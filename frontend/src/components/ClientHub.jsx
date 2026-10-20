@@ -236,6 +236,14 @@ export default function ClientHub({
                 </div>
               )}
 
+              {client.evaluation_notes && (
+                <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3" data-testid="hub-evaluation-notes">
+                  <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest mb-1">Evaluation Notes</p>
+                  <p className="text-shText text-sm whitespace-pre-wrap">{client.evaluation_notes}</p>
+                </div>
+              )}
+
+
               <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 flex items-center justify-between">
                 <div>
                   <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
