@@ -241,11 +241,16 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           // Sprint 110di-51 — Running tab. Positive = owes, negative = prepaid credit.
           account_balance: Number(data.account_balance || 0),
         });
-      } catch (e) { console.warn("client balance fetch failed", e); }
+      } catch (e) {
+        console.warn("client balance fetch failed", e);
+        // Fail safe to "no credits available" rather than leaving clientBal
+        // null forever — that would permanently disable the submit button
+        // below over a transient network error.
+        if (alive) setClientBal({ credits: 0, training_credits: 0, boarding_credits: 0, account_balance: 0 });
+      }
     })();
     return () => { alive = false; };
   }, [booking.client_id]);
-
   const balField = payFromDaycare ? "credits"
                   : booking.service_type === "training" ? "training_credits"
                   : booking.service_type === "boarding" ? "boarding_credits"
@@ -286,6 +291,14 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // uses one of its credits and never charges (the server enforces it too).
   const prepaidSession = !!booking.is_prepaid_program_session && !isGroupCheckout && !ffNoCredits;
   useEffect(() => { if (prepaidSession && !useCredits) setUseCredits(true); }, [prepaidSession, useCredits]);
+  // A dog whose owner has usable walk-in credits must not be checked out
+  // before this loads: the credits option (both the auto-default above and
+  // the manual picker below) only appears once clientBal is set, so a
+  // checkout submitted while it's still null can silently skip credits and
+  // land as owed cash instead, no matter how obviously the client has a
+  // balance on file. A prepaid program session is exempt — its credit comes
+  // from the program itself, already known above, never from clientBal.
+  const balanceLoading = clientBal === null && !prepaidSession;
   const [defaultedFromBal, setDefaultedFromBal] = useState(false);
   useEffect(() => {
     if (clientBal && !defaultedFromBal && !hadCredit && creditsToUseNow > 0 && !booking.actual_price && !ffNoCredits) {
@@ -2190,9 +2203,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         )}
 
         <div className="flex flex-col gap-3">
-          <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0 || !terminalReady} data-testid="confirm-checkout"
+          <button onClick={submit} disabled={anchorGone || busy || groupLoading || balanceLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0 || !terminalReady} data-testid="confirm-checkout"
                   className="w-full bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-            {busy ? "Checking out…" : !terminalReady ? "Charge the card on the reader first" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
+            {busy ? "Checking out…" : !terminalReady ? "Charge the card on the reader first" : (groupLoading ? "Loading household…" : (balanceLoading ? "Checking credit balance…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out")))))}
           </button>
           <div className="flex items-center justify-between gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
