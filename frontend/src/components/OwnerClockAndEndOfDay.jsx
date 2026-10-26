@@ -263,6 +263,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const countedCash = closeout.cash_counted === "" ? null : Number(closeout.cash_counted);
   const cashOverShort = countedCash === null || !Number.isFinite(countedCash) ? null : countedCash - expectedCash;
   const suggestedOpening = data?.register?.opening_rollover?.suggested_cash;
+  const carriedForwardDays = data?.register?.opening_rollover?.carried_forward_days || 0;
   const openingOverride = suggestedOpening != null && startDay.opening_cash !== "" && Math.abs(Number(startDay.opening_cash) - Number(suggestedOpening)) > 0.005;
   const card = latestCloseout
     ? { eyebrow: "Day complete", title: "Closeout saved", sub: "View today’s wrap-up", icon: "fa-circle-check", tone: "green" }
@@ -318,7 +319,11 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                         <div className="bg-[var(--sh-card-base)]/70 border border-shPrimary/30 rounded-lg p-3">
                           <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Carried forward from {data.register?.opening_rollover?.from_date}</p>
                           <p className="text-xl text-shText font-black mt-1">${Number(suggestedOpening).toFixed(2)}</p>
-                          <p className="text-[11px] text-shTextMuted mt-1">This is the actual cash count confirmed at the previous closeout.</p>
+                          <p className="text-[11px] text-shTextMuted mt-1" data-testid="start-day-carried-forward-note">
+                            {carriedForwardDays > 0
+                              ? `The register wasn't closed out for ${carriedForwardDays} day${carriedForwardDays === 1 ? "" : "s"} after that — this total already includes the till adjustments and cash sales recorded since then.`
+                              : "This is the actual cash count confirmed at the previous closeout."}
+                          </p>
                         </div>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

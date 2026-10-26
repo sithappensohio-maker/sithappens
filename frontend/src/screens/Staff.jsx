@@ -2392,7 +2392,11 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
                 <div className="mb-3 bg-[var(--sh-card-base)]/70 border border-shPrimary/30 rounded-lg p-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Previous closeout · {data?.opening_rollover?.from_date}</p>
                   <p className="text-xl text-shText font-black">{money(suggestedOpening)}</p>
-                  <p className="text-[11px] text-shTextMuted">Suggested opening from the last confirmed cash count.</p>
+                  <p className="text-[11px] text-shTextMuted" data-testid="register-carried-forward-note">
+                    {data?.opening_rollover?.carried_forward_days > 0
+                      ? `The register wasn't closed out for ${data.opening_rollover.carried_forward_days} day${data.opening_rollover.carried_forward_days === 1 ? "" : "s"} after that — this already includes the till adjustments and cash sales recorded since then.`
+                      : "Suggested opening from the last confirmed cash count."}
+                  </p>
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">

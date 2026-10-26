@@ -37317,8 +37317,14 @@ class TillAdjustmentIn(BaseModel):
     notes: Optional[str] = ""
 
 
-async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
-    """POS/register view derived from existing safe source-of-truth rows.
+async def _register_day_cash_flow(day: Optional[str] = None) -> Dict[str, Any]:
+    """One day's own register cash movement — sales, expenses, till adjustments.
+
+    Factored out of _register_day_summary so a day's net cash change can be
+    measured on its own, without resolving an opening balance. That lets
+    _effective_previous_closeout fold an unclosed day's real activity (e.g. an
+    owner draw taken on a day nobody closed out) forward into a later day's
+    suggested opening, instead of silently dropping it.
 
     This intentionally DOES NOT mutate old data. It reads bookings + retail_sales
     + expenses + drawer sessions and produces one daily closeout picture.
@@ -37608,10 +37614,86 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             "created_at": row.get("created_at") or f"{d}T12:00:00",
         })
 
+    return {
+        "date": d,
+        "incoming_by_method": incoming_by_method,
+        "expenses_by_method": expenses_by_method,
+        "incoming_sources": incoming_sources,
+        "activity": activity,
+        "till_rows": till_rows,
+        "till_additions": till_additions,
+        "till_removals": till_removals,
+        "drawer_payouts": drawer_payouts,
+        "expense_total": expense_total,
+    }
+
+
+async def _effective_previous_closeout(date_value: str) -> Optional[Dict[str, Any]]:
+    """The previous-closeout rollover a day's opening should suggest.
+
+    _previous_closeout_rollover only finds the most recent CONFIRMED closeout,
+    which can sit several days behind date_value whenever a close-out was
+    missed. Folding that stale rollover straight into today's opening would
+    silently erase every unclosed day's real cash movement in between — e.g.
+    an owner draw taken yesterday would vanish because yesterday was never
+    closed. So the real previous closeout's rollover is carried forward
+    through each unclosed day's own net cash change (cash sales minus
+    cash-drawer expenses, plus till adjustments) before it's suggested today.
+    """
+    closeout = await _previous_closeout_rollover(date_value)
+    base = _closeout_rollover_cash(closeout)
+    base_date = (closeout or {}).get("date")
+    if base is None or not base_date:
+        return closeout
+    try:
+        start = date.fromisoformat(base_date)
+        end = date.fromisoformat(date_value)
+    except (TypeError, ValueError):
+        return closeout
+    gap_days = (end - start).days - 1
+    if gap_days <= 0:
+        return closeout
+    # Bounded so a register left untouched for a very long stretch can't
+    # trigger an unbounded per-day scan.
+    carried_days = min(gap_days, 180)
+    carried = base
+    for i in range(1, carried_days + 1):
+        skipped = (start + timedelta(days=i)).isoformat()
+        flow = await _register_day_cash_flow(skipped)
+        cash_in = round(float(flow["incoming_by_method"].get("cash") or 0), 2)
+        carried = round(
+            carried + cash_in - flow["drawer_payouts"] + flow["till_additions"] - flow["till_removals"],
+            2,
+        )
+    effective = dict(closeout)
+    effective["rollover_cash"] = carried
+    effective["carried_forward_from_date"] = base_date
+    effective["carried_forward_days"] = carried_days
+    return effective
+
+
+async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
+    """POS/register view derived from existing safe source-of-truth rows.
+
+    This intentionally DOES NOT mutate old data. It reads bookings + retail_sales
+    + expenses + drawer sessions and produces one daily closeout picture.
+    """
+    d = day or business_today().isoformat()
+    flow = await _register_day_cash_flow(d)
+    incoming_by_method = flow["incoming_by_method"]
+    expenses_by_method = flow["expenses_by_method"]
+    incoming_sources = flow["incoming_sources"]
+    activity = flow["activity"]
+    till_rows = flow["till_rows"]
+    till_additions = flow["till_additions"]
+    till_removals = flow["till_removals"]
+    drawer_payouts = flow["drawer_payouts"]
+    expense_total = flow["expense_total"]
+
     # Drawer session: use explicit opening cash when available; otherwise carry
     # forward the most recent closeout cash count as a helpful default.
     session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
-    previous_closeout = await _previous_closeout_rollover(d)
+    previous_closeout = await _effective_previous_closeout(d)
     opening_resolution = _effective_register_opening(session, previous_closeout)
     session = opening_resolution.get("session")
     suggested_opening_cash = opening_resolution.get("suggested_cash")
@@ -37670,6 +37752,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             "override_reason": opening_resolution.get("override_reason") or "",
             "recovered_stale_opening": bool(opening_resolution.get("recovered")),
             "recorded_stale_cash": opening_resolution.get("recorded_cash") if opening_resolution.get("recovered") else None,
+            "carried_forward_days": (previous_closeout or {}).get("carried_forward_days") or 0,
         },
         "latest_closeout": closeout,
         "register_closed": bool(closeout),
@@ -38183,7 +38266,7 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     await _require_register_day_open(d)
     opening_cash = round(float(body.opening_cash), 2)
     existing = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
-    previous = await _previous_closeout_rollover(d)
+    previous = await _effective_previous_closeout(d)
     current_resolution = _effective_register_opening(existing, previous)
     suggested = current_resolution.get("suggested_cash")
     # The confirmed previous closeout remains the comparison baseline. A valid
