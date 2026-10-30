@@ -104,6 +104,13 @@ test("a dog with no photo on file falls back to an initial circle, never a broke
   expect(card.textContent).toContain("R");
 });
 
+test("Change Dog puts the cursor straight in the search box, ready to type", async () => {
+  await mount();
+  expect(document.activeElement).not.toBe(q("ab-dog-search-input"));   // nothing focused on open
+  await click("ab-dog-change");
+  expect(document.activeElement).toBe(q("ab-dog-search-input"));
+});
+
 test("the search results list never shows a broken image either, before any photo has loaded", async () => {
   await mount();
   await click("ab-dog-change");

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Generic avatar: a real photo when one is known, otherwise a colored
 // initial circle — never a broken <img>. `photo` is looked up by the caller
@@ -45,6 +45,14 @@ export default function EntitySearchPicker({
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const inputRef = useRef(null);
+
+  // Only the "Change" button opens the search, so whoever clicked it is about
+  // to type: put the cursor in the box. A picker that starts empty never grabs
+  // focus on its own.
+  useEffect(() => {
+    if (searchOpen) inputRef.current?.focus();
+  }, [searchOpen]);
 
   const selected = (items || []).find(i => i.id === selectedId) || null;
   const q = query.trim().toLowerCase();
@@ -61,6 +69,7 @@ export default function EntitySearchPicker({
           <div className="relative">
             <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-sm" />
             <input
+              ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
