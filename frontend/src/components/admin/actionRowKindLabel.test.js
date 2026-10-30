@@ -19,7 +19,7 @@ const ActionRow = require("./ActionRow").default;
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
 const EXPECTED = {
-  hw_review: "Homework Review", hw_question: "Homework Question", school_practice_log: "Online School Practice",
+  hw_review: "Homework Review", hw_question: "Homework Question",
   steps_incomplete: "Tracker Steps Open", vaccine_upload_review: "Vaccine Upload", vaccine_missing: "Vaccine Missing",
   vaccine_expired: "Vaccine Expired", vaccine_expiring: "Vaccine Expiring", no_checkin: "Not Checked In",
   low_credits: "Low Credits", booking_pending: "Booking Needs Approval", contact_inquiry: "New Inquiry",

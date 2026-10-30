@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
+import { useFeature } from "../lib/theme";
 import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 import { pickupActionToast } from "../lib/shopPolish";
 import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
@@ -280,6 +281,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   // rather than re-described, since re-describing it risked drifting out
   // of sync with what force=true actually does.
   const [blockedDetail, setBlockedDetail] = useState("");
+  // A program refused for its history: what deleting it with that history would remove.
+  const [programHistory, setProgramHistory] = useState(null);
   const [forbidden, setForbidden] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -520,7 +523,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       : it.kind === "credit_pack" ? `/credit-packs/${it.id}${force ? "?force=true" : ""}`
         : `/programs/${it.id}?hard=true`;
 
-  const openDeleteProduct = (it) => { setDeleteTarget(it); setHasHistory(false); setBlockedDetail(""); };
+  const openDeleteProduct = (it) => { setDeleteTarget(it); setHasHistory(false); setBlockedDetail(""); setProgramHistory(null); };
   const confirmDeleteProduct = async () => {
     if (!deleteTarget) return;
     setBusyId(deleteTarget.id);
@@ -530,8 +533,29 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       setDeleteTarget(null);
       load();
     } catch (e) {
-      if (e?.response?.status === 409) { setHasHistory(true); setBlockedDetail(e?.response?.data?.detail || ""); }
+      if (e?.response?.status === 409) {
+        setHasHistory(true); setBlockedDetail(e?.response?.data?.detail || "");
+        if (deleteTarget.kind === "training_program") {
+          api.get(`/admin/programs/${deleteTarget.id}/delete-preview`)
+            .then((r) => setProgramHistory(r.data)).catch(() => {});
+        }
+      }
       else toast.error(e?.response?.data?.detail || "Could not delete");
+    }
+    setBusyId(null);
+  };
+  // Owner decision: a program can go with its students' history. Sales,
+  // payments and receipts stay; the server refuses while sessions are booked.
+  const confirmDeleteWithHistory = async () => {
+    if (!deleteTarget) return;
+    setBusyId(deleteTarget.id);
+    try {
+      await api.post(`/admin/programs/${deleteTarget.id}/delete-with-history`, { confirm: true });
+      toast.success(`"${deleteTarget.name}" and its history deleted`);
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not delete");
     }
     setBusyId(null);
   };
@@ -1143,11 +1167,41 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
               </>
             ) : (
               <>
-                <p className="text-shText font-black uppercase tracking-widest">"{deleteTarget.name}" has {historyNoun} history</p>
-                <p className="text-shTextMuted text-sm">Can't be permanently deleted — {fallbackVerb} instead keeps every past {deleteTarget.kind === "physical_product" ? "order/receipt/report" : "enrollment/progress"} intact.</p>
-                <div className="flex gap-3 pt-1">
+                <p className="text-shText font-black uppercase tracking-widest">
+                  {deleteTarget.kind === "training_program" && programHistory?.program && !programHistory.enrollments
+                    ? `"${deleteTarget.name}" can't be deleted yet`
+                    : `"${deleteTarget.name}" has ${historyNoun} history`}
+                </p>
+                {deleteTarget.kind === "training_program" && programHistory?.program ? (
+                  <div className="space-y-2 text-sm" data-testid="sm-delete-program-history">
+                    {programHistory.enrollments > 0 && (
+                      <p className="text-shTextMuted">
+                        {programHistory.enrollments} enrollment{programHistory.enrollments === 1 ? "" : "s"} ({programHistory.dogs} dog{programHistory.dogs === 1 ? "" : "s"})
+                        {programHistory.active > 0 && <span className="text-shAccent">, {programHistory.active} still in progress</span>}.
+                        Hiding it keeps that history. Deleting it removes the program and all of that history for good:
+                        lessons, sessions, checkpoints and practice. Sales, payments and receipts stay.
+                      </p>
+                    )}
+                    {(programHistory.blockers || []).map((b) => (
+                      <p key={b} className="text-shAccent text-[13px]" data-testid="sm-delete-program-blocker"><i className="fas fa-triangle-exclamation mr-1.5"/>{b}</p>
+                    ))}
+                    {(programHistory.warnings || []).map((w) => (
+                      <p key={w} className="text-shTextMuted text-[13px]" data-testid="sm-delete-program-note"><i className="fas fa-circle-info mr-1.5"/>{w}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-shTextMuted text-sm">Can't be permanently deleted — {fallbackVerb} instead keeps every past {deleteTarget.kind === "physical_product" ? "order/receipt/report" : "enrollment/progress"} intact.</p>
+                )}
+                <div className="flex flex-wrap gap-3 pt-1">
                   <button onClick={() => setDeleteTarget(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
                   <button onClick={archiveFromDeleteFlow} className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">{fallbackLabel}</button>
+                  {deleteTarget.kind === "training_program" && programHistory?.program && (
+                    <button onClick={confirmDeleteWithHistory} disabled={busyId === deleteTarget.id || (programHistory.blockers || []).length > 0}
+                            data-testid="sm-delete-program-with-history"
+                            className="basis-full bg-red-500 text-white rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                      Delete With Its History
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -2585,6 +2639,7 @@ function ShopSettingsTab() {
   const [originalBannerImageId, setOriginalBannerImageId] = useState(null);
   const [originalSectionImageIds, setOriginalSectionImageIds] = useState({});
   const [originalDepartmentImageIds, setOriginalDepartmentImageIds] = useState({});
+  const onlineSchool = useFeature("online_school");   // its section and tile are not shown while it is off
 
   const load = () => {
     setLoading(true);
@@ -2622,7 +2677,7 @@ function ShopSettingsTab() {
   // position rather than swapping the two raw stored numbers directly, so
   // it still works correctly even when sections start out tied at the same
   // order value (e.g. all default to 0 before anyone has ever reordered).
-  const orderedSectionKeys = [...SHOP_SETTINGS_SECTION_KEYS]
+  const orderedSectionKeys = SHOP_SETTINGS_SECTION_KEYS.filter((k) => onlineSchool || k !== "online_school")
     .sort((a, b) => (sp?.sections?.[a]?.order ?? 0) - (sp?.sections?.[b]?.order ?? 0));
   const moveSection = (key, direction) => {
     const keys = [...orderedSectionKeys];
@@ -2794,7 +2849,7 @@ function ShopSettingsTab() {
           <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Department Tile Images</p>
           <p className="text-[11px] text-shTextMuted mt-1">Optional. Left blank, a department's tile shows a photo from one of its own items instead.</p>
         </div>
-        {DEPARTMENTS.map((d) => (
+        {DEPARTMENTS.filter((d) => onlineSchool || d.key !== "online_school").map((d) => (
           <div key={d.key} className="border-t border-shBorder pt-3 first:border-t-0 first:pt-0 flex items-center gap-3" data-testid={`sm-department-image-row-${d.key}`}>
             <span className="flex-1 text-shText text-sm font-bold">{d.label}</span>
             <ShopImageUpload imageId={sp.department_images?.[d.key] || null} originalImageId={originalDepartmentImageIds[d.key]}

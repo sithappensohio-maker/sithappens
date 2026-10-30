@@ -131,7 +131,7 @@ export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-11 h-11 rounded-xl bg-purple-400/10 border border-purple-400/30 grid place-items-center"><i className="fas fa-handshake text-purple-300"/></div>
             <div className="min-w-0">
-              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] text-purple-300 truncate">Online School · Human support</p>
+              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] text-purple-300 truncate">School · Human support</p>
               <h3 className="sh-display text-xl sm:text-2xl text-shText leading-none mt-1 truncate">Trainer Assist</h3>
               <p className="text-[12px] text-shTextMuted mt-1">{loading ? "Loading…" : `${items.filter(i => i.trainer_assist_status !== "completed").length} student${items.filter(i => i.trainer_assist_status !== "completed").length === 1 ? "" : "s"} need help`}</p>
             </div>
@@ -303,7 +303,7 @@ export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient
           presetClientId={detail.client?.id}
           presetDogId={detail.dog?.id}
           presetServiceType="training"
-          presetNotes={`Trainer Assist follow-up · ${cp?.lesson_name || "Online School checkpoint"}`}
+          presetNotes={`Trainer Assist follow-up · ${cp?.lesson_name || "checkpoint"}`}
           onClose={() => setBookingModalOpen(false)}
           onCreated={onBookingCreated}
         />

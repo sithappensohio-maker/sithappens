@@ -125,7 +125,7 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-11 h-11 rounded-xl bg-shAccent/10 border border-shAccent/30 grid place-items-center"><i className="fas fa-video text-shAccent"/></div>
             <div className="min-w-0">
-              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] text-shAccent truncate">Online School · Trainer desk</p>
+              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] text-shAccent truncate">School · Trainer desk</p>
               <h3 className="sh-display text-xl sm:text-2xl text-shText leading-none mt-1 truncate">Checkpoint Reviews</h3>
               <p className="text-[12px] text-shTextMuted mt-1">{loading ? "Loading…" : items.length === 0 ? "Inbox zero — nothing pending" : `${items.length} checkpoint${items.length === 1 ? "" : "s"} need your attention`}</p>
             </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useFeature } from "../lib/theme";
 import { resetSchoolScroll, revealInSchool } from "../lib/schoolViewport";
 import PremiumButton from "../components/premium/PremiumButton";
 import EmptyState from "../components/premium/EmptyState";
@@ -46,6 +47,7 @@ function AccessEndedState({ onHome, onExit }) {
  * from the backend — no progression logic lives in this shell. */
 export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const parsed = parseSchoolPath(path);
+  const onlineSchool = useFeature("online_school");
   const [list, setList] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [home, setHome] = useState(null);
@@ -417,10 +419,15 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       // while the marketing site invites people to start an online course.
       // The way forward now goes first.
       <div className="p-6 max-w-md mx-auto space-y-3">
-        <EmptyState icon="fa-graduation-cap" accent="lime" title="No School program yet"
-                    description="When a Sit Happens training program is assigned to you — or you start one yourself — your in-person, online, or hybrid training home appears here."
-                    ctaLabel="Browse Courses"
-                    onClick={() => { window.location.href = "/shop?section=online_school"; }} />
+        {onlineSchool ? (
+          <EmptyState icon="fa-graduation-cap" accent="lime" title="No School program yet"
+                      description="When a Sit Happens training program is assigned to you — or you start one yourself — your in-person, online, or hybrid training home appears here."
+                      ctaLabel="Browse Courses"
+                      onClick={() => { window.location.href = "/shop?section=online_school"; }} />
+        ) : (
+          <EmptyState icon="fa-graduation-cap" accent="lime" title="No School program yet"
+                      description="When your trainer assigns a Sit Happens training program to your dog, it appears here." />
+        )}
         <button onClick={onExit} data-testid="school-empty-back"
                 className="w-full py-3 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
           Back to Portal

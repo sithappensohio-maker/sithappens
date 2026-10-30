@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import email_service
 import trophy_service
 from domains.clients.archive import gone as _gone, not_gone as _not_gone
+from domains.school.removal import open_course_practice
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +376,7 @@ async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
             "$and": [
                 _not_gone(gone),
                 PRACTICE_ROW_MATCH,
+                await open_course_practice(db),
                 {"$or": [
                     {"status": {"$ne": "completed"}},
                     {"completed_at": {"$gte": fortnight_ago}},
@@ -539,6 +541,7 @@ async def run_homework_practice_reminder_job(db) -> dict:
     }, {"_id": 0})
     gone = await _gone(db)
     gone_dogs = gone.dogs - gone.merged   # rows still keyed to a merged-away duplicate belong to the live dog
+    open_courses = await open_course_practice(db)
 
     sent = 0
     attempted = 0
@@ -553,7 +556,8 @@ async def run_homework_practice_reminder_job(db) -> dict:
             continue
         # Their open daily-trackers AND open School Practice rows.
         hws = [hw async for hw in db.homework.find(
-            {"client_id": client["id"], "status": {"$ne": "completed"}, "dog_id": {"$nin": list(gone_dogs)}, **PRACTICE_ROW_MATCH},
+            {"client_id": client["id"], "status": {"$ne": "completed"}, "dog_id": {"$nin": list(gone_dogs)},
+             **PRACTICE_ROW_MATCH, **open_courses},
             {"_id": 0},
         )]
         plans = []

@@ -284,6 +284,48 @@ describe("Delete for packs and programs (owner request, 2026-10-17)", () => {
     noReferenceErrors();
   });
 
+  // Owner, 2026-10-30: courses "it wont let me delete because past enrolments"
+  // — a program with history can now go with that history, after a preview.
+  const refuseWithHistory = (preview) => {
+    api.delete.mockReset();
+    api.delete.mockRejectedValue({ response: { status: 409, data: { detail: "This program has enrollment history" } } });
+    api.get.mockImplementation((url) => {
+      if (url === "/admin/programs/t1/delete-preview") return Promise.resolve({ data: preview });
+      if (url.includes("/shop-manager/items")) return Promise.resolve({ data: { items: ITEMS } });
+      if (url.includes("/programs/meta")) return Promise.resolve({ data: { types: [], focuses: [] } });
+      return Promise.resolve({ data: {} });
+    });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { ok: true } });
+  };
+  const askToDelete = async () => {
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-delete-t1").click(); });
+    await act(async () => { byTestId("sm-delete-confirm").querySelector("button.bg-red-500").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  };
+
+  test("a program with history can be deleted with it, after saying what goes", async () => {
+    refuseWithHistory({ program: { id: "t1", name: "Rock Solid Recall" }, enrollments: 3, dogs: 2, active: 1, blockers: [] });
+    await askToDelete();
+    expect(byTestId("sm-delete-program-history").textContent).toContain("3 enrollments (2 dogs), 1 still in progress");
+    expect(byTestId("sm-delete-program-history").textContent).toContain("Sales, payments and receipts stay");
+    await act(async () => { byTestId("sm-delete-program-with-history").click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/programs/t1/delete-with-history", { confirm: true });
+    expect(byTestId("sm-delete-confirm")).toBeFalsy();
+    noReferenceErrors();
+  });
+
+  test("while sessions are still booked, deleting with history is not offered as possible", async () => {
+    refuseWithHistory({ program: { id: "t1" }, enrollments: 1, dogs: 1, active: 1,
+                        blockers: ["2 upcoming sessions are still booked for it. Cancel or finish them first."] });
+    await askToDelete();
+    expect(byTestId("sm-delete-program-blocker").textContent).toContain("Cancel or finish them first");
+    expect(byTestId("sm-delete-program-with-history").disabled).toBe(true);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   test("a credit pack with client-specific prices offers Delete Anyway with the server's real message, not a generic one", async () => {
     api.delete.mockReset();
     api.delete.mockImplementation((url) => {

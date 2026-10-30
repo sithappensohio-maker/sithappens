@@ -398,7 +398,7 @@ export const FEATURE_KEYS = [
 ];
 
 export function useFeature(key) {
-  const { branding } = useTheme();
+  const { branding } = useTheme() || {};
   const fv = branding?.feature_visibility;
   if (!fv) return true;
   if (!(key in fv)) return true;

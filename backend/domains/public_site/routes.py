@@ -141,8 +141,13 @@ def register_public_site_routes(
     @api.get("/public/contact-inquiry-options")
     async def public_contact_inquiry_options():
         """The questionnaire's choices, so the public form renders the same words
-        the operator will read in the email and the admin list."""
-        return _inquiry_labels()
+        the operator will read in the email and the admin list. "Online School" is
+        not offered while it is turned off (it stays a known value for old rows)."""
+        labels = _inquiry_labels()
+        fv = (await get_settings()).get("feature_visibility") or {}
+        if fv.get("online_school", True) is False:
+            labels["interests"] = {k: v for k, v in INQUIRY_INTERESTS.items() if k != "online_school"}
+        return labels
 
     @api.post("/public/contact-inquiry")
     async def submit_contact_inquiry(body: ContactInquiryIn, request: Request):

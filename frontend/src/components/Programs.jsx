@@ -4,6 +4,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { useProgramsData, useSharedData } from "../lib/sharedData";
 import { useAuth } from "../lib/auth";
+import { useFeature } from "../lib/theme";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
@@ -38,6 +39,7 @@ export async function fetchProgramById(programId, fallbackRow = null) {
 export function ProgramsPanel() {
   const confirm = useConfirm();
   const { permissions } = useAuth();
+  const onlineSchool = useFeature("online_school");
   // Owners/legacy-admin accounts get every permission back as `true` from
   // /me/permissions itself (see backend's _perms_for owner bypass) — so
   // checking the flag directly, with no separate owner special-case here,
@@ -256,7 +258,9 @@ export function ProgramsPanel() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-graduation-cap mr-2"/>School Programs</h4>
-          <p className="text-[14px] text-gray-300 mt-1">One lesson-by-lesson curriculum library for in-person, Online School, and Hybrid training.</p>
+          <p className="text-[14px] text-gray-300 mt-1">{onlineSchool
+            ? "One lesson-by-lesson curriculum library for in-person, Online School, and Hybrid training."
+            : "One lesson-by-lesson curriculum library for in-person training."}</p>
           <p className="text-[11px] text-gray-500 mt-1">{schoolPrograms.length} School-ready · {legacyPrograms.length} retired legacy definition{legacyPrograms.length === 1 ? "" : "s"}</p>
         </div>
         {/* No shrink-0 on the action group: it pinned the group at its 386px

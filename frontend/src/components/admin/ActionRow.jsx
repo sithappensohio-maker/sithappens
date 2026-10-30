@@ -25,7 +25,6 @@ export const ACTION_PRIORITY_META = {
 export const ACTION_KIND_LABEL = {
   hw_review: "Homework Review",
   hw_question: "Homework Question",
-  school_practice_log: "Online School Practice",
   steps_incomplete: "Tracker Steps Open",
   vaccine_upload_review: "Vaccine Upload",
   vaccine_missing: "Vaccine Missing",

@@ -387,7 +387,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                   <i className="fas fa-video"/>
                 </div>
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shAccent">Online School · Trainer desk</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shAccent">School · Trainer desk</p>
                   <h3 className="sh-display text-xl text-shText mt-0.5">Checkpoint Reviews</h3>
                   <p className="text-[11px] text-shTextMuted mt-1">{pendingCheckpoints.length} student{pendingCheckpoints.length === 1 ? "" : "s"} waiting for your review</p>
                 </div>
@@ -429,7 +429,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                   <i className="fas fa-handshake"/>
                 </div>
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-purple-300">Online School · Human support</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-purple-300">School · Human support</p>
                   <h3 className="sh-display text-xl text-shText mt-0.5">Trainer Assist</h3>
                   <p className="text-[11px] text-shTextMuted mt-1">{trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length} student{trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length === 1 ? "" : "s"} need a human handoff</p>
                 </div>

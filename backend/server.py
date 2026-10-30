@@ -86,6 +86,7 @@ from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
 from domains.bookings import checkout_prices, credit_cover, checkout_discount, tips as checkout_tips, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
 from domains.school import ownership as school_ownership, curriculum_moves, structure_gate, mirror_sync as school_mirror
+from domains.school import removal as training_removal
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -16746,7 +16747,12 @@ def _build_program_doc(seed: dict) -> dict:
     }
 
 
-async def _seed_programs_if_empty():
+async def _seed_programs_if_empty(*, on_request: bool = False):
+    """Seed the standard programs when none is left. Listing programs does this
+    only until the owner has deleted a program: a deleted standard program must
+    stay deleted. The re-seed button (on_request) still brings them back."""
+    if not on_request and await db.deleted_records.find_one({"collection": "programs"}, {"_id": 1}):
+        return
     if await db.programs.count_documents({"is_default": True}) == 0:
         docs = [_build_program_doc(s) for s in SEED_PROGRAMS]
         await db.programs.insert_many(docs)
@@ -18163,7 +18169,10 @@ async def delete_program(
             detail="This program has enrollment history and can't be permanently deleted — "
                    "hide it instead to keep past enrollments and progress intact.",
         )
-    await deletion_log.delete_one(db, "programs", {"id": program_id})
+    # The same checks and clean-up as deleting with history (domains/school/removal.py):
+    # refused while an order or a Board & Train service still needs the program, and other
+    # programs' prerequisites, Shop links and favourites stop pointing at it.
+    await training_removal.delete_program_with_history(db, program_id, apply=True, media_path=_school_media_file_path)
     return {"ok": True, "action": "deleted"}
 
 
@@ -19857,6 +19866,8 @@ async def _school_enrollment_for_client(school_enrollment_id: str, user: dict) -
     enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
+    if enrollment.get("delivery_channel") in ONLINE_SCHOOL_CHANNELS and not await _feature_enabled("online_school"):
+        raise HTTPException(status_code=404, detail="This course is no longer available.")
     se = await _reconcile_school_enrollment_mirror(enrollment, se)
     return se, enrollment
 
@@ -20009,6 +20020,9 @@ async def _grant_online_school_enrollment(
     the dog already has an active Online School enrollment for this
     program — see that class's docstring for why the two callers need to
     treat this differently themselves."""
+    if not await _feature_enabled("online_school"):
+        # Every way in (Shop, free claim, desk sale, staff enroll, retake) lands here.
+        raise HTTPException(status_code=422, detail="Online School is turned off, so no new course access can be given.")
     client_id = dog.get("owner_id")
     if not client_id:
         raise HTTPException(status_code=422, detail="This dog has no owning client on file")
@@ -20226,6 +20240,16 @@ SCHOOL_DELIVERY_CHANNEL_BY_MODE = {
 SCHOOL_DELIVERY_MODE_BY_CHANNEL = {v: k for k, v in SCHOOL_DELIVERY_CHANNEL_BY_MODE.items()}
 SCHOOL_DELIVERY_CHANNELS = tuple(SCHOOL_DELIVERY_MODE_BY_CHANNEL.keys())
 STAFF_SCHOOL_DELIVERY_CHANNELS = ("in_person_school", "hybrid_school")
+# The channels that include Online School lessons: closed to clients, and
+# removed by Settings → Remove Online School, while Online School is off.
+ONLINE_SCHOOL_CHANNELS = ("online_school", "hybrid_school")
+
+
+async def _client_staff_school_channels() -> tuple:
+    """The staff-led channels a client sees: hybrid only while Online School is on."""
+    if await _feature_enabled("online_school"):
+        return STAFF_SCHOOL_DELIVERY_CHANNELS
+    return tuple(c for c in STAFF_SCHOOL_DELIVERY_CHANNELS if c not in ONLINE_SCHOOL_CHANNELS)
 
 
 def _school_delivery_mode_for_enrollment(enrollment: dict) -> Optional[str]:
@@ -20347,6 +20371,8 @@ async def _grant_staff_school_enrollment(
     """
     if delivery_mode not in ("in_person", "hybrid"):
         raise HTTPException(status_code=422, detail="Invalid staff-led School delivery mode")
+    if delivery_mode == "hybrid" and not await _feature_enabled("online_school"):
+        raise HTTPException(status_code=422, detail="Hybrid training includes Online School lessons, and Online School is turned off. Assign it as In Person.")
     client_id = dog.get("owner_id")
     if not client_id:
         raise HTTPException(status_code=422, detail="This dog has no owning client on file")
@@ -21358,11 +21384,14 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
     rows = await db.school_enrollments.find(
         {"client_id": user.get("client_id")}, {"_id": 0},
     ).to_list(50)
+    online_on = await _feature_enabled("online_school")
     out = []
     for se in rows:
         enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
         if not enrollment:
             continue
+        if not online_on and enrollment.get("delivery_channel") in ONLINE_SCHOOL_CHANNELS:
+            continue   # Online School (and hybrid) courses are gone while it is turned off
         # Phase 6 focused pass — self-heal any mirror drift left by a
         # crashed withdraw/access request, and derive both fields the
         # client sees from the CANONICAL dog_programs `enrollment`, never
@@ -27864,6 +27893,7 @@ async def portal_learn(user: dict = Depends(get_current_user)):
     # UI Phase 4 — photo added to this projection; already stored per-dog,
     # needed for the Learn program header's dog identity.
     dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(50)
+    channels = await _client_staff_school_channels()
     out = []
     for dog in dogs:
         # Sit Happens Online School — a dog can now also have a
@@ -27874,7 +27904,7 @@ async def portal_learn(user: dict = Depends(get_current_user)):
         # online_school rows rather than an unguarded find_one that would
         # otherwise return whichever Mongo returns first.
         enr = await db.dog_programs.find_one(
-            {"dog_id": dog["id"], "status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0},
+            {"dog_id": dog["id"], "status": "active", "delivery_channel": {"$in": list(channels)}}, {"_id": 0},
         )
         if not enr:
             continue
@@ -27926,6 +27956,7 @@ async def portal_progress(user: dict = Depends(get_current_user)):
     # UI Phase 4 — photo added to this projection; needed for the Progress
     # header and the report card's dog identity.
     dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(50)
+    channels = await _client_staff_school_channels()
     out = []
     for dog in dogs:
         # Sit Happens Online School — a dog can now also have a
@@ -27936,7 +27967,7 @@ async def portal_progress(user: dict = Depends(get_current_user)):
         # online_school rows rather than an unguarded find_one that would
         # otherwise return whichever Mongo returns first.
         enr = await db.dog_programs.find_one(
-            {"dog_id": dog["id"], "status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0},
+            {"dog_id": dog["id"], "status": "active", "delivery_channel": {"$in": list(channels)}}, {"_id": 0},
         )
         if not enr:
             continue
@@ -28426,7 +28457,7 @@ async def create_custom_and_enroll(dog_id: str, body: CustomProgramIn, _: dict =
 # Idempotent re-seed (admin can also wipe and re-import standards from settings if desired)
 @api.post("/programs/seed-standard")
 async def seed_standard(_: dict = Depends(require_admin_and_permission("manage_training_content"))):
-    await _seed_programs_if_empty()
+    await _seed_programs_if_empty(on_request=True)
     count = await db.programs.count_documents({"is_default": True})
     return {"ok": True, "default_programs": count}
 
@@ -29460,34 +29491,9 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             "icon": "fa-clipboard-check",
         })
 
-    # 1a2. Online School self-guided practice the client just logged. These
-    # homework rows are NOT daily_tracker, so §1 above never counted them —
-    # which is exactly why a client's Online School practice only emailed the
-    # trainer and never appeared in-app. Surface unreviewed practice logs here
-    # so the trainer sees them in the action center and can open what the
-    # client actually did (reps/notes live on the section_log).
-    school_practice_count = 0
-    school_practice_sample = None
-    async for hw in db.homework.find(
-        {"source_lesson_id": {"$ne": None}, "section_logs.0": {"$exists": True}, **skip},
-        {"_id": 0, "dog_name": 1, "title": 1, "section_logs": 1},
-    ):
-        for lo in hw.get("section_logs") or []:
-            if not lo.get("reviewed_at"):
-                school_practice_count += 1
-                if not school_practice_sample:
-                    school_practice_sample = f"{hw.get('dog_name') or 'A dog'} · {hw.get('title') or 'practice'}"
-    if school_practice_count > 0:
-        items.append({
-            "id": f"school-practice:{school_practice_count}",
-            "kind": "school_practice_log",
-            "priority": "info",
-            "title": f"{school_practice_count} Online School practice log{'s' if school_practice_count != 1 else ''} to review",
-            "subtitle": school_practice_sample or "A client logged self-guided practice",
-            "ts": now_dt.isoformat(),
-            "cta": {"type": "open_screen", "screen": "homework"},
-            "icon": "fa-paw",
-        })
+    # (No "Online School practice logs" card: Online School is retired, and
+    # practice logs are never marked reviewed, so that card never cleared.
+    # Training > Practice still counts the new ones.)
 
     # 1b. Client-uploaded vaccine certificates waiting for admin review (urgent)
     # These are different from expired/missing vaccine flags: the client has
@@ -30137,8 +30143,10 @@ def _today_brain_signature(item: dict) -> str:
     if kind in ("new_signup", "prepaid_sessions_closed", "payday_due"):
         # One-time dismiss tied to the id (client id, or the payday's date).
         return "once"
-    # Fallback: hash of title+subtitle so unknown item kinds still behave sanely.
-    return f"hash:{hash(title + '|' + subtitle) & 0xFFFFFFFF:08x}"
+    # Fallback: a digest of title+subtitle. Not hash(): Python salts str
+    # hashes per process, so each worker and every restart gave a different
+    # signature and a hidden card came back.
+    return f"hash:{hashlib.sha1((title + '|' + subtitle).encode('utf-8')).hexdigest()[:8]}"
 
 
 # ────────────────────── Sprint 109b — Today's Tasks dismissals ──────────────────────
@@ -43369,6 +43377,9 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
         # requires_dog program (fulfillment left at the "credits_only"
         # default) falls through to the unconditional reject below,
         # completely unchanged.
+        if (settings.get("feature_visibility") or {}).get("online_school", True) is False:
+            # A course left in an old cart: refuse before payment, not at fulfillment.
+            raise HTTPException(status_code=409, detail=f"{name} is no longer available.")
         if quantity != 1:
             raise HTTPException(status_code=422, detail=f"{name} can only be purchased one dog at a time — add it again for a second dog.")
         if not dog_id:
@@ -44773,12 +44784,13 @@ async def portal_shop_order_status(order_id: str, user: dict = Depends(get_curre
     catalog = await _build_shop_catalog(user.get("client_id"))
     items_by_ref = {(i["kind"], i["id"]): i for i in catalog["items"]}
     enrollments = await shop_orders_view.enrollments_for(db, order, user.get("client_id"))
+    online_on = await _feature_enabled("online_school")
     actions_by_item_id = {}
     for line in (order.get("lines") or []):
         actions_by_item_id[str(line.get("item_id"))] = await shop_orders_view.line_actions(
             db=db, order=order, line=line,
             item=items_by_ref.get((line.get("kind"), line.get("ref_id"))),
-            viewer_client_id=user.get("client_id"), enrollment_by_key=enrollments,
+            viewer_client_id=user.get("client_id"), enrollment_by_key=enrollments, online_school_on=online_on,
         )
     printify_row = await db.printify_order_outbox.find_one(
         {"source": "shop_order", "source_id": order_id}, {"_id": 0, "tracking": 1})
@@ -52370,6 +52382,10 @@ async def sell_training_program(
         raise HTTPException(status_code=404, detail="Program not found")
     if not program.get("active", True):
         raise HTTPException(status_code=400, detail="Program is inactive")
+    if program.get("purchase_fulfillment") == "online_school" and not await _feature_enabled("online_school"):
+        # Refused before anything is written: the course could not be given.
+        raise HTTPException(status_code=409, detail=f"{program.get('name') or 'This course'} is an Online School course, "
+                                                    "and Online School is turned off. Nothing was charged.")
 
     fmt = program.get("format") or {}
     qty = int(fmt.get("count") or 0)
@@ -59516,6 +59532,12 @@ globals().update(make_bills_domain(
     api=api, db=db, business_today=business_today, now_iso=now_iso,
     require_admin_and_permission=require_admin_and_permission,
     ExpenseIn=ExpenseIn, create_expense=create_expense, delete_expense=delete_expense,
+))
+
+# Removing training history: Remove Online School, and deleting a program with its history.
+globals().update(training_removal.make_training_removal_domain(
+    api=api, db=db, require_admin_and_permission=require_admin_and_permission, perms_for=_perms_for,
+    feature_enabled=_feature_enabled, school_media_file_path=_school_media_file_path, now_iso=now_iso,
 ))
 
 # Trophies (domains/engagement/trophies) — pure move; names re-exported below.

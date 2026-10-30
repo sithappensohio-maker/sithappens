@@ -225,7 +225,7 @@ export default function ClientMessages() {
                     </p>
                     {active.school_enrollment_id && (
                       <div className="mt-2 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-shSecondary/25 bg-shSecondary/[0.05] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-shSecondary" data-testid="admin-message-school-context">
-                        <span><i className="fas fa-graduation-cap mr-1" />Online School</span>
+                        <span><i className="fas fa-graduation-cap mr-1" />School</span>
                         {active.school_program_name && <span>· {active.school_program_name}</span>}
                         {active.school_module_name && <span>· {active.school_module_name}</span>}
                         {active.school_lesson_name && <span>· {active.school_lesson_name}</span>}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useFeature } from "../lib/theme";
 import { useConfirm, usePromptDialog } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
@@ -814,6 +815,7 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
   const [startedAt, setStartedAt] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [trainers, setTrainers] = useState([]);
+  const onlineSchool = useFeature("online_school");
   const selected = programs.find(p => p.id === selectedId) || null;
 
   /* Group by curriculum type, but NEVER lose a program to an unrecognised
@@ -838,8 +840,9 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
   const modesFor = (p) => {
     const configured = p?.delivery_mode || "trainer_led";
     // Every School-ready curriculum can be followed by a trainer in person.
-    // Online/Hybrid options appear only when the course supports self-guided access.
-    if (configured === "self_guided" || configured === "both") return [
+    // Online/Hybrid options appear only when the course supports self-guided
+    // access and Online School is turned on.
+    if (onlineSchool && (configured === "self_guided" || configured === "both")) return [
       { key: "in_person", label: "In Person", icon: "fa-people-arrows-left-right" },
       { key: "online", label: "Online", icon: "fa-laptop" },
       { key: "hybrid", label: "Hybrid", icon: "fa-shuffle" },

@@ -168,8 +168,9 @@ test("delivery choices are restricted to what each program actually supports", (
   expect(dogTrainingTabSrc).toMatch(/const modesFor = \(p\) =>/);
   // The School unification made every curriculum trainer-runnable in person;
   // Online/Hybrid stay restricted to courses that support self-guided access,
-  // and a trainer_led course still can never be assigned online.
-  expect(dogTrainingTabSrc).toMatch(/if \(configured === "self_guided" \|\| configured === "both"\) return \[/);
+  // and a trainer_led course still can never be assigned online. With Online
+  // School turned off, no course offers Online or Hybrid at all.
+  expect(dogTrainingTabSrc).toMatch(/if \(onlineSchool && \(configured === "self_guided" \|\| configured === "both"\)\) return \[/);
   expect(dogTrainingTabSrc).toMatch(/return \[\{ key: "in_person", label: "In Person"/);
   expect(dogTrainingTabSrc).toMatch(/modesFor\(selected\)\.map/);
 });

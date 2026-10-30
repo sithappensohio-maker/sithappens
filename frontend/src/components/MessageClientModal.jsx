@@ -12,7 +12,7 @@ export default function MessageClientModal({ clientId, dogId, lessonName, sugges
   const [clientName, setClientName] = useState("");
   const [body, setBody] = useState(
     suggestedBody || (lessonName
-      ? `I reviewed your Online School checkpoint for ${lessonName} and I'd like to work through this with you.`
+      ? `I reviewed your checkpoint for ${lessonName} and I'd like to work through this with you.`
       : "")
   );
   const [loading, setLoading] = useState(true);
@@ -40,7 +40,7 @@ export default function MessageClientModal({ clientId, dogId, lessonName, sugges
       } else {
         await api.post("/admin/messages/start", {
           client_id: clientId, dog_id: dogId || undefined,
-          subject: lessonName ? `Online School — ${lessonName}` : "Online School",
+          subject: lessonName ? `Training — ${lessonName}` : "Training",
           category: "training", body: body.trim(), email_notify: true,
         });
       }

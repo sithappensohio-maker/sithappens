@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { publicPriceDisplay, publicPriceProblem, priceModePatch } from "../lib/programPricing";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { useFeature } from "../lib/theme";
 import { previewLessonMoves, lessonMovePreviewNote } from "../lib/lessonMoves";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
@@ -548,6 +549,15 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
     self_guided: "Online School",
     both: "Trainer + Online",
   }[program.delivery_mode || "trainer_led"];
+  // With Online School turned off, its choices are not offered. A program
+  // still set to one keeps that choice showing so it can be switched back.
+  const onlineSchool = useFeature("online_school");
+  const deliveryChoices = [
+    { k: "trainer_led", label: "Trainer-Led", icon: "fa-user-tie", note: "Staff guides the program" },
+    { k: "self_guided", label: "Online School", icon: "fa-graduation-cap", note: "Client follows the school" },
+    { k: "both", label: "Both", icon: "fa-arrows-split-up-and-left", note: "One curriculum, two paths" },
+  ].filter(dm => onlineSchool || dm.k === "trainer_led" || dm.k === program.delivery_mode);
+  const showFulfillment = onlineSchool || program.purchase_fulfillment === "online_school" || !!program.free_enrollment_enabled;
 
   return (
     <div className="px-3 sm:px-6 py-4 sm:py-5">
@@ -580,15 +590,11 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
             </div>
           </ExpandableSection>
 
-          <ExpandableSection title="Delivery Mode" icon="fa-route" testid="setup-section-delivery">
+          {deliveryChoices.length > 1 && <ExpandableSection title="Delivery Mode" icon="fa-route" testid="setup-section-delivery">
             <div className="space-y-3">
               <p className="text-[12px] text-shTextMuted">How this curriculum reaches clients — the same modules, lessons, and skills either way.</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {[
-                  { k: "trainer_led", label: "Trainer-Led", icon: "fa-user-tie", note: "Staff guides the program" },
-                  { k: "self_guided", label: "Online School", icon: "fa-graduation-cap", note: "Client follows the school" },
-                  { k: "both", label: "Both", icon: "fa-arrows-split-up-and-left", note: "One curriculum, two paths" },
-                ].map(dm => {
+                {deliveryChoices.map(dm => {
                   const active = (program.delivery_mode || "trainer_led") === dm.k;
                   return (
                     <button key={dm.k} type="button" onClick={() => set({ delivery_mode: dm.k })} data-testid={`prog-delivery-mode-${dm.k}`}
@@ -601,7 +607,7 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
                 })}
               </div>
             </div>
-          </ExpandableSection>
+          </ExpandableSection>}
 
           <ExpandableSection title="Training Format & Scheduling" icon="fa-calendar-days" testid="setup-section-format">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -645,7 +651,7 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
                 </div>
               )}
 
-              {(() => {
+              {showFulfillment && (() => {
                 const canOnlineSchool = ["self_guided", "both"].includes(program.delivery_mode || "trainer_led");
                 return (
                   <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3 space-y-3">

@@ -404,11 +404,14 @@ async def create_client_notification(
     return doc
 
 
-async def list_client_notifications(client_id: str, *, limit: int = 40, before: Optional[str] = None, unread_only: bool = False) -> List[dict]:
+async def list_client_notifications(client_id: str, *, limit: int = 40, before: Optional[str] = None, unread_only: bool = False,
+                                    exclude_school_enrollment_ids: Optional[List[str]] = None) -> List[dict]:
     if _db is None or not client_id:
         return []
     limit = max(1, min(int(limit or 40), 100))
     q: Dict[str, Any] = {"audience": f"school_client:{client_id}"}
+    if exclude_school_enrollment_ids:
+        q["school_enrollment_id"] = {"$nin": list(exclude_school_enrollment_ids)}
     if unread_only:
         q["read_at"] = None
     if before:
@@ -416,10 +419,13 @@ async def list_client_notifications(client_id: str, *, limit: int = 40, before: 
     return await _db[NOTIFICATIONS_COLLECTION].find(q, {"_id": 0}).sort("created_at", DESCENDING).to_list(limit)
 
 
-async def client_unread_count(client_id: str) -> int:
+async def client_unread_count(client_id: str, *, exclude_school_enrollment_ids: Optional[List[str]] = None) -> int:
     if _db is None or not client_id:
         return 0
-    return await _db[NOTIFICATIONS_COLLECTION].count_documents({"audience": f"school_client:{client_id}", "read_at": None})
+    q: Dict[str, Any] = {"audience": f"school_client:{client_id}", "read_at": None}
+    if exclude_school_enrollment_ids:
+        q["school_enrollment_id"] = {"$nin": list(exclude_school_enrollment_ids)}
+    return await _db[NOTIFICATIONS_COLLECTION].count_documents(q)
 
 
 def _default_title(event: dict) -> str:

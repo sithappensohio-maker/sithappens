@@ -199,6 +199,7 @@ def detail(order: dict, *, items_by_ref: Dict[tuple, dict],
 async def line_actions(
     *, db, order: dict, line: dict, item: Optional[dict],
     viewer_client_id: Optional[str], enrollment_by_key: Dict[tuple, dict],
+    online_school_on: bool = True,
 ) -> List[Dict[str, Any]]:
     """What this customer can usefully do with this line, now.
 
@@ -227,15 +228,18 @@ async def line_actions(
                         "kind": kind, "ref_id": line.get("ref_id")})
 
     if kind == "training_program" and line.get("fulfillment_kind") == "online_school":
-        # The useful action for a course is opening it, not buying it.
+        # The useful action for a course is opening it, not buying it. While
+        # Online School is off its courses are closed, so the line is history.
         enrollment = enrollment_by_key.get((line.get("dog_id"), line.get("ref_id")))
-        if enrollment and viewer_client_id:
+        if online_school_on and enrollment and viewer_client_id:
             actions.append({"action": "open_course", "enabled": True,
                             "enrollment_id": enrollment.get("id"),
                             "dog_name": line.get("dog_name")})
-        elif paid:
+        elif online_school_on and paid and line.get("fulfillment_status") != "fulfilled":
             actions.append({"action": "open_course", "enabled": False,
                             "reason": "This course is still being set up."})
+        # A fulfilled line with no enrollment: the course was removed (Online
+        # School retired). The line stays as plain purchase history.
         # Buying it again for the same dog is refused at checkout, so it is
         # not offered here either. Offering a button that 409s is worse than
         # offering no button.

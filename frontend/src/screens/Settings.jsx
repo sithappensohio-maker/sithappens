@@ -19,6 +19,7 @@ import PricingTiersPanel from "../components/PricingTiersPanel";
 import ReceiptSettingsPanel from "../components/ReceiptSettingsPanel";
 import DayToDayControls from "../components/DayToDayControls";
 import DataExportPanel from "../components/DataExportPanel";
+import OnlineSchoolRemovalCard from "../components/OnlineSchoolRemovalCard";
 import PublicWebsitePanel from "../components/PublicWebsitePanel";
 import ThemeGallery from "../components/ThemeGallery";
 
@@ -849,8 +850,8 @@ const FEATURE_VISIBILITY_META = [
     desc: "Practice assignments, Practice Coach, and step tracking used by School programs. Disable to hide Practice from School and the portal.",
     affects: ["Admin nav", "Portal", "Quick links"] },
   { id: "online_school",   label: "Online School",   icon: "fa-laptop-file",    color: "shAccent",
-    desc: "Self-paced online courses. Disable to hide School from the portal nav, public site nav/homepage, and shop. Clients already enrolled keep their course access.",
-    affects: ["Portal nav", "Public site", "Shop"] },
+    desc: "Self-paced online courses and hybrid training. Disable to turn them off everywhere: the portal, the public site, the shop, staff screens and new enrollments. Online and hybrid students lose course access; in-person training is not affected.",
+    affects: ["Portal", "Public site", "Shop", "Training", "Program Studio"] },
   // portals & comms
   { id: "staff_portal",    label: "Staff Portal",    icon: "fa-id-badge",       color: "shSecondary",
     desc: "Employee clock-in, schedule, payroll surface. Disable to hide the staff portal entry point.",
@@ -1004,6 +1005,8 @@ function FeatureVisibilityPanel() {
           );
         })}
       </div>
+
+      {s.online_school === false && !dirty && <OnlineSchoolRemovalCard/>}
     </div>
   );
 }

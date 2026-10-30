@@ -341,6 +341,8 @@ def make_trainer_day(*, api_dep, db, perms_for, business_today, business_date_fr
                     action={"kind": "review_practice", "label": "Review practice", "target": {"homework_id": p.get("homework_id"), "section_log_id": p.get("log_id")}},
                     flags=(["client_question"] if (p.get("unanswered_questions") or 0) > 0 else [])))
             for a in await admin_school_trainer_assist_queue(user):
+                if a.get("trainer_assist_status") == "completed":
+                    continue  # the queue also returns finished cases, for its Recently Completed list
                 items.append(_trainer_day_item(key=f"assist:{a.get('id')}", kind="trainer_assist", section="needs_attention", priority=50,
                     since=a.get("graded_at") or a.get("submitted_at"), dog={"id": a.get("dog_id"), "name": a.get("dog_name"), "photo": a.get("dog_photo") or ""},
                     client={"name": a.get("client_name")}, program={"name": a.get("program_name"), "school_enrollment_id": a.get("school_enrollment_id")},

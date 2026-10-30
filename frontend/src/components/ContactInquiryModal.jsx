@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useFeature } from "../lib/theme";
 
 /**
  * Public "Tell us about your dog" questionnaire — the landing page's second
@@ -15,6 +16,14 @@ import { api, formatErr } from "../lib/api";
 // vocabulary as the server's INQUIRY_INTERESTS so an admin reading either
 // flow sees the same words.
 export const INTEREST_OPTIONS = { daycare: "Daycare", boarding: "Boarding", in_person_training: "In-person training", online_school: "Online School", grooming: "Grooming", not_sure: "Not sure — help me choose" };
+
+// The interests a form offers. "Online School" stays a label (older inquiries
+// carry it) but is not offered while Online School is turned off.
+export function offeredInterests(options, onlineSchool) {
+  if (onlineSchool) return options;
+  const { online_school, ...rest } = options || {};
+  return rest;
+}
 
 const FALLBACK_OPTIONS = {
   interests: INTEREST_OPTIONS,
@@ -62,6 +71,7 @@ export default function ContactInquiryModal({ open, onClose }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState("");
+  const onlineSchool = useFeature("online_school");
 
   useEffect(() => {
     if (!open) return;
@@ -161,7 +171,7 @@ export default function ContactInquiryModal({ open, onClose }) {
 
             <div>
               <label className={labelCls}>What are you looking for?</label>
-              <Chips options={options.interests} value={f.interests} onChange={set("interests")} testid="ci-interest"/>
+              <Chips options={offeredInterests(options.interests, onlineSchool)} value={f.interests} onChange={set("interests")} testid="ci-interest"/>
             </div>
             <div>
               <label className={labelCls}>Main goals or concerns</label>

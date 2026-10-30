@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
-import { Chips, INTEREST_OPTIONS } from "./ContactInquiryModal";
+import { useFeature } from "../lib/theme";
+import { Chips, INTEREST_OPTIONS, offeredInterests } from "./ContactInquiryModal";
 
 function formatSlotTime(hhmm) {
   const [h, m] = hhmm.split(":").map(Number);
@@ -31,6 +32,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState("");
+  const onlineSchool = useFeature("online_school");
 
   useEffect(() => {
     if (!open || !date) return;
@@ -132,7 +134,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
             </div>
             <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">What are you interested in?</label>
-              <Chips options={INTEREST_OPTIONS} value={interests} onChange={setInterests} testid="meet-greet-interest"/>
+              <Chips options={offeredInterests(INTEREST_OPTIONS, onlineSchool)} value={interests} onChange={setInterests} testid="meet-greet-interest"/>
             </div>
             <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Anything else we should know? (optional)</label>

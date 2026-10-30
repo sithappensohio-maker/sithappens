@@ -72,7 +72,7 @@ export default function SchoolResourcesPanel() {
         <textarea className="input-res min-h-[90px]" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="What this helps with…"/>
         <select className="input-res" value={form.kind} onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}><option value="link">Link</option><option value="guide">Guide</option><option value="file">File</option><option value="image">Image</option><option value="video">Video</option></select>
         <select className="input-res" value={targetProgram} onChange={(e) => setForm((f) => ({ ...f, program_ids: e.target.value ? [e.target.value] : [] }))}>
-          <option value="">All Online School students</option>{programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          <option value="">All School students</option>{programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input className="input-res" value={form.url || ""} onChange={(e) => setForm((f) => ({ ...f, url: e.target.value, media_id: "" }))} placeholder="External URL (optional)"/>
         <label className="block rounded-xl border border-dashed border-shBorder p-3 text-xs text-shTextMuted cursor-pointer"><i className="fas fa-upload mr-2 text-shSecondary"/>{uploading ? "Uploading…" : form.media_id ? "File uploaded — choose another to replace" : "Or upload a PDF, image, or video"}<input type="file" accept="application/pdf,image/*,video/*" className="hidden" onChange={(e) => upload(e.target.files?.[0] || null)}/></label>

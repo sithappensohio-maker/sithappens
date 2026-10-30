@@ -325,6 +325,8 @@ const _resourcesForMutation = (url) => {
   if (path === "/dogs" || path.startsWith("/dogs/") || path.startsWith("/portal/dogs") || path.startsWith("/admin/dogs/") || path.startsWith("/admin/duplicates/dogs")) resources.add("dogs");
   if (path === "/services" || path.startsWith("/services/")) resources.add("services");
   if (path === "/programs" || path.startsWith("/programs/")) resources.add("programs");
+  // Deleting a program with its history, or removing Online School, removes programs and enrollments.
+  if (path.startsWith("/admin/programs/") || path.startsWith("/admin/online-school/")) { resources.add("programs"); resources.add("dogs"); }
   if (path === "/settings" || path.startsWith("/settings/")) resources.add("settings");
   if (
     path.startsWith("/admin/messages")

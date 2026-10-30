@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
+import { useFeature } from "../lib/theme";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useConfirm } from "../lib/useConfirm";
 import { useAuth } from "../lib/auth";
@@ -1270,6 +1271,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
 
 // ─── Sprint 110bw — Sell Training Program modal ─────────────────────────
 export function SellProgramModal({ client, onClose, onSold }) {
+  const onlineSchool = useFeature("online_school");
   const [programs, setPrograms] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [breakdown, setBreakdown] = useState(null);
@@ -1299,15 +1301,17 @@ export function SellProgramModal({ client, onClose, onSold }) {
         api.get("/dogs").catch(()=>({data:[]})),
         api.get(`/admin/clients/${client.id}/training-credits`).catch(()=>({data:null})),
       ]);
+      // An Online School course can't be given while Online School is off (the server refuses it too).
       const sellable = (p.data || []).filter(pr =>
         (pr.format?.count || 0) > 0 && pr.active !== false
+        && (onlineSchool || pr.purchase_fulfillment !== "online_school")
       );
       setPrograms(sellable);
       const clientDogs = (d.data || []).filter(dog => dog.owner_id === client.id);
       setDogs(clientDogs);
       setBreakdown(b.data);
     })();
-  }, [client.id]);
+  }, [client.id, onlineSchool]);
 
   const selectedProgram = programs.find(p => p.id === programId);
   // A self-guided online course is access for one dog: no in-person credits,

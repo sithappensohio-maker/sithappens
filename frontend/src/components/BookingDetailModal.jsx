@@ -768,14 +768,14 @@ function TrainerAssistContext({ caseId }) {
   }, [caseId]);
 
   if (loading) {
-    return <p className="text-shTextMuted text-[12px]"><i className="fas fa-spinner fa-spin mr-1"/>Loading Online School context…</p>;
+    return <p className="text-shTextMuted text-[12px]"><i className="fas fa-spinner fa-spin mr-1"/>Loading Trainer Assist details…</p>;
   }
   if (!detail) return null;
   const cp = detail.checkpoint || {};
   return (
     <section data-testid="booking-trainer-assist-context">
       <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-purple-300 mb-2">
-        <i className="fas fa-handshake mr-1.5"/>Online School Trainer Assist
+        <i className="fas fa-handshake mr-1.5"/>Trainer Assist
       </h3>
       <div className="bg-purple-500/10 border border-purple-400/40 rounded-lg p-3 space-y-2">
         <p className="text-[13px] text-shText">

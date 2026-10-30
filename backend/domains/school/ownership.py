@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from fastapi import HTTPException
+
 OWNED_STATUSES = ("active", "completed", "withdrawn")
 
 _server_globals: Optional[dict] = None
@@ -60,6 +62,9 @@ async def grant_purchase(dog: Dict[str, Any], program: Dict[str, Any], *, enroll
     ({"school_enrollment", "enrollment"}); raises the same
     OnlineSchoolAlreadyEnrolledError when the dog already owns it."""
     db = _g("db")
+    if not await _g("_feature_enabled")("online_school"):
+        # Giving back a revoked course is a grant too.
+        raise HTTPException(status_code=422, detail="Online School is turned off, so no new course access can be given.")
     lapsed = await db.dog_programs.find_one(
         {"dog_id": dog["id"], "program_id": program["id"], "delivery_channel": "online_school",
          "access_state": "revoked"},

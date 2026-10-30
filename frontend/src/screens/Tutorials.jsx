@@ -1,5 +1,6 @@
 import { useState } from "react";
 import PageHero from "../components/PageHero";
+import { useFeature } from "../lib/theme";
 import AdminTabs from "../components/admin/AdminTabs";
 import { EmptyState, PremiumButton, SectionCard, StatusBadge } from "../components/premium";
 
@@ -73,7 +74,7 @@ const ADMIN_SECTIONS = [
           "Review the default Daycare / Boarding / Grooming / Training services and edit base price, duration, description.",
           "Add specialty services if you offer them (private training, bath-only, nail trim, photography sessions).",
           "Toggle Active on/off to control what clients can see and book.",
-          "Training programs are edited in Program Studio, which opens from the program's row here — modules, lessons, checkpoints, quizzes, and the Online School experience all live there.",
+          "Training programs are edited in Program Studio, which opens from the program's row here — modules, lessons, checkpoints, quizzes, and the School experience all live there.",
           "Set boarding stay rules under Money Rules → Stay-duration pricing: boarding bills per night, and a pickup after the checkout time adds a late-pickup charge (a full or half daycare day, a flat fee, or nothing — your choice).",
         ],
         related: ["Settings → Services & Pricing → Credit Packs (sold to clients as Prepaid Visits)", "Settings → Services & Pricing → Pricing Tiers", "Settings → Services & Pricing → Receipts"],
@@ -451,7 +452,7 @@ const ADMIN_SECTIONS = [
     title: "Shop Manager & Online Orders",
     icon: "fa-bag-shopping",
     color: "text-shAccent",
-    overview: "Shop Manager is the catalog and storefront control room: items, categories, shop settings, online orders, and a client preview. The client-facing Shop sells merch, prepaid visits, training programs, and Online School courses.",
+    overview: "Shop Manager is the catalog and storefront control room: items, categories, shop settings, online orders, and a client preview. The client-facing Shop sells merch, prepaid visits, and training programs.",
     cards: [
       {
         title: "The five tabs",
@@ -459,7 +460,7 @@ const ADMIN_SECTIONS = [
         path: "Sidebar → Shop → Shop Manager",
         steps: [
           "Items — everything sellable, with photos, cost, price, margin, stock, tax flag, and online/register visibility.",
-          "Categories & Layout — the sections and order clients see in the Shop (All, Merch & Gear, Prepaid Visits, Training, Online School).",
+          "Categories & Layout — the sections and order clients see in the Shop (All, Merch & Gear, Prepaid Visits, Training).",
           "Shop Settings — pickup instructions, guest checkout, storefront copy.",
           "Online Orders — the same pickup queue Front Desk shows (Preparing → Ready for Pickup → Completed).",
           "Client Preview — the storefront exactly as a client sees it.",
@@ -472,7 +473,7 @@ const ADMIN_SECTIONS = [
           "Physical Product — inventory, SKU, cost, tax, register + online. Stock decrements on a completed sale and restores on a void/refund.",
           "Shopify/External Merchandise — a link-out to your Shopify/Printify store for apparel; nothing is fulfilled in-app.",
           "Prepaid Visit Pack — bulk daycare/boarding visits (Credit Packs in Settings). Credits land on the client's account the moment payment clears.",
-          "Training Program — in-person programs and Online School courses. Buying one enrolls the dog automatically; online courses open in the client's School right away.",
+          "Training Program — buying one enrolls the dog automatically.",
         ],
       },
       {
@@ -485,6 +486,7 @@ const ADMIN_SECTIONS = [
       },
       {
         title: "The Online School storefront",
+        onlineSchool: true,
         badges: ["Client-Facing"],
         path: "Client Shop → Online School tab",
         steps: [
@@ -625,7 +627,7 @@ const ADMIN_SECTIONS = [
           "A unified inbox of every conversation a client starts from their portal — filter by Open / Pending / Resolved, or toggle Unread only.",
           "Click a thread, type a reply, and hit Reply — by default it also emails the client (uncheck to keep it in-app only).",
           "Internal Notes at the bottom of a thread are visible to staff only, never to the client.",
-          "Online School questions (Ask Your Trainer) arrive tagged with the lesson so you can answer in context.",
+          "School questions (Ask Your Trainer) arrive tagged with the lesson so you can answer in context.",
         ],
       },
       {
@@ -671,7 +673,7 @@ const ADMIN_SECTIONS = [
     title: "Training, School HQ & Practice",
     icon: "fa-graduation-cap",
     color: "text-shSecondary",
-    overview: "Training is one workspace with tabs: Today, School, Practice, Rewards, Trophies. In-person programs, Online School courses, and client Practice all run through it.",
+    overview: "Training is one workspace with tabs: Today, School, Practice, Rewards, Trophies. Training programs and client Practice all run through it.",
     cards: [
       {
         title: "Training Hub — every dog, one view",
@@ -695,6 +697,7 @@ const ADMIN_SECTIONS = [
       },
       {
         title: "School HQ — running Online School",
+        onlineSchool: true,
         badges: ["Daily Use", "Admin Only"],
         path: "Sidebar → Training → School",
         steps: [
@@ -730,7 +733,7 @@ const ADMIN_SECTIONS = [
         badges: ["Admin Only"],
         path: "Sidebar → Training → Trophies",
         steps: [
-          "Each trophy is manual or automatic. Automatic triggers: skills mastered (trainer-scored, or Online School lessons passed), programs completed, checkpoints passed, Practice streak days, Practice assignments completed, lifetime visits, successful referrals.",
+          "Each trophy is manual or automatic. Automatic triggers: skills mastered (trainer-scored, or School lessons passed), programs completed, checkpoints passed, Practice streak days, Practice assignments completed, lifetime visits, successful referrals.",
           "Upload your own artwork per trophy and choose the fit (circle, contain, freeform) and focal point — the same image shows on the portal, share cards, and achievement lists everywhere.",
           "Re-check awards runs every evaluator for every client and dog right now. Use it after editing thresholds; it never awards twice.",
         ],
@@ -951,7 +954,7 @@ const ADMIN_SECTIONS = [
 const CLIENT_QUICK_ACTIONS = [
   { id: "_cqa_login",    label: "Log In",            icon: "fa-right-to-bracket", target: "getting-started" },
   { id: "_cqa_book",     label: "Book a Visit",       icon: "fa-calendar-plus",    target: "booking" },
-  { id: "_cqa_school",   label: "Online School",      icon: "fa-graduation-cap",   target: "online-school" },
+  { id: "_cqa_school",   label: "Online School",      icon: "fa-graduation-cap",   target: "online-school", onlineSchool: true },
   { id: "_cqa_shop",     label: "Shop",               icon: "fa-bag-shopping",     target: "shop" },
   { id: "_cqa_dog",      label: "My Dogs & Records",  icon: "fa-paw",              target: "dogs-records" },
   { id: "_cqa_credits",  label: "Credits & Payments", icon: "fa-wallet",           target: "credits-payments" },
@@ -983,7 +986,7 @@ const CLIENT_SECTIONS = [
         title: "What's on Home",
         badges: ["Beginner"],
         steps: [
-          "If your dog is enrolled in Online School, the School card sits at the very top with your next step — tap it to jump straight into your course.",
+          "If your dog is in a School program, the School card sits at the very top with your next step — tap it to jump straight into your course.",
           "Three quick-action cards: Book Now, Shop, and (if your business offers it) Photography.",
           "An announcement banner from your business, an Action Needed card if setup is incomplete, and a balance banner if you owe anything or have credit on file.",
           "My Dogs, your upcoming bookings, the Practice streak tile, and your credits.",
@@ -1059,6 +1062,7 @@ const CLIENT_SECTIONS = [
   {
     id: "online-school",
     title: "Online School",
+    onlineSchool: true,
     icon: "fa-graduation-cap",
     color: "text-shSecondary",
     overview: "Train your dog at home with a real curriculum: lessons, coached practice, quizzes, and checkpoints your trainer grades. Everything lives under School.",
@@ -1145,14 +1149,14 @@ const CLIENT_SECTIONS = [
     title: "Shop",
     icon: "fa-bag-shopping",
     color: "text-shPrimary",
-    overview: "A dedicated Shop for merch, prepaid visits, training programs, and Online School courses — separate from booking a service.",
+    overview: "A dedicated Shop for merch, prepaid visits, and training programs — separate from booking a service.",
     cards: [
       {
         title: "Browse and buy",
         badges: ["Beginner"],
         path: "Sidebar → Shop · Bottom bar → Shop",
         steps: [
-          "Tabs: All, Merch & Gear, Prepaid Visits, Training, Online School.",
+          "Tabs: All, Merch & Gear, Prepaid Visits, Training.",
           "Add anything to your cart and check out securely with a card through Stripe. You can browse and fill a cart before you have an account — you'll be asked to create one at checkout and the cart carries over.",
         ],
       },
@@ -1161,7 +1165,7 @@ const CLIENT_SECTIONS = [
         badges: ["Beginner"],
         steps: [
           "Buying a prepaid visit pack adds those visits to your account the moment payment clears — no waiting on staff.",
-          "Buying a training program enrolls your dog; an Online School course opens under School right away. A course marked free can be claimed with one tap.",
+          "Buying a training program enrolls your dog.",
         ],
       },
       {
@@ -1238,7 +1242,7 @@ const CLIENT_SECTIONS = [
         title: "Training history and the timeline",
         badges: ["Beginner", "Only shown if enabled"],
         steps: [
-          "Online School progress lives under School → Progress. Trainer-led programs show under training history (Home → More).",
+          "School progress lives under School → Progress. Trainer-led programs show under training history (Home → More).",
           "Report cards from daycare and boarding visits appear under Past Visits with photos and notes from the day.",
         ],
       },
@@ -1350,7 +1354,7 @@ const CLIENT_SECTIONS = [
         steps: [
           "On a phone, the bottom bar has: Home, Book, School, Shop, and More.",
           "More opens a sheet with Photography (if offered), My Dogs, Payments, Credits, Rewards, Refer a Friend, and Help.",
-          "On larger screens the sidebar lists Home, Book, Online School, Shop, Photography, Messages, then My Dogs, Payments, Credits, Rewards, Refer a Friend, and Help.",
+          "On larger screens the sidebar lists Home, Book, Shop, Photography, Messages, then My Dogs, Payments, Credits, Rewards, Refer a Friend, and Help.",
           "School works on a phone: the course trail, Practice Coach, and video checkpoint uploads are built for it.",
         ],
       },
@@ -1367,9 +1371,18 @@ const CLIENT_SECTIONS = [
   },
 ];
 
+// While Online School is turned off, its chapter, quick link and cards are left out.
+export function guideFor(role, onlineSchool) {
+  const keep = (x) => onlineSchool || !x.onlineSchool;
+  const sections = (role === "client" ? CLIENT_SECTIONS : ADMIN_SECTIONS)
+    .filter(keep).map((s) => ({ ...s, cards: s.cards.filter(keep) }));
+  const quickActions = (role === "client" ? CLIENT_QUICK_ACTIONS : ADMIN_QUICK_ACTIONS).filter(keep);
+  return { sections, quickActions };
+}
+
 export default function Tutorials({ role = "admin" }) {
-  const sections = role === "client" ? CLIENT_SECTIONS : ADMIN_SECTIONS;
-  const quickActions = role === "client" ? CLIENT_QUICK_ACTIONS : ADMIN_QUICK_ACTIONS;
+  const onlineSchool = useFeature("online_school");
+  const { sections, quickActions } = guideFor(role, onlineSchool);
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(sections[0]?.id || "");
 
@@ -1444,7 +1457,7 @@ export default function Tutorials({ role = "admin" }) {
           title={role === "client" ? "LEARN THE PORTAL." : "KNOW THE APP."}
           highlight={role === "client" ? "STEP BY STEP." : "WITHOUT GUESSING."}
           subtitle={role === "client"
-            ? "Booking, Online School, Practice, dogs, payments, receipts, and the phone experience in plain language."
+            ? `Booking, ${onlineSchool ? "Online School, " : ""}Practice, dogs, payments, receipts, and the phone experience in plain language.`
             : "The real Sit Happens operator playbook — Today, Front Desk, schedule, clients, training and School, money, shop, settings, and mobile."}
           right={(
             <div className="sh-tutorials-hero-actions">

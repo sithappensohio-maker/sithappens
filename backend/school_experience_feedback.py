@@ -12,6 +12,7 @@ import uuid
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, ReturnDocument
+from domains.school.removal import refuse_closed_course
 
 
 SCHOOL_CHANNELS = ("online_school", "in_person_school", "hybrid_school")
@@ -71,6 +72,7 @@ async def _client_context(db, sid: str, user: dict):
     )
     if not dp:
         raise HTTPException(status_code=404, detail="School enrollment not found")
+    await refuse_closed_course(db, dp)
     return se, dp
 
 

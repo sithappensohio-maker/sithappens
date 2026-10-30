@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from pymongo import DESCENDING, ReturnDocument
 
 from domains.training import services as training_services
+from domains.school.removal import ONLINE_CHANNELS, online_school_off, refuse_closed_course
 
 
 # School is now the shared training surface for online, in-person and hybrid
@@ -277,6 +278,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         dp = await db.dog_programs.find_one({"id": se.get("enrollment_id"), "delivery_channel": {"$in": list(SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0})
         if not dp:
             raise HTTPException(status_code=404, detail="Enrollment not found")
+        await refuse_closed_course(db, dp)
         return se, dp
 
     def _require_readable_school_content(dp: dict) -> None:
@@ -829,8 +831,12 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
     @api.get("/portal/school-notifications")
     async def portal_school_notifications(limit:int=Query(40,ge=1,le=100),user:dict=Depends(get_current_user)):
         if user.get("role")!="client" or not user.get("client_id"): raise HTTPException(status_code=403,detail="Client account required")
-        rows=await school_events.list_client_notifications(user.get("client_id"),limit=limit)
-        return {"items":rows,"unread":await school_events.client_unread_count(user.get("client_id"))}
+        cid=user.get("client_id"); hidden=[]
+        if await online_school_off(db):   # a closed Online School / hybrid course's notices go with it
+            dps={r["id"] for r in await db.dog_programs.find({"delivery_channel":{"$in":list(ONLINE_CHANNELS)}},{"_id":0,"id":1}).to_list(None)}
+            hidden=[r["id"] for r in await db.school_enrollments.find({"client_id":cid,"enrollment_id":{"$in":list(dps)}},{"_id":0,"id":1}).to_list(None)]
+        rows=await school_events.list_client_notifications(cid,limit=limit,exclude_school_enrollment_ids=hidden)
+        return {"items":rows,"unread":await school_events.client_unread_count(cid,exclude_school_enrollment_ids=hidden)}
 
     @api.post("/portal/school-notifications/{nid}/read")
     async def portal_school_notification_read(nid:str,user:dict=Depends(get_current_user)):
