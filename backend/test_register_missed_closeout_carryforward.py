@@ -17,6 +17,15 @@ closeout's rollover forward through each unclosed day's own net cash change
 (via _register_day_cash_flow) before handing it to a later day as its
 suggested/expected opening.
 
+A second, related bug: a REASONED CORRECTION typed directly into a day's
+opening cash (Start Day's "opening cash" field + override reason — used when
+the suggested number itself was wrong, as opposed to a Till Adjustment) is
+only ever saved on that day's own cash_drawer_sessions row. The carry-forward
+above replays each skipped day's own drawer-session resolution (not just its
+till/sales activity), so a valid reasoned override on an unclosed day now
+also propagates forward — and a stale/unreasoned one is still recovered
+exactly like it is for a live "today", never propagated.
+
 Same harness conventions as test_register_expected_cash.py: direct async
 server calls on the disposable test DB, synthetic past dates nothing else
 in the suite touches, disposable rows tagged TEST_REG_MISSED_CLOSEOUT,
@@ -141,3 +150,97 @@ def test_c_no_activity_on_skipped_day_leaves_rollover_unchanged():
         assert today_summary["opening_rollover"]["carried_forward_days"] == 1
     finally:
         run(server.db.daily_closeouts.delete_many({"id": closeout_id}))
+
+
+# ── Test D — a reasoned opening-cash correction on a missed day carries ──────
+def test_d_reasoned_opening_override_on_missed_day_carries_forward():
+    closed_day = "2002-06-10"
+    missed_day = "2002-06-11"  # never closed; owner retyped the opening cash
+    today = "2002-06-12"
+    closeout_id = str(uuid.uuid4())
+    try:
+        run(server.db.daily_closeouts.insert_one({
+            "id": closeout_id, "date": closed_day, "created_at": f"{closed_day}T20:00:00",
+            "created_by": TAG, "created_by_name": TAG,
+            "cash_counted": 100.0, "rollover_cash": 100.0, "rollover_confirmed": True,
+            "status": "closed",
+        }))
+        # The owner opened missed_day, saw the suggested $100 was wrong, and
+        # typed $70 with a reason — a Start Day override, NOT a Till
+        # Adjustment row. missed_day itself was then never closed out.
+        run(server.db.cash_drawer_sessions.insert_one({
+            "date": missed_day, "opening_cash": 70.0,
+            "opening_override_reason": f"{TAG} recount correction",
+            "opening_was_overridden": True,
+            "opened_at": f"{missed_day}T08:00:00", "opened_by": TAG, "opened_by_name": TAG,
+            "notes": "",
+        }))
+        today_summary = _summary(today)
+        assert abs(today_summary["totals"]["opening_cash"] - 70.0) < 0.005
+        assert today_summary["opening_rollover"]["carried_forward_days"] == 1
+    finally:
+        run(server.db.daily_closeouts.delete_many({"id": closeout_id}))
+        run(server.db.cash_drawer_sessions.delete_many({"date": missed_day, "opened_by": TAG}))
+
+
+# ── Test E — override day's OWN activity still applies on top of it ─────────
+def test_e_missed_day_override_plus_its_own_activity_both_carry_forward():
+    closed_day = "2002-07-10"
+    missed_day = "2002-07-11"  # override to $70, then a $10 draw the same day
+    today = "2002-07-12"
+    closeout_id = str(uuid.uuid4())
+    till_id = str(uuid.uuid4())
+    try:
+        run(server.db.daily_closeouts.insert_one({
+            "id": closeout_id, "date": closed_day, "created_at": f"{closed_day}T20:00:00",
+            "created_by": TAG, "created_by_name": TAG,
+            "cash_counted": 100.0, "rollover_cash": 100.0, "rollover_confirmed": True,
+            "status": "closed",
+        }))
+        run(server.db.cash_drawer_sessions.insert_one({
+            "date": missed_day, "opening_cash": 70.0,
+            "opening_override_reason": f"{TAG} recount correction",
+            "opening_was_overridden": True,
+            "opened_at": f"{missed_day}T08:00:00", "opened_by": TAG, "opened_by_name": TAG,
+            "notes": "",
+        }))
+        run(server.db.till_adjustments.insert_one({
+            "id": till_id, "date": missed_day, "direction": "remove", "amount": 10.0,
+            "reason": f"{TAG} owner draw", "adjustment_type": "owner_draw",
+            "notes": "", "created_at": f"{missed_day}T18:00:00",
+            "created_by": TAG, "created_by_name": TAG,
+        }))
+        # $70 corrected opening - $10 draw the same day = $60 carried forward.
+        today_summary = _summary(today)
+        assert abs(today_summary["totals"]["opening_cash"] - 60.0) < 0.005
+    finally:
+        run(server.db.daily_closeouts.delete_many({"id": closeout_id}))
+        run(server.db.cash_drawer_sessions.delete_many({"date": missed_day, "opened_by": TAG}))
+        run(server.db.till_adjustments.delete_many({"id": till_id}))
+
+
+# ── Test F — a stale, unreasoned session amount on a missed day is ignored ──
+def test_f_stale_unreasoned_session_on_missed_day_is_not_propagated():
+    closed_day = "2002-08-10"
+    missed_day = "2002-08-11"  # a leftover/garbage opening_cash, no reason given
+    today = "2002-08-12"
+    closeout_id = str(uuid.uuid4())
+    try:
+        run(server.db.daily_closeouts.insert_one({
+            "id": closeout_id, "date": closed_day, "created_at": f"{closed_day}T20:00:00",
+            "created_by": TAG, "created_by_name": TAG,
+            "cash_counted": 100.0, "rollover_cash": 100.0, "rollover_confirmed": True,
+            "status": "closed",
+        }))
+        run(server.db.cash_drawer_sessions.insert_one({
+            "date": missed_day, "opening_cash": 15.0,  # stale/legacy number, no reason
+            "opened_at": f"{missed_day}T08:00:00", "opened_by": TAG, "opened_by_name": TAG,
+            "notes": "",
+        }))
+        # No valid override reason → the $15 is recovered to the confirmed
+        # $100 rollover, exactly like a live day, not carried forward as $15.
+        today_summary = _summary(today)
+        assert abs(today_summary["totals"]["opening_cash"] - 100.0) < 0.005
+    finally:
+        run(server.db.daily_closeouts.delete_many({"id": closeout_id}))
+        run(server.db.cash_drawer_sessions.delete_many({"date": missed_day, "opened_by": TAG}))

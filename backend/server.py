@@ -37635,10 +37635,17 @@ async def _effective_previous_closeout(date_value: str) -> Optional[Dict[str, An
     which can sit several days behind date_value whenever a close-out was
     missed. Folding that stale rollover straight into today's opening would
     silently erase every unclosed day's real cash movement in between — e.g.
-    an owner draw taken yesterday would vanish because yesterday was never
-    closed. So the real previous closeout's rollover is carried forward
-    through each unclosed day's own net cash change (cash sales minus
-    cash-drawer expenses, plus till adjustments) before it's suggested today.
+    an owner draw taken yesterday, or a reasoned correction typed into that
+    day's opening cash, would vanish because yesterday was never closed.
+
+    So each unclosed day in the gap is replayed in order: that day's own
+    opening is resolved exactly like a live day would be (its drawer session,
+    if any, against the running carried-forward amount — so a stale/unreasoned
+    session is recovered same as always, but a valid reasoned override wins),
+    then its own net cash change (cash sales minus cash-drawer expenses, plus
+    till adjustments) is applied to produce that day's closing balance, which
+    becomes the next day's running amount. The last day's closing is what's
+    suggested today.
     """
     closeout = await _previous_closeout_rollover(date_value)
     base = _closeout_rollover_cash(closeout)
@@ -37656,17 +37663,20 @@ async def _effective_previous_closeout(date_value: str) -> Optional[Dict[str, An
     # Bounded so a register left untouched for a very long stretch can't
     # trigger an unbounded per-day scan.
     carried_days = min(gap_days, 180)
-    carried = base
+    running = base
     for i in range(1, carried_days + 1):
         skipped = (start + timedelta(days=i)).isoformat()
+        session = await db.cash_drawer_sessions.find_one({"date": skipped}, {"_id": 0})
+        day_resolution = _effective_register_opening(session, {"rollover_cash": running})
+        day_opening = round(float(day_resolution.get("opening_cash") or 0), 2)
         flow = await _register_day_cash_flow(skipped)
         cash_in = round(float(flow["incoming_by_method"].get("cash") or 0), 2)
-        carried = round(
-            carried + cash_in - flow["drawer_payouts"] + flow["till_additions"] - flow["till_removals"],
+        running = round(
+            day_opening + cash_in - flow["drawer_payouts"] + flow["till_additions"] - flow["till_removals"],
             2,
         )
     effective = dict(closeout)
-    effective["rollover_cash"] = carried
+    effective["rollover_cash"] = running
     effective["carried_forward_from_date"] = base_date
     effective["carried_forward_days"] = carried_days
     return effective
