@@ -69,9 +69,11 @@ test("every kind the Today feed can send has a label", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "backend", "domains", "bookings", f), "utf8");
     for (const m of src.matchAll(/(?:TYPE\s*=\s*|"kind":\s*)"([a-z_]+)"/g)) kinds.add(m[1]);
   }
-  const payday = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "backend", "domains", "staff", "payday.py"), "utf8");
-  for (const m of payday.matchAll(/"kind":\s*"([a-z_]+)"/g)) kinds.add(m[1]);
-  expect(kinds.has("payday_due")).toBe(true);
+  for (const f of [["staff", "payday.py"], ["finance", "bills.py"]]) {
+    const src = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "backend", "domains", ...f), "utf8");
+    for (const m of src.matchAll(/"kind":\s*"([a-z_]+)"/g)) kinds.add(m[1]);
+  }
+  expect(kinds.has("payday_due") && kinds.has("bill_due")).toBe(true);
   expect(kinds.size).toBeGreaterThanOrEqual(25);
   const missing = [...kinds].filter((k) => !(k in ACTION_KIND_LABEL));
   expect(missing).toEqual([]);

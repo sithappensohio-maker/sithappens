@@ -29910,6 +29910,15 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         except Exception as e:
             logger.warning("today-brain payday failed: %s", e)
 
+    # 5j. Bills overdue or due soon. It shows amounts, so finance_reports only.
+    if perms.get("finance_reports"):
+        try:
+            bills_item = bills_brain_item(await bills_view(), now_dt.isoformat())
+            if bills_item:
+                items.append(bills_item)
+        except Exception as e:
+            logger.warning("today-brain bills failed: %s", e)
+
     # 6. Unanswered homework questions (warn)
     try:
         unanswered = 0
@@ -30116,7 +30125,7 @@ def _today_brain_signature(item: dict) -> str:
         nums = [int(t) for t in title.replace("%", " ").split() if t.isdigit()]
         pct_bucket = (nums[0] // 5) * 5 if nums else 0
         return f"pipeline:{item.get('id','').split(':')[-1]}:{pct_bucket}"
-    if kind in ("monday_digest", "no_checkin", "steps_incomplete", "missing_closeout"):
+    if kind in ("monday_digest", "no_checkin", "steps_incomplete", "missing_closeout", "bill_due"):
         # Date-scoped — these auto-roll over at midnight UTC anyway.
         return f"{kind}:{business_today().isoformat()}"
     if kind in ("new_signup", "prepaid_sessions_closed", "payday_due"):
@@ -30347,7 +30356,7 @@ BACKUP_COLLECTIONS = [
     "dog_programs", "training_sessions",
     "awarded_trophies", "referrals", "rewards_ledger",
     # Financial state
-    "expenses", "retail_sales", "credit_lots", "credit_adjustments",
+    "expenses", "bills", "retail_sales", "credit_lots", "credit_adjustments",
     "price_overrides", "pricing_tiers", "pricing_tier_prices", "payment_transactions", "checkout_groups",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
@@ -59493,6 +59502,14 @@ from domains.staff.payday import make_payday_domain, payday_brain_item  # noqa: 
 globals().update(make_payday_domain(
     api=api, db=db, business_today=business_today, get_owner_user_ids=_get_owner_user_ids,
     payroll_estimate=payroll_estimate, require_admin_and_permission=require_admin_and_permission,
+))
+
+from domains.finance.bills import make_bills_domain, bills_brain_item  # noqa: E402
+
+globals().update(make_bills_domain(
+    api=api, db=db, business_today=business_today, now_iso=now_iso,
+    require_admin_and_permission=require_admin_and_permission,
+    ExpenseIn=ExpenseIn, create_expense=create_expense, delete_expense=delete_expense,
 ))
 
 # Trophies (domains/engagement/trophies) — pure move; names re-exported below.

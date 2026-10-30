@@ -11,6 +11,8 @@ import AccountsReceivableTab from "./AccountsReceivable";
 import SalesTaxFilingTab from "./SalesTaxFiling";
 import TaxCenterTab from "../components/TaxCenter";
 import { FINANCE_TARGET_KEY } from "../components/SalesTaxDueTile";
+import BillsTab from "../components/BillsTab";
+import { screenTabFor, clearScreenTab } from "../lib/todayBrain";
 import TakePaymentModal from "../components/TakePaymentModal";
 import FinancialCorrectionModal from "../components/FinancialCorrectionModal";
 
@@ -43,8 +45,9 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         return stored;
       }
     } catch { /* ignore */ }
-    return "transactions";
+    return screenTabFor("income") || "transactions";
   });
+  useEffect(() => { clearScreenTab("income"); }, []);
   const [summary, setSummary] = useState(null);
   const [unpaidOpen, setUnpaidOpen] = useState(false);
   const [refDate, setRefDate] = useState(todayISO());
@@ -348,6 +351,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         onChange={setTab}
         items={[
           { key: "transactions", label: "Transactions", icon: "fa-list", testid: "income-tab-transactions" },
+          { key: "bills", label: "Bills", icon: "fa-calendar-check", testid: "income-tab-bills", accent: "orange" },
           { key: "ar", label: "Accounts Receivable", icon: "fa-file-invoice-dollar", testid: "income-tab-ar", accent: "orange" },
           { key: "sales_tax", label: "Sales Tax", icon: "fa-landmark", testid: "income-tab-sales-tax", accent: "orange" },
           { key: "tax_center", label: "Tax Center", icon: "fa-scale-balanced", testid: "income-tab-tax-center", accent: "orange" },
@@ -355,6 +359,8 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       />
       {tab === "ar" ? (
         <AccountsReceivableTab />
+      ) : tab === "bills" ? (
+        <BillsTab onExpensesChanged={refreshAfterExpenseChange} />
       ) : tab === "sales_tax" ? (
         <SalesTaxFilingTab />
       ) : tab === "tax_center" ? (

@@ -51,6 +51,7 @@ export const ACTION_KIND_LABEL = {
   prepaid_sessions_closed: "Prepaid Lessons Closed",
   low_stock: "Low Stock",
   payday_due: "Payday",
+  bill_due: "Bills Due",
 };
 
 export default function ActionRow({ item, onOpen, onDismiss, busy }) {

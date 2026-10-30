@@ -161,6 +161,9 @@ MERGE_KEEP_LIVE: Dict[str, Tuple[str, ...]] = {
     "estimated_tax_payments": ("voided", "void_reason", "voided_by", "voided_at"),
     "sales_tax_filings": ("status", "filed_at", "payments"),
     "cash_drawer_sessions": ("status", "closed_at", "closed_by"),
+    # A bill's due date moves only when it is paid, undone or edited; rolling it back re-opened a due date
+    # whose payment (an expense row, which a merge keeps) was already logged, inviting a second payment.
+    "bills": ("next_due", "due_day"),
     # A training program is the real record of a student's progress and standing (the School's own status is
     # a copy of it). Its state and position are kept live, so an older backup cannot un-graduate, un-withdraw or
     # move a student back a lesson, and a finished session cannot be replayed.
