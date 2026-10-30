@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAuthCart } from "../lib/useAuthCart";
@@ -40,7 +40,8 @@ import PortalBookingBlockedModal from "../components/PortalBookingBlockedModal";
 import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
 import { bookingFailure, groupSkips, shortDate } from "../lib/bookingBlocks";
 import SignedWaiverModal from "../components/SignedWaiverModal";
-import { dogVaccineRollup, expiringNotSent, humanDate, uploadedRenewalsOnly, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES, withUsForReview } from "../lib/vaccineStatus";
+import { dogVaccineRollup, expiringNotSent, humanDate, uploadedRenewalsOnly, vaccineState, vaccineSummary, vaccineStateTone, vaccinesToUpload, VACCINE_STATES, withUsForReview } from "../lib/vaccineStatus";
+import { newUploadId, postVaccineUpload, uploadErrorMessage } from "../lib/vaccineUpload";
 import { portalGreeting, portalGreetingSubtitle } from "../lib/portalGreeting";
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
@@ -405,17 +406,20 @@ function ReferFriendModal({ code, onClose }) {
   );
 }
 
-function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
+export function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
   const [expiresOn, setExpiresOn] = useState("");
   const [photo, setPhoto] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  // One id per date + photo: "Submit again" after a lost reply can't save it twice.
+  const uploadId = useRef(null);
   const handleFile = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
     try {
       const compressed = await compressImage(f, { maxWidth: 1400, maxHeight: 1400, quality: 0.78 });
       setPhoto(compressed);
+      uploadId.current = null;
     } catch (ex) {
       setErr("Couldn't read that photo. Try a different one.");
     }
@@ -424,11 +428,12 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
     if (!expiresOn) { setErr("Pick the new expiry date."); return; }
     if (!photo) { setErr("Attach a clear photo of the vaccine certificate before submitting."); return; }
     setErr(""); setSaving(true);
+    uploadId.current = uploadId.current || newUploadId();
     try {
-      await api.post(`/portal/dogs/${dog.id}/vaccine-update`, { vaccine, expires_on: expiresOn, photo });
+      await postVaccineUpload(dog.id, { vaccine, expires_on: expiresOn, photo }, uploadId.current);
       onSaved();
     } catch (e) {
-      setErr(formatErr(e.response?.data?.detail) || "Upload failed.");
+      setErr(uploadErrorMessage(e));
     } finally { setSaving(false); }
   };
   const label = { rabies: "Rabies", bordetella: "Bordetella", dhpp: "DHPP" }[vaccine] || vaccine;
@@ -445,12 +450,12 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
         <div className="space-y-3">
           <div>
             <label className="text-[14px] text-shTextMuted font-bold uppercase tracking-widest">New expiry date</label>
-            <input type="date" value={expiresOn} onChange={(e)=>setExpiresOn(e.target.value)} data-testid="vaccine-expiry-input"
+            <input type="date" value={expiresOn} disabled={saving} onChange={(e)=>{ setExpiresOn(e.target.value); uploadId.current = null; }} data-testid="vaccine-expiry-input"
                    className="w-full mt-1 border border-shBorder rounded p-3 text-shText text-sm focus:outline-none focus:border-shPrimary/60" style={{colorScheme:"dark", background: "var(--sh-card-base)"}} />
           </div>
           <div>
             <label className="text-[14px] text-shTextMuted font-bold uppercase tracking-widest">Cert photo required</label>
-            <input type="file" accept="image/*" capture="environment" onChange={handleFile} data-testid="vaccine-photo-input"
+            <input type="file" accept="image/*" capture="environment" onChange={handleFile} disabled={saving} data-testid="vaccine-photo-input"
                    className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm file:bg-shSecondary file:text-shText file:border-0 file:rounded file:px-3 file:py-1 file:font-bold file:text-[14px] file:uppercase file:tracking-widest" style={{ background: "var(--sh-card-base)" }} />
             {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-shBorder"/>}
           </div>
@@ -1281,22 +1286,17 @@ export default function Portal() {
       return true;
     }
     if (target === "vaccines") {
-      // Collect every (dog, required-vaccine) pair that's missing or
-      // expired, then fire the multi-step wizard. If there's only one,
-      // the wizard still works (1-of-1).
-      const todayIso = todayISO();
-      const required = ["rabies", "bordetella", "dhpp"];
-      const queue = [];
-      dogs.forEach(d => {
-        required.forEach(v => {
-          const exp = d?.vaccines?.[v];
-          if (!exp || String(exp).slice(0, 10) < todayIso) {
-            queue.push({ dog: d, vaccine: v });
-          }
-        });
-      });
+      // Every (dog, vaccine) still to upload, in the multi-step wizard. A
+      // vaccine already sent for review isn't asked for again: reopening the
+      // upload for it ("Upload Rabies now — 0 of 3") read as a failed upload.
+      const queue = vaccinesToUpload(dogs, todayISO());
       if (queue.length > 0) { setVaccineWizard(queue); return true; }
-      if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
+      // Nothing left to upload: show the records, with what's waiting for review.
+      if (dogs.length > 0) {
+        const waiting = dogs.find(d => Object.keys(d?.vaccines_pending_review || {}).length) || dogs[0];
+        setVaccineQuick({ initialDogId: waiting.id });
+        return true;
+      }
       // No dogs yet — open the add-dog modal so they start there.
       setDogModal({ open: true, dog: null });
       return true;
@@ -1646,12 +1646,7 @@ export default function Portal() {
             else openBookingIfReady();
           }}
           onUpload={() => {
-            const todayIso = todayISO();
-            const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
-            const candidate = dogs.find(d => needs(d, "rabies"))
-                           || dogs.find(d => needs(d, "bordetella"))
-                           || dogs.find(d => needs(d, "dhpp"))
-                           || dogs[0];
+            const candidate = vaccinesToUpload(dogs, todayISO())[0]?.dog || dogs[0];
             if (candidate) setVaccineQuick({ initialDogId: candidate.id });
             else setDogModal({ open: true, dog: null });
           }}
@@ -2814,6 +2809,7 @@ export default function Portal() {
           dogs={dogs}
           initialDogId={vaccineQuick.initialDogId}
           onClose={()=>setVaccineQuick(null)}
+          onSomeSaved={() => { loadAll(); bumpSetupRefresh(); }}
           onSaved={async(saved)=>{
             const dog = dogs.find(d => d.id === (saved?.dogId || vaccineQuick.initialDogId));
             const renewal = uploadedRenewalsOnly(dog, saved?.vaccines, todayISO());

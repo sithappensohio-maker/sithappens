@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { compressImage } from "../lib/imageCompress";
+import { newUploadId, postVaccineUpload, uploadErrorMessage } from "../lib/vaccineUpload";
 import PremiumButton from "./premium/PremiumButton";
 import { useConfirm } from "../lib/useConfirm";
 
@@ -24,6 +24,9 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [done, setDone] = useState(false);
+  // One upload id per step, kept across "Submit again" so a retry after a lost
+  // reply is never stored twice; a new date or file makes it a new upload.
+  const uploadIds = useRef({});
 
   const current = queue[idx];
   const total = queue.length;
@@ -102,6 +105,7 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
     try {
       const value = await compressImage(f, { maxWidth: 1400, maxHeight: 1400, quality: 0.78 });
       setPhoto(value);
+      delete uploadIds.current[idx];
       setErr("");
     } catch {
       setErr("Couldn't read that file. Try a clear photo instead.");
@@ -111,11 +115,11 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
   const save = async () => {
     if (!expiresOn) { setErr(`Pick the ${label} expiry date before continuing.`); return; }
     if (!photo) { setErr(`Attach a clear photo or PDF of the ${label} certificate before continuing.`); return; }
-    setErr(""); setSaving(true);
+    // The last step's green "uploaded, next…" notice must not sit above an error for this one.
+    setErr(""); setNotice(""); setSaving(true);
+    uploadIds.current[idx] = uploadIds.current[idx] || newUploadId();
     try {
-      await api.post(`/portal/dogs/${current.dog.id}/vaccine-update`, {
-        vaccine: current.vaccine, expires_on: expiresOn, photo,
-      });
+      await postVaccineUpload(current.dog.id, { vaccine: current.vaccine, expires_on: expiresOn, photo }, uploadIds.current[idx]);
       const next = savedCount + 1;
       setSavedCount(next);
       onProgress(next);
@@ -128,8 +132,7 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
         setIdx(idx + 1);
       }
     } catch (e) {
-      const detail = e?.response?.data?.detail;
-      setErr(typeof detail === "string" ? detail : "Upload failed.");
+      setErr(uploadErrorMessage(e));
     } finally { setSaving(false); }
   };
 
@@ -212,7 +215,7 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
             <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest block mb-1">
               {label} expiration date <span className="text-shAccent">*</span>
             </label>
-            <input type="date" value={expiresOn} onChange={e => setExpiresOn(e.target.value)}
+            <input type="date" value={expiresOn} disabled={saving} onChange={e => { setExpiresOn(e.target.value); delete uploadIds.current[idx]; }}
                    data-testid="vaccine-wizard-date"
                    className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shPrimary/60"
                    style={{ colorScheme: "dark", background: "var(--sh-card-base)" }}/>
@@ -231,12 +234,12 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex items-center gap-2 bg-shSecondary text-bgHeader px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest cursor-pointer hover:bg-shSecondary/90 transition">
                 <i className="fas fa-camera"/>Take Photo
-                <input type="file" accept="image/*" capture="environment" onChange={handleFile}
+                <input type="file" accept="image/*" capture="environment" onChange={handleFile} disabled={saving}
                        data-testid="vaccine-wizard-camera" className="hidden"/>
               </label>
               <label className="inline-flex items-center gap-2 border border-shBorder text-shTextMuted px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest cursor-pointer hover:text-shText hover:border-shSecondary/40 transition" style={{ background: "var(--sh-card-base)" }}>
                 <i className="fas fa-paperclip"/>Choose File / PDF
-                <input type="file" accept="image/*,application/pdf" onChange={handleFile}
+                <input type="file" accept="image/*,application/pdf" onChange={handleFile} disabled={saving}
                        data-testid="vaccine-wizard-photo" className="hidden"/>
               </label>
             </div>

@@ -6,6 +6,7 @@ import MiniActionCard from "./premium/MiniActionCard";
 import EmptyState from "./premium/EmptyState";
 import { accentRgb, HOVER_BORDER_CLASS } from "./premium/tokens";
 import TrophyBadge from "./TrophyBadge";
+import { vaccineState, VACCINE_STATES } from "../lib/vaccineStatus";
 
 /* Existing "tone" names (green/blue/orange/purple/gray) predate the
  * premium accent system's names (lime/cyan/orange/purple/neutral) — this
@@ -108,10 +109,10 @@ export function getDogPortalSnapshot(dog, bookings = [], homework = []) {
   const upcoming = dogBookings
     .filter((b) => ["pending", "approved"].includes(b.status) && (b.end_date || b.date || "") >= today)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];
-  const missingVaccines = REQUIRED_VACCINES.filter((key) => {
-    const exp = dog?.vaccines?.[key];
-    return !exp || String(exp).slice(0, 10) < today;
-  });
+  // Same rule as the dog card: a certificate already sent for review isn't "needed".
+  const stateOf = (key) => vaccineState(dog, key, today).state;
+  const missingVaccines = REQUIRED_VACCINES.filter((key) => [VACCINE_STATES.MISSING, VACCINE_STATES.EXPIRED].includes(stateOf(key)));
+  const waitingVaccines = REQUIRED_VACCINES.filter((key) => stateOf(key) === VACCINE_STATES.PENDING);
   const activeHomework = homework.filter((h) => h.dog_id === dog.id && h.status !== "completed");
 
   let status = "Profile ready";
@@ -125,6 +126,10 @@ export function getDogPortalSnapshot(dog, bookings = [], homework = []) {
     status = `${missingVaccines.length} vaccine record${missingVaccines.length === 1 ? "" : "s"} needed`;
     tone = "orange";
     icon = "fa-shield-virus";
+  } else if (waitingVaccines.length) {
+    status = "Vaccines with us for review";
+    tone = "blue";
+    icon = "fa-hourglass-half";
   } else if (activeHomework.length) {
     status = `${activeHomework.length} training task${activeHomework.length === 1 ? "" : "s"} active`;
     tone = "purple";
@@ -135,7 +140,7 @@ export function getDogPortalSnapshot(dog, bookings = [], homework = []) {
     icon = "fa-calendar-check";
   }
 
-  return { dog, activeVisit, upcoming, missingVaccines, activeHomework, status, tone, icon };
+  return { dog, activeVisit, upcoming, missingVaccines, waitingVaccines, activeHomework, status, tone, icon };
 }
 
 export function buildPortalPriority({

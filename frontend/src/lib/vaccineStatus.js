@@ -67,6 +67,20 @@ export function vaccineState(dog, type, todayIso) {
   return { state: VACCINE_STATES.MISSING, expiry: "" };
 }
 
+export const REQUIRED_VACCINES = ["rabies", "bordetella", "dhpp"];
+
+/** The (dog, vaccine) pairs a client still has to upload: missing or expired,
+ * and not already sent to us for review. Asking again for a vaccine that's
+ * waiting for review told clients their upload had failed. */
+export function vaccinesToUpload(dogs, todayIso, types = REQUIRED_VACCINES) {
+  const out = [];
+  (dogs || []).forEach((dog) => types.forEach((vaccine) => {
+    const { state } = vaccineState(dog, vaccine, todayIso);
+    if (state === VACCINE_STATES.MISSING || state === VACCINE_STATES.EXPIRED) out.push({ dog, vaccine });
+  }));
+  return out;
+}
+
 const LABELS = {
   [VACCINE_STATES.APPROVED]: "Approved",
   [VACCINE_STATES.PENDING]: "Uploaded — pending review",

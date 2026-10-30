@@ -289,6 +289,10 @@ api.get = (url, config = {}) => {
 
   const promise = _rawSharedGet(url, cleanConfig)
     .then((response) => {
+      // A save made while this read was in flight invalidated it (or a newer read
+      // replaced it): its answer is from before the save, so it must not be cached.
+      // Caching it showed "vaccines needed" for 20 s right after an upload.
+      if (_sharedResponseCache.get(key)?.promise !== promise) return response;
       _sharedResponseCache.set(key, {
         resource: policy.resource,
         response,

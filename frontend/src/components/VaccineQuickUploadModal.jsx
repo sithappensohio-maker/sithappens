@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { todayISO } from "../lib/date";
-import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import { vaccineState, VACCINE_STATES } from "../lib/vaccineStatus";
+import { newUploadId, postVaccineUpload, uploadErrorMessage } from "../lib/vaccineUpload";
 import PremiumButton from "./premium/PremiumButton";
 
 /**
@@ -32,17 +33,34 @@ const fmtDate = (iso) => {
   } catch { return iso; }
 };
 
-export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", onClose, onSaved }) {
+const LABEL = Object.fromEntries(REQ_VAX.map((v) => [v.key, v.label]));
+const listOf = (keys) => keys.map((k) => LABEL[k] || k).join(", ").replace(/, ([^,]*)$/, " and $1");
+
+export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", onClose, onSaved, onSomeSaved }) {
   const [dogId, setDogId] = useState(initialDogId || dogs[0]?.id || "");
   // rows: { [vaccineKey]: { expires_on: "YYYY-MM-DD", photos: [dataUrl, ...] } }
   const [rows, setRows] = useState({});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(0);
+  // "dogId:vaccine" rows this window already sent: a retry after a later row
+  // failed skips them, and each keeps its upload id so it is never stored twice.
+  const [sent, setSent] = useState(() => new Set());
+  // "dogId:vaccine" → { id, row }: the id belongs to the exact date + photos it
+  // was sent with, so an edit made while Submit runs is never sent under it.
+  const uploadIds = useRef({});
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const dog = useMemo(() => dogs.find(d => d.id === dogId) || null, [dogs, dogId]);
 
-  const setField = (vk, patch) => setRows((r) => ({ ...r, [vk]: { ...(r[vk] || { expires_on: "", photos: [] }), ...patch } }));
+  const setField = (vk, patch) => {
+    // A changed date or photo is a new upload: new id, and send it again.
+    const key = `${dogId}:${vk}`;
+    delete uploadIds.current[key];
+    setSent((s) => { if (!s.has(key)) return s; const n = new Set(s); n.delete(key); return n; });
+    setRows((r) => ({ ...r, [vk]: { ...(r[vk] || { expires_on: "", photos: [] }), ...patch } }));
+  };
 
   const onAddPhotos = async (vk, e) => {
     const files = Array.from(e.target.files || []);
@@ -71,6 +89,8 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
   const filledRows = Object.entries(rows).filter(([, v]) => v && v.expires_on);
   const rowsMissingPhotos = filledRows.filter(([, v]) => !v.photos || v.photos.length === 0);
   const canSubmit = !!dog && filledRows.length > 0 && rowsMissingPhotos.length === 0 && !saving;
+  const isSent = (vk) => sent.has(`${dogId}:${vk}`);
+  const unsentCount = filledRows.filter(([vk]) => !isSent(vk)).length;
 
   const submit = async () => {
     if (!dog || filledRows.length === 0) {
@@ -81,21 +101,34 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
       setErr("Every vaccine you submit needs a clear certificate photo or PDF attached.");
       return;
     }
+    const todo = filledRows.filter(([vk]) => !isSent(vk));
+    const received = filledRows.filter(([vk]) => isSent(vk)).map(([vk]) => vk);
     setErr(""); setSaving(true); setDone(0);
+    let current = null;
     try {
-      for (let i = 0; i < filledRows.length; i++) {
-        const [vk, val] = filledRows[i];
-        await api.post(`/portal/dogs/${dog.id}/vaccine-update`, {
-          vaccine: vk,
-          expires_on: val.expires_on,
-          photos: val.photos || [],
-        });
+      for (let i = 0; i < todo.length; i++) {
+        const [vk, val] = todo[i];
+        current = vk;
+        const key = `${dog.id}:${vk}`;
+        const prev = uploadIds.current[key];
+        const id = prev && prev.row === val ? prev.id : newUploadId();
+        uploadIds.current[key] = { id, row: val };
+        await postVaccineUpload(dog.id, { vaccine: vk, expires_on: val.expires_on, photos: val.photos || [] }, id);
+        received.push(vk);
+        // Changed while it was sending? Then what's on screen wasn't sent: leave it to send.
+        if (rowsRef.current[vk] === val) setSent((s) => new Set(s).add(key));
         setDone(i + 1);
       }
       onSaved?.({ dogId: dog.id, vaccines: filledRows.map(([vk]) => vk) });
     } catch (e) {
-      const detail = e?.response?.data?.detail;
-      setErr(typeof detail === "string" ? detail : "Upload failed. Try again.");
+      const reason = uploadErrorMessage(e);
+      if (received.length) {
+        // Never just "failed" when some of them arrived: say which did.
+        setErr(`${listOf(received)} received. ${LABEL[current] || "The next one"} didn't go through: ${reason}`);
+        onSomeSaved?.();
+      } else {
+        setErr(reason);
+      }
     } finally { setSaving(false); }
   };
 
@@ -148,7 +181,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                 {dogs.map((d) => {
                   const sel = d.id === dogId;
                   return (
-                    <button key={d.id} onClick={()=>setDogId(d.id)} type="button"
+                    <button key={d.id} onClick={()=>setDogId(d.id)} type="button" disabled={saving}
                             data-testid={`vquick-dog-${d.id}`}
                             style={sel ? undefined : { background: "var(--sh-card-base)" }}
                             className={`text-left rounded-lg border p-3 transition flex items-center gap-2 ${sel ? "bg-shPrimary/10 border-shPrimary" : "border-shBorder hover:border-shPrimary/50"}`}>
@@ -171,32 +204,40 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
             <div className="space-y-3" data-testid="vquick-vax-rows">
               <p className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Required vaccines</p>
               {REQ_VAX.map((v) => {
-                const current = dog.vaccines?.[v.key] || "";
-                const expired = current && current < todayISO();
-                const missing = !current;
+                // The shared rule: a certificate already sent is "Received", never "Missing".
+                const { state, expiry, renewal } = vaccineState(dog, v.key, todayISO());
+                const waiting = isSent(v.key) || state === VACCINE_STATES.PENDING || renewal;
+                const bad = !waiting && (state === VACCINE_STATES.MISSING || state === VACCINE_STATES.EXPIRED);
                 const row = rows[v.key] || { expires_on: "", photos: [] };
-                const status = missing ? "Missing" : expired ? "Expired" : "Current";
-                const cls = missing || expired ? "text-shDanger border-shDanger/40 bg-shDanger/10"
-                                               : "text-shPrimary border-shPrimary/40 bg-shPrimary/10";
+                const status = state === VACCINE_STATES.APPROVED ? (waiting ? "Current · new one received" : "Current")
+                  : waiting ? "Received" : state === VACCINE_STATES.EXPIRED ? "Expired" : "Missing";
+                const cls = bad ? "text-shDanger border-shDanger/40 bg-shDanger/10"
+                  : waiting && state !== VACCINE_STATES.APPROVED ? "text-shBlue border-shBlue/40 bg-shBlue/10"
+                  : "text-shPrimary border-shPrimary/40 bg-shPrimary/10";
                 return (
                   <div key={v.key} className="rounded-lg border border-shBorder p-4" style={{ background: "var(--sh-card-base)" }}
                        data-testid={`vquick-row-${v.key}`}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <p className="text-sm font-bold text-shText tracking-tight">{v.label}</p>
-                        <p className="text-[12px] text-shTextMuted">On file: <span className="text-shTextMuted">{fmtDate(current)}</span></p>
+                        <p className="text-[12px] text-shTextMuted">On file: <span className="text-shTextMuted">{fmtDate(expiry)}</span></p>
                       </div>
-                      <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${cls}`}>
-                        <i className={`fas ${missing || expired ? "fa-triangle-exclamation" : "fa-circle-check"} mr-1`}/>{status}
+                      <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${cls}`} data-testid={`vquick-status-${v.key}`}>
+                        <i className={`fas ${bad ? "fa-triangle-exclamation" : waiting && state !== VACCINE_STATES.APPROVED ? "fa-hourglass-half" : "fa-circle-check"} mr-1`}/>{status}
                       </span>
                     </div>
+                    {waiting && (
+                      <p className="mt-1 text-[12px] text-shBlue" data-testid={`vquick-received-${v.key}`}>
+                        <i className="fas fa-circle-check mr-1"/>We have this one and will review it. Uploading again replaces it.
+                      </p>
+                    )}
 
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-start">
                       <div>
                         <label className="text-[10px] font-black text-shTextMuted uppercase tracking-widest block mb-1">
                           New expiry date
                         </label>
-                        <input type="date" value={row.expires_on}
+                        <input type="date" value={row.expires_on} disabled={saving}
                                onChange={(e)=>setField(v.key, { expires_on: e.target.value })}
                                data-testid={`vquick-date-${v.key}`}
                                className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shPrimary/60"
@@ -209,16 +250,16 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                         <div className="flex flex-wrap gap-2">
                           {/* Sprint 110ff — camera-first: tap to snap the vet
                               paperwork directly instead of browsing files first. */}
-                          <label className="inline-flex items-center gap-2 cursor-pointer bg-shSecondary/15 hover:bg-shSecondary/25 text-shSecondary text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shSecondary/30 transition">
+                          <label className={`${saving ? "pointer-events-none opacity-50 " : ""}inline-flex items-center gap-2 cursor-pointer bg-shSecondary/15 hover:bg-shSecondary/25 text-shSecondary text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shSecondary/30 transition`}>
                             <i className="fas fa-camera"/> Take Photo
-                            <input type="file" accept="image/*" capture="environment"
+                            <input type="file" accept="image/*" capture="environment" disabled={saving}
                                    onChange={(e)=>onAddPhotos(v.key, e)}
                                    data-testid={`vquick-camera-${v.key}`}
                                    className="hidden"/>
                           </label>
-                          <label className="inline-flex items-center gap-2 cursor-pointer border border-shBorder text-shTextMuted hover:text-shText hover:border-shSecondary/40 text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded transition" style={{ background: "var(--sh-card-base)" }}>
+                          <label className={`${saving ? "pointer-events-none opacity-50 " : ""}inline-flex items-center gap-2 cursor-pointer border border-shBorder text-shTextMuted hover:text-shText hover:border-shSecondary/40 text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded transition`} style={{ background: "var(--sh-card-base)" }}>
                             <i className="fas fa-paperclip"/> Choose Files
-                            <input type="file" accept="image/*,application/pdf" multiple
+                            <input type="file" accept="image/*,application/pdf" multiple disabled={saving}
                                    onChange={(e)=>onAddPhotos(v.key, e)}
                                    data-testid={`vquick-photos-${v.key}`}
                                    className="hidden"/>
@@ -234,7 +275,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                           <div key={i} className="relative">
                             <img src={p} alt={`${v.label} cert ${i+1}`}
                                  className="w-16 h-16 object-cover rounded border border-shBorder"/>
-                            <button type="button" onClick={()=>removePhoto(v.key, i)}
+                            <button type="button" onClick={()=>removePhoto(v.key, i)} disabled={saving}
                                     data-testid={`vquick-remove-${v.key}-${i}`}
                                     className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-shDanger text-shText text-[10px] font-black flex items-center justify-center hover:bg-red-600">
                               <i className="fas fa-xmark"/>
@@ -267,9 +308,9 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
             </p>
           )}
 
-          {saving && filledRows.length > 1 && (
+          {saving && unsentCount > 1 && (
             <p className="text-[12px] text-shPrimary" data-testid="vquick-progress">
-              <i className="fas fa-spinner fa-spin mr-1"/>Uploading {done} / {filledRows.length}…
+              <i className="fas fa-spinner fa-spin mr-1"/>Uploading {done} / {unsentCount}…
             </p>
           )}
 
@@ -280,7 +321,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
             </PremiumButton>
             <PremiumButton variant="primary" onClick={submit} disabled={!canSubmit} data-testid="vquick-submit">
               {saving ? <><i className="fas fa-spinner fa-spin mr-2"/>Saving…</>
-                      : <><i className="fas fa-cloud-arrow-up mr-2"/>Submit for Review {filledRows.length > 0 ? `(${filledRows.length})` : ""}</>}
+                      : <><i className="fas fa-cloud-arrow-up mr-2"/>Submit for Review {unsentCount > 0 ? `(${unsentCount})` : ""}</>}
             </PremiumButton>
           </div>
         </div>

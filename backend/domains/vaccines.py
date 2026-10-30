@@ -112,9 +112,14 @@ def review_context(cert: Dict[str, Any], on_file: Any) -> Dict[str, Any]:
 
 
 async def store_client_upload(db, dog_id: str, vaccine: str, *, photos: List[str], expires_on: str,
-                              uploader: str, now_iso, staff: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              uploader: str, now_iso, staff: Optional[Dict[str, Any]] = None,
+                              upload_id: Optional[str] = None) -> Dict[str, Any]:
     """Write one vaccine's renewal without touching the others, and never over
-    a change made since we read it (a review, another upload)."""
+    a change made since we read it (a review, another upload).
+
+    `upload_id` makes a repeat harmless: the phone that lost the reply to an
+    upload that did save sends it again with the same id, and gets the stored
+    entry back marked ``replayed`` instead of a second copy (or a second email)."""
     for _ in range(3):
         dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
         if not dog:
@@ -124,7 +129,11 @@ async def store_client_upload(db, dog_id: str, vaccine: str, *, photos: List[str
             await db.dogs.update_one({"id": dog_id, "vaccine_certs": {"$not": {"$type": "object"}}}, {"$set": {"vaccine_certs": {}}})
             certs = {}
         prior = certs.get(vaccine)
+        if upload_id and isinstance(prior, dict) and prior.get("upload_id") == upload_id:
+            return {**prior, "replayed": True}
         entry = renewal_entry(prior, photos=photos, expires_on=expires_on, uploader=uploader, now=now_iso())
+        if upload_id:
+            entry["upload_id"] = upload_id
         if staff:   # who added it; never uploaded_by_admin — that would skip the review (audit #49)
             entry.update({"uploaded_by_staff": True, "uploaded_by_user_id": staff.get("id")})
         if len(bson.encode({**dog, "vaccine_certs": {**certs, vaccine: entry}})) > MAX_DOG_BYTES:

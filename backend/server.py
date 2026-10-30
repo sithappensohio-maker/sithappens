@@ -6399,6 +6399,7 @@ class VaccineUpdateIn(BaseModel):
     expires_on: str  # ISO date "YYYY-MM-DD"
     photo: Optional[str] = ""  # base64 data URL of cert photo (legacy single-photo path)
     photos: Optional[List[str]] = None  # multi-photo upload (preferred). When present, supersedes `photo`.
+    upload_id: Optional[str] = Field(default=None, max_length=80)  # same id on a retry: stored once
 
 
 @api.post("/portal/dogs/{dog_id}/vaccine-update")
@@ -6428,8 +6429,13 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     _validate_base64_uploads(photo_list)
     if not photo_list:
         raise HTTPException(status_code=400, detail="Please upload a vaccine certificate photo.")
-    await vaccines_domain.store_client_upload(db, dog_id, body.vaccine, photos=photo_list, expires_on=body.expires_on,
-                                              uploader=user.get("name", ""), now_iso=now_iso)
+    entry = await vaccines_domain.store_client_upload(db, dog_id, body.vaccine, photos=photo_list, expires_on=body.expires_on,
+                                                      uploader=user.get("name", ""), now_iso=now_iso,
+                                                      upload_id=(body.upload_id or "").strip() or None)
+    if entry.get("replayed"):
+        # A retry of an upload we already have (its reply was lost): same answer, no second email.
+        return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": entry.get("expires_on") or body.expires_on,
+                "status": entry.get("status") or "pending_review", "already_received": True}
 
     # Best-effort admin email: do not make the client wait on email delivery,
     # and never fail the upload if Resend/admin email is misconfigured.

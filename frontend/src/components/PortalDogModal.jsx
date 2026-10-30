@@ -3,6 +3,7 @@ import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
+import { vaccineState, VACCINE_STATES } from "../lib/vaccineStatus";
 import PremiumButton from "./premium/PremiumButton";
 
 const empty = {
@@ -17,10 +18,14 @@ const empty = {
 };
 
 
-function vaxStatusLabel(dateStr) {
-  if (!dateStr) return { text: "Not on file", cls: "bg-red-500/15 text-red-400" };
-  if (dateStr < todayISO()) return { text: "Expired", cls: "bg-red-500/15 text-red-400" };
-  return { text: "Valid", cls: "bg-shGreen/15 text-shGreen" };
+// A certificate the client already sent is "received", never "not on file":
+// reading only the approved dates told clients their upload had failed.
+function vaxStatusLabel(dog, type) {
+  const { state, renewal } = vaccineState(dog, type, todayISO());
+  if (state === VACCINE_STATES.PENDING) return { text: "Received — waiting for review", cls: "bg-shBlue/15 text-shBlue" };
+  if (state === VACCINE_STATES.EXPIRED) return { text: "Expired", cls: "bg-red-500/15 text-red-400" };
+  if (state === VACCINE_STATES.MISSING) return { text: "Not on file", cls: "bg-red-500/15 text-red-400" };
+  return { text: renewal ? "Valid · new one received" : "Valid", cls: "bg-shGreen/15 text-shGreen" };
 }
 function fmtVaxDate(iso) {
   if (!iso) return "—";
@@ -205,7 +210,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[["rabies","Rabies"],["bordetella","Bordetella"],["dhpp","DHPP (distemper/parvo combo)"]].map(([k,label]) => {
-                const st = vaxStatusLabel(form.vaccines?.[k]);
+                const st = vaxStatusLabel(form, k);
                 return (
                   <div key={k} className="rounded border border-shBorder p-2.5" style={{ background: "var(--sh-card-base)" }} data-testid={`pd-vax-status-${k}`}>
                     <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
