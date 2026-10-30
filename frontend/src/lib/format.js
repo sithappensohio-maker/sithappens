@@ -85,3 +85,12 @@ export function applyCase(s) {
 export function weekStartsOnMonday() {
   return (PREF().week_starts_on || "sunday") === "monday";
 }
+
+// Money boxes are text with a decimal keypad: a focused number box changes its value under
+// the scroll wheel. A leading "$" and thousands commas (1,200.00) are allowed; a comma
+// anywhere else ("89,99") is refused rather than read as 8999.
+export function parseAmount(v) {
+  const s = String(v ?? "").trim().replace(/^\$\s*/, "");
+  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$|^\.\d{1,2}$/.test(s)) return null;
+  return Number(s.replace(/,/g, ""));
+}

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { todayISO } from "../lib/date";
+import { parseAmount } from "../lib/format";
 import { useConfirm } from "../lib/useConfirm";
 import { dayLabel } from "./PaydayCard";
 
@@ -14,14 +15,7 @@ const FREQUENCIES = [["monthly", "Every month"], ["weekly", "Every week"], ["qua
 const METHODS = [["card", "Card"], ["transfer", "Bank transfer"], ["check", "Check"], ["cash", "Cash"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["other", "Other"]];
 const label = (pairs, key) => (pairs.find(([k]) => k === key) || [key, key])[1];
 
-// Money boxes are text with a decimal keypad: a focused number box changes its value under
-// the scroll wheel. A leading "$" and thousands commas (1,200.00) are allowed; a comma
-// anywhere else ("89,99") is refused rather than read as 8999.
-export function parseAmount(v) {
-  const s = String(v ?? "").trim().replace(/^\$\s*/, "");
-  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$|^\.\d{1,2}$/.test(s)) return null;
-  return Number(s.replace(/,/g, ""));
-}
+export { parseAmount };   // lives in lib/format now; the payday card uses it too
 const money = (n) => `$${(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const input = "w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm";

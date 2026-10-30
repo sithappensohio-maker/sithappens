@@ -30370,7 +30370,7 @@ BACKUP_COLLECTIONS = [
     "dog_programs", "training_sessions",
     "awarded_trophies", "referrals", "rewards_ledger",
     # Financial state
-    "expenses", "bills", "retail_sales", "credit_lots", "credit_adjustments",
+    "expenses", "bills", "payroll_payments", "retail_sales", "credit_lots", "credit_adjustments",
     "price_overrides", "pricing_tiers", "pricing_tier_prices", "payment_transactions", "checkout_groups",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
@@ -34501,6 +34501,9 @@ async def startup():
         (db.agreement_templates, "id", {"unique": True}),
         (db.agreement_signatures, [("client_id", 1), ("template_id", 1), ("template_version", 1)], {"unique": True}),
         (db.expenses, "stripe_balance_transaction_id", {"unique": True, "partialFilterExpression": {"stripe_balance_transaction_id": {"$type": "string"}}}),
+        # Staff → Payroll "Mark paid": one row per request, so a resent or double-clicked payment is recorded once.
+        (db.payroll_payments, "request_id", {"unique": True}),
+        (db.payroll_payments, [("payday", 1), ("user_id", 1)], {}),
         # Printify print-on-demand — the outbox worker's own due-row scan
         # (status + next_attempt_at), the webhook's own lookup back to a row
         # by Printify's order id, and the admin list screen's own lookup by
@@ -59524,6 +59527,8 @@ from domains.staff.payday import make_payday_domain, payday_brain_item  # noqa: 
 globals().update(make_payday_domain(
     api=api, db=db, business_today=business_today, get_owner_user_ids=_get_owner_user_ids,
     payroll_estimate=payroll_estimate, require_admin_and_permission=require_admin_and_permission,
+    now_iso=now_iso, TillAdjustmentIn=TillAdjustmentIn, add_till_adjustment=admin_register_till_adjustment,
+    delete_till_adjustment=delete_till_adjustment,
 ))
 
 from domains.finance.bills import make_bills_domain, bills_brain_item  # noqa: E402

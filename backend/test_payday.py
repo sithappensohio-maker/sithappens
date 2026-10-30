@@ -30,6 +30,9 @@ def setup_module():
 
 
 def teardown_module():
+    run(server.db.payroll_payments.delete_many({"request_id": {"$regex": f"^{TAG}"}}))
+    run(server.db.till_adjustments.delete_many({"reason": {"$regex": "^Payroll: paid Payday "}}))
+    run(server.db.daily_closeouts.delete_many({"tag": TAG}))
     run(server.db.time_clock_entries.delete_many({"tag": TAG}))
     run(server.db.users.delete_many({"tag": TAG}))
     run(server.db.task_dismissals.delete_many({"item_id": {"$regex": "^payday-due:"}, "dismissed_by": TAG}))
@@ -63,7 +66,8 @@ def _shift(user, day: date, hours, open_shift=False):
 
 
 def _fresh():
-    """Each test starts with none of this file's shifts or hidden payday cards."""
+    """Each test starts with none of this file's shifts, payments or hidden payday cards."""
+    run(server.db.payroll_payments.delete_many({"request_id": {"$regex": f"^{TAG}"}}))
     run(server.db.time_clock_entries.delete_many({"tag": TAG}))
     run(server.db.task_dismissals.delete_many({"item_id": {"$regex": "^payday-due:"}}))
 
@@ -346,3 +350,261 @@ def test_no_schedule_means_no_payday():
     assert body == {"configured": False}
     shown, hidden = _payday_items(admin)
     assert shown == [] and hidden == []
+
+
+# ───────────── Mark paid (owner, 2026-10-30: "nothing to mark her paid") ─────────────
+
+def _pay(admin, payday, person, amount, request_id=None, **extra):
+    body = {"user_id": person["id"], "amount": amount, "payment_method": "transfer",
+            "request_id": request_id or f"{TAG}-{uuid.uuid4().hex[:10]}", **extra}
+    return run(_http.post(f"/api/admin/payroll/payday/{payday}/payments", headers=_auth(admin), json=body))
+
+
+def _card_for(admin, person):
+    shown, _ = _payday_items(admin)
+    return [c for c in shown if person["name"] in c["subtitle"]]
+
+
+def test_marking_someone_paid_clears_what_they_are_owed_and_their_name_from_today():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    dana = _user(rate=18.0)
+    _shift(dana, today - timedelta(days=5), 5)        # $90 owed
+    _set_schedule(admin, "biweekly", today)
+    assert _card_for(admin, dana)
+
+    part = _pay(admin, today.isoformat(), dana, 50)
+    assert part.status_code == 200, part.text
+    row = _row(part.json(), dana)
+    assert (row["paid"], row["remaining"]) == (50.0, 40.0)
+    assert any(f"{dana['name']} $40.00" in c["subtitle"] for c in _card_for(admin, dana)), "the card shows what is left"
+
+    rest = _pay(admin, today.isoformat(), dana, 40)
+    row = _row(rest.json(), dana)
+    assert (row["paid"], row["remaining"]) == (90.0, 0.0)
+    assert [p["amount"] for p in row["payments"]] == [50.0, 40.0]
+    assert _card_for(admin, dana) == [], "nobody marked paid is nagged about"
+    # Not an expense: the P&L already counts payroll from timecards.
+    assert run(server.db.expenses.count_documents({"description": {"$regex": dana["name"]}})) == 0
+
+
+def test_the_card_goes_once_everyone_is_paid():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    eli = _user(rate=20.0)
+    _shift(eli, today - timedelta(days=3), 2)
+    body = _set_schedule(admin, "biweekly", today)
+    for u in body["per_user"]:                        # everyone with hours this period, not just this file's
+        if u["remaining"] <= 0.005:
+            continue
+        res = run(_http.post(f"/api/admin/payroll/payday/{today.isoformat()}/payments", headers=_auth(admin),
+                             json={"user_id": u["user_id"], "amount": u["remaining"], "payment_method": "cash",
+                                   "request_id": f"{TAG}-{uuid.uuid4().hex[:10]}"}))
+        assert res.status_code == 200, res.text
+    shown, _ = _payday_items(admin)
+    assert shown == []
+    assert res.json()["totals"]["remaining"] == 0
+
+
+def test_the_same_mark_paid_sent_twice_is_recorded_once():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    fay = _user(rate=20.0)
+    _shift(fay, today - timedelta(days=2), 3)
+    _set_schedule(admin, "biweekly", today)
+    rid = f"{TAG}-{uuid.uuid4().hex[:10]}"
+    first, again = _pay(admin, today.isoformat(), fay, 60, rid), _pay(admin, today.isoformat(), fay, 60, rid)
+    assert first.json()["payment"]["id"] == again.json()["payment"]["id"]
+    assert run(server.db.payroll_payments.count_documents({"request_id": rid})) == 1
+    assert _row(again.json(), fay)["paid"] == 60.0
+
+
+def test_cash_from_the_register_drawer_lowers_the_drawer_and_undo_puts_it_back():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    gus = _user(rate=20.0)
+    _shift(gus, today - timedelta(days=2), 4)
+    _set_schedule(admin, "biweekly", today)
+    paid_on = "2003-03-10"   # a past day nobody closed out, so the real register day is untouched
+    res = _pay(admin, today.isoformat(), gus, 80, payment_method="cash", from_cash_drawer=True, paid_on=paid_on)
+    assert res.status_code == 200, res.text
+    payment = res.json()["payment"]
+    adj = run(server.db.till_adjustments.find_one({"id": payment["till_adjustment_id"]}, {"_id": 0}))
+    assert adj and (adj["direction"], adj["amount"], adj["date"]) == ("remove", 80.0, paid_on)
+    assert gus["name"] in adj["reason"]
+
+    check = _pay(admin, today.isoformat(), gus, 1, payment_method="check", from_cash_drawer=True)
+    assert check.json()["payment"]["till_adjustment_id"] is None, "only cash comes out of the drawer"
+
+    undo = run(_http.delete(f"/api/admin/payroll/payments/{payment['id']}", headers=_auth(admin)))
+    assert undo.status_code == 200, undo.text
+    assert run(server.db.till_adjustments.count_documents({"id": adj["id"]})) == 0
+    assert run(server.db.payroll_payments.count_documents({"id": payment["id"]})) == 0
+    assert _row(undo.json(), gus)["paid"] == 1.0
+    assert run(server.db.deleted_records.count_documents({"collection": "payroll_payments", "record_id": payment["id"]})) == 1
+
+
+def test_a_drawer_payment_on_a_closed_out_day_is_refused_with_nothing_recorded():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    hal = _user(rate=20.0)
+    _shift(hal, today - timedelta(days=2), 4)
+    _set_schedule(admin, "biweekly", today)
+    closed = "2003-03-11"
+    run(server.db.daily_closeouts.insert_one({"id": f"{TAG}-close", "date": closed, "status": "closed", "tag": TAG}))
+    try:
+        res = _pay(admin, today.isoformat(), hal, 80, payment_method="cash", from_cash_drawer=True, paid_on=closed)
+        assert res.status_code >= 400, res.text
+        assert _row(_set_schedule(admin, "biweekly", today), hal)["paid"] == 0
+    finally:
+        run(server.db.daily_closeouts.delete_one({"id": f"{TAG}-close"}))
+
+
+def test_mark_paid_refuses_the_wrong_payday_someone_not_owed_a_future_date_and_no_access():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    ivy = _user(rate=20.0)
+    stranger = _user(rate=20.0)
+    _shift(ivy, today - timedelta(days=2), 1)
+    _set_schedule(admin, "biweekly", today)
+    assert _pay(admin, (today - timedelta(days=14)).isoformat(), ivy, 20).status_code == 422, "before the schedule began"
+    assert _pay(admin, (today - timedelta(days=3)).isoformat(), ivy, 20).status_code == 422, "not a payday"
+    assert _pay(admin, today.isoformat(), stranger, 20).status_code == 404
+    assert _pay(admin, today.isoformat(), ivy, 20, paid_on=(today + timedelta(days=1)).isoformat()).status_code == 422
+    staff = _user(role="employee", staff_role="trainer")
+    assert _pay(staff, today.isoformat(), ivy, 20).status_code == 403
+    assert _row(_set_schedule(admin, "biweekly", today), ivy)["paid"] == 0
+
+
+def test_someone_paid_whose_hours_were_then_removed_still_shows_their_payment():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    jo = _user(rate=20.0)
+    shift = _shift(jo, today - timedelta(days=2), 2)
+    _set_schedule(admin, "biweekly", today)
+    _pay(admin, today.isoformat(), jo, 40)
+    run(server.db.time_clock_entries.delete_one({"id": shift["id"]}))
+    row = _row(_set_schedule(admin, "biweekly", today), jo)
+    assert row and (row["gross"], row["paid"], row["remaining"]) == (0.0, 40.0, -40.0)
+
+
+
+def test_a_w2_payment_of_take_home_settles_the_gross_and_takes_only_the_cash_from_the_drawer():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    kim = _user(rate=20.0, tax_status="w2")
+    _shift(kim, today - timedelta(days=2), 5)          # $100 gross
+    body = _set_schedule(admin, "biweekly", today)
+    assert _row(body, kim)["tax_status"] == "w2"
+    res = _pay(admin, today.isoformat(), kim, 100, withheld=23.9, payment_method="cash", from_cash_drawer=True,
+               paid_on="2003-03-12")
+    assert res.status_code == 200, res.text
+    payment, row = res.json()["payment"], _row(res.json(), kim)
+    assert (row["paid"], row["remaining"]) == (100.0, 0.0), "the withheld part is the IRS's, not still owed to her"
+    assert payment["handed_over"] == 76.1
+    adj = run(server.db.till_adjustments.find_one({"id": payment["till_adjustment_id"]}, {"_id": 0}))
+    assert adj["amount"] == 76.1, "only the cash handed over left the drawer"
+    assert _pay(admin, today.isoformat(), kim, 10, withheld=10).status_code == 422
+
+
+def test_an_earlier_payday_can_be_opened_and_paid_late():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    lou = _user(rate=10.0)
+    earlier = today - timedelta(days=14)
+    _save_row("biweekly", today, today - timedelta(days=60))
+    _shift(lou, earlier - timedelta(days=3), 2)        # paid on the earlier payday
+    _shift(lou, today - timedelta(days=3), 4)          # paid today
+    old = run(_http.get(f"/api/admin/payroll/payday?payday={earlier.isoformat()}", headers=_auth(admin))).json()
+    assert old["payday"] == earlier.isoformat() and old["is_latest"] is False
+    assert _row(old, lou)["remaining"] == 20.0
+    late = _pay(admin, earlier.isoformat(), lou, 20)
+    assert late.status_code == 200 and _row(late.json(), lou)["remaining"] == 0
+    now = run(_http.get("/api/admin/payroll/payday", headers=_auth(admin))).json()
+    assert now["is_latest"] is True and now["previous_payday"] == earlier.isoformat()
+    assert _row(now, lou)["remaining"] == 40.0, "a late payment for the earlier payday doesn't count against today's"
+
+
+def test_payments_still_count_after_the_schedule_changes_on_payday():
+    """Paid on the old schedule's payday a week ago, then that same day the schedule moved to
+    paydays on other days. The new schedule's first payday pays from where the old paydays
+    stopped, so it holds the hours already paid a week ago: those must not be owed again."""
+    _fresh()
+    today = server.business_today()
+    old_payday = today - timedelta(days=7)
+    first_new = today - timedelta(days=3)               # weekly from here: not a payday on the change day
+    admin = _user(role="admin")
+    max_ = _user(rate=10.0)
+    _save_row("biweekly", old_payday, today - timedelta(days=60))
+    _shift(max_, old_payday - timedelta(days=3), 6)    # $60, paid on the old payday
+    _shift(max_, today - timedelta(days=5), 2)         # $20, worked after it
+    assert _pay(admin, old_payday.isoformat(), max_, 60).status_code == 200
+    # The change exactly as saved_schedule writes it when saved on the old payday.
+    from domains.staff.payday import saved_schedule
+    old = run(server.db.settings.find_one({"id": "payroll_schedule"}, {"_id": 0}))
+    run(server.db.settings.replace_one({"id": "payroll_schedule"}, saved_schedule(old, "weekly", first_new, old_payday)))
+    body = run(_http.get("/api/admin/payroll/payday", headers=_auth(admin))).json()
+    assert body["payday"] == first_new.isoformat()
+    assert body["period_start"] <= (old_payday - timedelta(days=3)).isoformat(), "the period holds the paid hours"
+    row = _row(body, max_)
+    assert (row["gross"], row["paid"], row["remaining"]) == (80.0, 60.0, 20.0)
+    assert [p["payday"] for p in row["payments"]] == [old_payday.isoformat()], "and the payment can still be undone"
+
+
+def test_a_retry_after_a_crash_takes_the_cash_from_the_drawer_once():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    ned = _user(rate=20.0)
+    _shift(ned, today - timedelta(days=2), 2)
+    _set_schedule(admin, "biweekly", today)
+    rid = f"{TAG}-{uuid.uuid4().hex[:10]}"
+    # As if the server stopped after saving the payment and before the drawer entry.
+    run(server.db.payroll_payments.insert_one({
+        "id": f"{TAG}-crashed", "request_id": rid, "payday": today.isoformat(), "period_start": "2000-01-01",
+        "period_end": "2000-01-02", "user_id": ned["id"], "name": ned["name"], "amount": 40.0, "withheld": 0.0,
+        "handed_over": 40.0, "payment_method": "cash", "paid_on": "2003-03-13", "from_cash_drawer": True,
+        "till_adjustment_id": None, "created_at": "2026-10-30T12:00:00"}))
+    for _ in range(2):
+        res = _pay(admin, today.isoformat(), ned, 40, rid, payment_method="cash", from_cash_drawer=True, paid_on="2003-03-13")
+        assert res.status_code == 200, res.text
+    adjs = run(server.db.till_adjustments.find({"notes": f"payroll_request:{rid}"}, {"_id": 0}).to_list(None))
+    assert len(adjs) == 1 and adjs[0]["amount"] == 40.0
+    assert run(server.db.payroll_payments.find_one({"request_id": rid}))["till_adjustment_id"] == adjs[0]["id"]
+
+
+def test_undoing_a_payment_needs_the_delete_records_permission():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    oli = _user(rate=20.0)
+    _shift(oli, today - timedelta(days=2), 2)
+    _set_schedule(admin, "biweekly", today)
+    payment = _pay(admin, today.isoformat(), oli, 40).json()["payment"]
+    bookkeeper = _user(role="employee", staff_role="manager",
+                       permission_overrides={"finance_reports": True, "delete_records": False})
+    assert server._perms_for(bookkeeper)["finance_reports"] and not server._perms_for(bookkeeper)["delete_records"]
+    assert run(_http.delete(f"/api/admin/payroll/payments/{payment['id']}", headers=_auth(bookkeeper))).status_code == 403
+    assert run(server.db.payroll_payments.count_documents({"id": payment["id"]})) == 1
+
+
+def test_someone_who_worked_with_no_pay_rate_is_flagged_not_shown_as_paid():
+    _fresh()
+    today = server.business_today()
+    admin = _user(role="admin")
+    pia = _user()                                       # no hourly rate
+    _shift(pia, today - timedelta(days=2), 3)
+    body = _set_schedule(admin, "biweekly", today)
+    row = _row(body, pia)
+    assert row["no_rate"] is True and row["paid"] == 0
+    cards = _payday_items(admin)[0]
+    assert cards and f"{pia['name']}: no pay rate set" in cards[0]["subtitle"]
