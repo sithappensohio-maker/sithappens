@@ -29899,6 +29899,17 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     except Exception as e:
         logger.warning("today-brain low-stock check failed: %s", e)
 
+    # 5i. Payday: who is owed what. It shows pay (finance_reports) and opens
+    # Staff → Payroll, so only for someone who can open that screen.
+    perms = _perms_for(_)
+    if perms.get("finance_reports") and perms.get("payroll") and await _feature_enabled("staff_portal"):
+        try:
+            payday_item = payday_brain_item(await payday_summary(_), now_dt.isoformat())
+            if payday_item:
+                items.append(payday_item)
+        except Exception as e:
+            logger.warning("today-brain payday failed: %s", e)
+
     # 6. Unanswered homework questions (warn)
     try:
         unanswered = 0
@@ -30108,8 +30119,8 @@ def _today_brain_signature(item: dict) -> str:
     if kind in ("monday_digest", "no_checkin", "steps_incomplete", "missing_closeout"):
         # Date-scoped — these auto-roll over at midnight UTC anyway.
         return f"{kind}:{business_today().isoformat()}"
-    if kind in ("new_signup", "prepaid_sessions_closed"):
-        # One-time dismiss tied to the client id — no state to track.
+    if kind in ("new_signup", "prepaid_sessions_closed", "payday_due"):
+        # One-time dismiss tied to the id (client id, or the payday's date).
         return "once"
     # Fallback: hash of title+subtitle so unknown item kinds still behave sanely.
     return f"hash:{hash(title + '|' + subtitle) & 0xFFFFFFFF:08x}"
@@ -59475,6 +59486,13 @@ globals().update(make_staff_domain(
     db=db, now_iso=now_iso, require_admin=require_admin,
     require_admin_and_permission=require_admin_and_permission,
     require_employee_or_admin=require_employee_or_admin,
+))
+
+from domains.staff.payday import make_payday_domain, payday_brain_item  # noqa: E402
+
+globals().update(make_payday_domain(
+    api=api, db=db, business_today=business_today, get_owner_user_ids=_get_owner_user_ids,
+    payroll_estimate=payroll_estimate, require_admin_and_permission=require_admin_and_permission,
 ))
 
 # Trophies (domains/engagement/trophies) — pure move; names re-exported below.

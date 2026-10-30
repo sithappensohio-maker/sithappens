@@ -50,6 +50,7 @@ export const ACTION_KIND_LABEL = {
   recurring_renewal_missed: "Weekly Schedule — Days Not Booked",
   prepaid_sessions_closed: "Prepaid Lessons Closed",
   low_stock: "Low Stock",
+  payday_due: "Payday",
 };
 
 export default function ActionRow({ item, onOpen, onDismiss, busy }) {

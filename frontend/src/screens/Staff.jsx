@@ -13,6 +13,8 @@ import EstimatedTaxPayments from "../components/EstimatedTaxPayments";
 import FederalEstimatedTaxCard from "../components/FederalEstimatedTaxCard";
 import OhioEstimatedTaxCard from "../components/OhioEstimatedTaxCard";
 import { todayISO, daysAgoISO } from "../lib/date";
+import { screenTabFor, clearScreenTab } from "../lib/todayBrain";
+import PaydayCard from "../components/PaydayCard";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
 import { toast } from "sonner";
@@ -109,7 +111,8 @@ export default function Staff() {
   const [userFilter, setUserFilter] = useState("");
   const [tcData, setTcData] = useState(null);
   const [editingEntry, setEditingEntry] = useState(null);
-  const [subtab, setSubtab] = useState("ops");
+  const [subtab, setSubtab] = useState(() => screenTabFor("staff") || "ops");
+  useEffect(() => { clearScreenTab("staff"); }, []);
   const [paySnap, setPaySnap] = useState(null);
   const [employeeFilter, setEmployeeFilter] = useState("");
 
@@ -1170,6 +1173,8 @@ function PayrollTab() {
     finally { setBusy(false); }
   };
   return (
+    <div className="space-y-4">
+    <PaydayCard/>
     <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 space-y-3" data-testid="payroll-tab">
       <h4 className="text-shText font-black uppercase italic"><i className="fas fa-file-csv text-shPrimary mr-2"/>Payroll CSV Export</h4>
       <p className="text-[14px] text-shTextMuted">Generate a pay-period CSV with employee, hours, hourly rate, gross pay, shift count, and late/early flags.</p>
@@ -1188,6 +1193,7 @@ function PayrollTab() {
         </button>
       </div>
       {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest">{err}</p>}
+    </div>
     </div>
   );
 }

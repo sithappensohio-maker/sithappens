@@ -30,7 +30,7 @@ import HuskyDogImage from "../components/brand/HuskyDogImage";
 import PageHero from "../components/PageHero";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
-import { showMondayBriefResult } from "../lib/todayBrain";
+import { showMondayBriefResult, openScreenCTA } from "../lib/todayBrain";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -598,7 +598,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         const t = it.cta?.type;
         if (t === "open_dog" && it.cta.id) onJumpToDog(it.cta.id);
         else if (t === "open_client" && it.cta.id) onJumpToClient(it.cta.id);
-        else if (t === "open_screen" && it.cta.screen) onNavigate(it.cta.screen);
+        else if (t === "open_screen" && it.cta.screen) openScreenCTA(it.cta, onNavigate);
         else if (t === "send_monday_digest") {
           api.post("/admin/homework/send-monday-digest")
             .then(({ data }) => showMondayBriefResult(data))

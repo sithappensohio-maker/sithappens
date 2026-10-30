@@ -43,6 +43,31 @@ export function scrollToTodaySection(testid, { tries = 60, interval = 120 } = {}
   tick();
 }
 
+/** A CTA can name a tab on its screen ({screen, tab}); the screen opens on it. */
+export const SCREEN_TAB_KEY = "sh_screen_tab";
+
+export function openScreenCTA(cta, onNavigate) {
+  if (cta.tab) {
+    try { sessionStorage.setItem(SCREEN_TAB_KEY, JSON.stringify({ screen: cta.screen, tab: cta.tab })); } catch { /* ignore */ }
+  }
+  onNavigate?.(cta.screen);
+}
+
+/** The tab a CTA asked `screen` to open on, or null. Read-only, so it is safe
+ * in a useState initializer; call clearScreenTab once the screen has opened. */
+export function screenTabFor(screen) {
+  try {
+    const t = JSON.parse(sessionStorage.getItem(SCREEN_TAB_KEY) || "null");
+    return t?.screen === screen ? t.tab || null : null;
+  } catch { return null; }
+}
+
+export function clearScreenTab(screen) {
+  if (screenTabFor(screen)) {
+    try { sessionStorage.removeItem(SCREEN_TAB_KEY); } catch { /* ignore */ }
+  }
+}
+
 export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate }) {
   const cta = item?.cta || {};
   const section = TODAY_SECTION_BY_KIND[item?.kind];
@@ -54,7 +79,7 @@ export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate
   }
   if (cta.type === "open_dog" && cta.id) onJumpToDog?.(cta.id);
   else if (cta.type === "open_client" && cta.id) onJumpToClient?.(cta.id);
-  else if (cta.type === "open_screen" && cta.screen) onNavigate?.(cta.screen);
+  else if (cta.type === "open_screen" && cta.screen) openScreenCTA(cta, onNavigate);
   else if (cta.type === "send_monday_digest") {
     api.post("/admin/homework/send-monday-digest")
       .then(({ data }) => showMondayBriefResult(data))
