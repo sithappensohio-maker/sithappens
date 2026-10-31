@@ -3190,6 +3190,10 @@ html[data-theme-target-staff-portal="true"] .sh-theme-sidebar-header-staff::befo
 .sh-theme-sidebar-header-filled-compact::before {
   background-size: cover;
   opacity: 1;
+  /* Fade the bottom edge into the sidebar so an opaque photo doesn't end
+     in a hard line above the nav. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
 }
 .sh-theme-sidebar-header-filled {
   min-height: 112px;

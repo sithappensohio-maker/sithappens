@@ -37,9 +37,13 @@ export default function NeonEdge({
   // DIFFERENT property resolved to "none". --theme-asset-card-frame (set
   // by applyBranding, same as every other asset slot) still supplies the
   // actual image URL — this just decides which border style to use.
-  // border-image ignores border-radius, so an uploaded frame must bake its
-  // own rounded/transparent corners into the art — spelled out in the
-  // image guide's prompt for this slot.
+  // border-image ignores border-radius, so square-cornered frame art used
+  // to poke out past the card's rounded corners. clip-path: border-box
+  // clips the card to its own rounded border box, trimming any frame to
+  // the card's shape. It also clips the outer neon bloom — intended: the
+  // frame art replaces the neon edge. (A child element can't carry the
+  // frame instead: overflow-hidden clips at the padding box, inside the
+  // border, so the frame would vanish.)
   //
   // frameWidth lets a genuinely small call site (MiniActionCard's 68px
   // Quick Actions tiles, AccountsReceivable's compact KPI tiles/toast)
@@ -66,6 +70,7 @@ export default function NeonEdge({
         borderImageWidth: frameWidth,
         borderImageOutset: "0",
         borderImageRepeat: "round",
+        clipPath: "border-box",
       }
     : { border: `1px solid rgba(${accentRgb},${edgeAlpha})` };
 

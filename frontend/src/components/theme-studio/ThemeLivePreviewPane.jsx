@@ -33,6 +33,7 @@ export default function ThemeLivePreviewPane({ draft }) {
     borderImageWidth: "6px",
     borderImageOutset: "0",
     borderImageRepeat: "round",
+    clipPath: "border-box",
   } : null;
 
   const scopedStyle = {
