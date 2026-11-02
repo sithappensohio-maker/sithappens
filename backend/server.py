@@ -36220,6 +36220,21 @@ def _year_bucket(by_day: List[Dict[str, Any]], key_fn) -> Dict[str, Dict[str, An
     return buckets
 
 
+def _resolve_report_year(year: Optional[int]) -> int:
+    """Shared year-param validation for the Finance/Analytics YTD reports.
+
+    Rejects anything that isn't a real, non-future calendar year up front —
+    an unvalidated future year would silently invert a start/end range, and
+    an out-of-range year would crash date.fromisoformat downstream instead
+    of erroring cleanly here. Shared so year_overview and analytics_overview
+    can never drift on what counts as a valid year."""
+    today = business_today()
+    y = int(year) if year is not None else today.year
+    if y < 2000 or y > today.year:
+        raise HTTPException(status_code=400, detail=f"year must be between 2000 and {today.year}")
+    return y
+
+
 @api.get("/transactions/year-overview")
 async def year_overview(
     _: dict = Depends(require_admin_and_permission("finance_reports")),
@@ -36238,14 +36253,7 @@ async def year_overview(
     December — the card just naturally fills in as the year goes on.
     """
     today = business_today()
-    y = int(year) if year is not None else today.year
-    # Reject anything that isn't a real, non-future calendar year up front —
-    # `y < today.year` below only has a past-year/current-year branch, so an
-    # unvalidated future year would silently invert the range (year_start >
-    # year_end) and an out-of-range year would crash date.fromisoformat
-    # downstream instead of erroring cleanly here.
-    if y < 2000 or y > today.year:
-        raise HTTPException(status_code=400, detail=f"year must be between 2000 and {today.year}")
+    y = _resolve_report_year(year)
     year_start = f"{y}-01-01"
     year_end = f"{y}-12-31" if y < today.year else today.isoformat()
 
@@ -36304,6 +36312,389 @@ async def year_overview(
             "net_total": prior["net_total"],
             "gross_change_pct": _pct_change(current["completed_total"], prior["completed_total"]),
             "net_change_pct": _pct_change(current["net_total"], prior["net_total"]),
+        },
+    }
+
+
+# ──────────────────────────── Analytics Overview ───────────────────────────
+# Owner request 2026-11-02 — a single read-only "what's going on" page:
+# visits, occupancy, new-vs-returning clients, service mix, top sellers and a
+# few all-time "fun stat" tiles. Every number here is built on the SAME
+# canonical helpers Finance/Clients/Register already use (visit definition,
+# revenue-net-of-tax, capacity math) so this page can never disagree with
+# those surfaces.
+
+def _visit_clause() -> Dict[str, Any]:
+    """A visit is any booking that actually happened: checked out, or a
+    terminal completed/checked_out status from the pre-checkout era. The
+    exact definition /admin/client-visit-counts and the trophy engine use —
+    kept as one clause so this page's visit totals can never drift from
+    theirs."""
+    return {"$or": [{"checked_out_at": {"$nin": [None, ""]}}, {"status": {"$in": ["completed", "checked_out"]}}]}
+
+
+async def _visit_rows_in_range(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    return await _booking_rows_anywhere(
+        {**_visit_clause(), "date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0, "date": 1, "client_id": 1, "dog_id": 1, "service_type": 1, "checked_in_at": 1},
+        limit=50000,
+        sort_field="date",
+    )
+
+
+async def _first_visit_date_for_clients(client_ids: List[str]) -> Dict[str, str]:
+    """Earliest VISIT date (not booking-creation date) per client, across hot
+    + archived bookings — tells a "new" client (first-ever visit this month)
+    from a "returning" one for the New vs Returning chart."""
+    out: Dict[str, str] = {}
+    if not client_ids:
+        return out
+    rows = await _booking_rows_anywhere(
+        {**_visit_clause(), "client_id": {"$in": client_ids}},
+        {"_id": 0, "client_id": 1, "date": 1},
+        limit=50000,
+        sort_field="date",
+    )
+    for r in rows:
+        cid = r.get("client_id")
+        d = r.get("date") or ""
+        if cid and d and (cid not in out or d < out[cid]):
+            out[cid] = d
+    return out
+
+
+async def _occupancy_rate_this_month() -> Optional[float]:
+    """Average daily occupancy this month-to-date across daycare + boarding
+    capacity. Same stay-overlap math _booking_days_count_filtered uses for
+    live availability, but counting every non-cancelled booking on a day —
+    not only ones still checked in — since this looks BACKWARD at days that
+    already happened rather than at who still holds a slot right now."""
+    today = business_today()
+    month_start = today.replace(day=1).isoformat()
+    month_end = today.isoformat()
+    settings = await get_settings()
+    daycare_cap = max(0, int(settings.get("daycare_capacity", DAYCARE_CAPACITY) or 0))
+    boarding_cap = max(0, int(settings.get("boarding_capacity", 10) or 0))
+    total_cap = daycare_cap + boarding_cap
+    if total_cap <= 0:
+        return None
+
+    async def _daily_counts(service_type: str) -> Dict[str, int]:
+        q = {
+            "status": {"$in": ["approved", "completed"]},
+            **_service_type_clause(service_type),
+            **_overlapping_stay_query(month_start, month_end),
+        }
+        counts: Dict[str, int] = {}
+        async for b in db.bookings.find(q, {"_id": 0, "date": 1, "end_date": 1}):
+            for d in _dates_in_range(b["date"], b.get("end_date")):
+                if month_start <= d <= month_end:
+                    counts[d] = counts.get(d, 0) + 1
+        return counts
+
+    daycare_days = await _daily_counts("daycare")
+    boarding_days = await _daily_counts("boarding")
+
+    totals: List[float] = []
+    cur = date.fromisoformat(month_start)
+    end_d = date.fromisoformat(month_end)
+    while cur <= end_d:
+        iso = cur.isoformat()
+        occupied = daycare_days.get(iso, 0) + boarding_days.get(iso, 0)
+        totals.append(min(1.0, occupied / total_cap))
+        cur += timedelta(days=1)
+    return round(sum(totals) / len(totals) * 100, 1) if totals else None
+
+
+async def _top_sellers_for_range(start_date: str, end_date: str, *, limit: int = 5) -> List[Dict[str, Any]]:
+    """Top-selling products across BOTH channels for a date range: the
+    register (pos_sales.line_items, keyed by business_date) and the online
+    Shop (shop_orders.lines, keyed by UTC created_at) — merged by product id
+    so a unit sold in-store and one sold online count toward the same
+    product. Reuses each channel's own per-line math (the register's
+    sales-by-product report; the Shop's units_by_ref) so this can never
+    disagree with either one's own numbers."""
+    merged: Dict[str, Dict[str, Any]] = {}
+
+    sales = await db.pos_sales.find(
+        {"business_date": {"$gte": start_date, "$lte": end_date}, "status": {"$ne": "voided"}},
+        {"_id": 0, "line_items": 1},
+    ).to_list(50000)
+    for sale in sales:
+        for line in sale.get("line_items") or []:
+            if line.get("kind") != "retail" or not line.get("product_id"):
+                continue
+            qty = float(line.get("qty") or 0)
+            if qty <= 0:
+                continue
+            net_qty = max(0.0, qty - float(line.get("returned_qty") or 0))
+            if net_qty <= 0:
+                continue
+            pid = line["product_id"]
+            row = merged.setdefault(pid, {"product_id": pid, "name": line.get("description") or "", "units": 0.0, "revenue": 0.0})
+            row["units"] += net_qty
+            row["revenue"] += float(line.get("net_amount") or 0) * (net_qty / qty)
+
+    start_utc, end_utc = _business_range_utc_bounds(start_date, end_date)
+    online_orders = await shop_analytics_reports._paid_orders(db, start_utc, end_utc)
+    for ref, row in shop_analytics_reports.units_by_ref(online_orders).items():
+        # Only physical merchandise — a credit pack, training-program, or
+        # gift-card line shares the same ref_id keyspace but isn't a
+        # "product", and the register side above only ever contributes
+        # kind == "retail" lines, so mixing those cart kinds in here would
+        # merge two different things under one product leaderboard.
+        if row.get("kind") != "product":
+            continue
+        merged_row = merged.setdefault(ref, {"product_id": ref, "name": row.get("name") or "", "units": 0.0, "revenue": 0.0})
+        if not merged_row["name"]:
+            merged_row["name"] = row.get("name") or ""
+        merged_row["units"] += float(row.get("units") or 0)
+        merged_row["revenue"] += float(row.get("revenue") or 0)
+
+    out = [
+        {"product_id": r["product_id"], "name": r["name"] or "Unknown item", "units": round(r["units"], 1), "revenue": round(r["revenue"], 2)}
+        for r in merged.values() if r["units"] > 0
+    ]
+    out.sort(key=lambda r: (-r["revenue"], -r["units"], r["name"]))
+    return out[:limit]
+
+
+async def _dogs_served_all_time() -> int:
+    ids = set(await db.bookings.distinct("dog_id", _visit_clause()))
+    try:
+        ids |= set(await db.bookings_archive.distinct("dog_id", _visit_clause()))
+    except Exception:
+        pass
+    ids.discard(None)
+    return len(ids)
+
+
+async def _busiest_day_ever() -> Optional[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for coll in (db.bookings, db.bookings_archive):
+        try:
+            async for row in coll.aggregate([
+                {"$match": _visit_clause()},
+                {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+            ]):
+                d = row.get("_id")
+                if d:
+                    counts[d] = counts.get(d, 0) + int(row.get("count") or 0)
+        except Exception:
+            continue
+    if not counts:
+        return None
+    best_date = max(counts, key=lambda d: counts[d])
+    return {"date": best_date, "count": counts[best_date]}
+
+
+async def _biggest_single_sale() -> Optional[Dict[str, Any]]:
+    rows = await db.retail_sales.find({}, {"_id": 0, "amount": 1, "date": 1, "description": 1}).sort("amount", -1).limit(1).to_list(1)
+    if not rows or not rows[0].get("amount"):
+        return None
+    r = rows[0]
+    return {"amount": round(float(r.get("amount") or 0), 2), "date": r.get("date"), "description": r.get("description") or ""}
+
+
+_ANALYTICS_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_ANALYTICS_TIME_BANDS = ["Morning", "Midday", "Afternoon", "Evening"]
+
+
+def _analytics_time_band(hour: int) -> int:
+    if hour < 11:
+        return 0
+    if hour < 14:
+        return 1
+    if hour < 18:
+        return 2
+    return 3
+
+
+@api.get("/analytics/overview")
+async def analytics_overview(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    """The Analytics page's one data source: visits trend, occupancy,
+    new-vs-returning clients, service mix, top sellers and all-time fun
+    stats. `year` picks the YTD window (validated the same way as
+    /transactions/year-overview); the all-time tiles (dogs served, busiest
+    day ever, biggest sale, avg lifetime spend) ignore it on purpose —
+    they're "ever", not "this year"."""
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    visit_rows = await _visit_rows_in_range(year_start, year_end)
+    total_visits = len(visit_rows)
+
+    prior_year = y - 1
+    try:
+        prior_through = date.fromisoformat(year_end).replace(year=prior_year)
+    except ValueError:
+        prior_through = date(prior_year, 2, 28)  # Feb 29 on a non-leap prior year
+    prior_visits = len(await _visit_rows_in_range(f"{prior_year}-01-01", prior_through.isoformat()))
+    visits_yoy_pct = round((total_visits - prior_visits) / prior_visits * 100, 1) if prior_visits else None
+
+    # Visits trend — every month Jan..(this one), $0/zero-visit months
+    # included so the chart never reads a quiet month as missing data.
+    visits_by_month_counts: Dict[str, int] = {}
+    weekday_counts = [0] * 7
+    heat_grid = [[0] * 4 for _ in range(7)]
+    month_client_sets: Dict[str, set] = {}
+    for r in visit_rows:
+        d = r.get("date") or ""
+        if len(d) >= 7:
+            visits_by_month_counts[d[:7]] = visits_by_month_counts.get(d[:7], 0) + 1
+            cid = r.get("client_id")
+            if cid:
+                month_client_sets.setdefault(d[:7], set()).add(cid)
+        try:
+            weekday_counts[date.fromisoformat(d).weekday()] += 1
+        except Exception:
+            pass
+        ts = r.get("checked_in_at")
+        if ts:
+            try:
+                dt_local = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if dt_local.tzinfo is None:
+                    dt_local = dt_local.replace(tzinfo=timezone.utc)
+                dt_local = dt_local.astimezone(BUSINESS_TZ)
+                heat_grid[dt_local.weekday()][_analytics_time_band(dt_local.hour)] += 1
+            except Exception:
+                pass
+
+    by_month = [
+        {"month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"),
+         "total": visits_by_month_counts.get(f"{y}-{m:02d}", 0)}
+        for m in range(1, end_month + 1)
+    ]
+
+    # Busiest weekday — average visits per occurrence of that weekday so far
+    # this year (not a raw sum, which would just favor whichever weekday has
+    # happened the most times).
+    weekday_occurrences = [0] * 7
+    cur = date.fromisoformat(year_start)
+    end_d = date.fromisoformat(year_end)
+    while cur <= end_d:
+        weekday_occurrences[cur.weekday()] += 1
+        cur += timedelta(days=1)
+    busiest_weekday = None
+    if any(weekday_occurrences):
+        idx = max(range(7), key=lambda i: (weekday_counts[i] / weekday_occurrences[i]) if weekday_occurrences[i] else -1)
+        if weekday_occurrences[idx]:
+            busiest_weekday = {"name": _ANALYTICS_WEEKDAY_NAMES[idx], "avg_visits": round(weekday_counts[idx] / weekday_occurrences[idx], 1)}
+
+    heat_max = max((max(row) for row in heat_grid), default=0)
+    occupancy_heatmap = {
+        "weekdays": _ANALYTICS_WEEKDAY_NAMES,
+        "bands": _ANALYTICS_TIME_BANDS,
+        "grid": [
+            [{"count": heat_grid[wd][b], "intensity": round(heat_grid[wd][b] / heat_max, 3) if heat_max else 0.0} for b in range(4)]
+            for wd in range(7)
+        ],
+        "max_count": heat_max,
+    }
+
+    # New vs returning clients per month — "new" means this is the first
+    # visit of that client's entire history, not just their first this year.
+    visit_client_ids = sorted({r["client_id"] for r in visit_rows if r.get("client_id")})
+    first_visit_map = await _first_visit_date_for_clients(visit_client_ids)
+    clients_by_month = []
+    new_clients_total = 0
+    for m in range(1, end_month + 1):
+        key = f"{y}-{m:02d}"
+        new_count = 0
+        returning_count = 0
+        for cid in month_client_sets.get(key, set()):
+            first = first_visit_map.get(cid, key)
+            if first[:7] == key:
+                new_count += 1
+            else:
+                returning_count += 1
+        new_clients_total += new_count
+        clients_by_month.append({"month": key, "label": date(y, m, 1).strftime("%b"), "new": new_count, "returning": returning_count})
+
+    # Service mix — revenue share for the year, through the same canonical
+    # revenue helpers Finance uses so these percentages can't disagree with
+    # the P&L's own category totals.
+    program_lot_ids = await _get_training_program_lot_ids()
+    booking_cat_totals: Dict[str, float] = {}
+    for ev in await _booking_collection_events(year_start, year_end):
+        b = ev.get("booking") or {}
+        if _is_program_credit_redemption(b, program_lot_ids) and not b.get("is_prepaid_program_session"):
+            continue
+        svc = b.get("service_type") or "other"
+        booking_cat_totals[svc] = booking_cat_totals.get(svc, 0.0) + _business_revenue_from_booking_event(ev)
+    # Classify retail_sales rows the SAME way _summary_range_data does —
+    # only the "retail" category is merchandise. Folding every row's amount
+    # in here regardless of category would mislabel credit-pack/training-
+    # program/account-payment rows as "Retail", and a signed refund row
+    # (always negative, always categorized "refunds_reversals") would drag
+    # the whole mix total negative and invert every percentage.
+    retail_cat_totals: Dict[str, float] = {}
+    async for r in db.retail_sales.find(
+        {"date": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1},
+    ):
+        cat = _finance_income_category(r)
+        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + _business_revenue_net_of_sales_tax(r)
+    retail_total_for_mix = round(retail_cat_totals.get("retail", 0.0), 2)
+    # Real revenue, just not merchandise or one of the four named services —
+    # credit packs, training-program sales, payment plans, account/invoice
+    # payments. refunds_reversals is excluded outright: it's a signed
+    # reduction, not a revenue source, and would make this go negative.
+    other_retail_sales = sum(v for k, v in retail_cat_totals.items() if k not in ("retail", "refunds_reversals"))
+    other_services = sum(v for k, v in booking_cat_totals.items() if k not in ("daycare", "boarding", "training", "grooming"))
+    service_mix_raw = {
+        "Daycare": round(booking_cat_totals.get("daycare", 0.0), 2),
+        "Boarding": round(booking_cat_totals.get("boarding", 0.0), 2),
+        "Training": round(booking_cat_totals.get("training", 0.0), 2),
+        "Grooming": round(booking_cat_totals.get("grooming", 0.0), 2),
+        "Retail": retail_total_for_mix,
+        "Other": round(other_services + other_retail_sales, 2),
+    }
+    mix_total = sum(service_mix_raw.values())
+    service_mix = [
+        {"label": label, "total": total, "pct": round(total / mix_total * 100, 1) if mix_total else 0.0}
+        for label, total in service_mix_raw.items() if total > 0
+    ]
+    service_mix.sort(key=lambda x: -x["total"])
+
+    top_sellers = await _top_sellers_for_range(year_start, year_end)
+    occupancy_rate = await _occupancy_rate_this_month()
+
+    all_time_visit_clients = set(await db.bookings.distinct("client_id", _visit_clause()))
+    try:
+        all_time_visit_clients |= set(await db.bookings_archive.distinct("client_id", _visit_clause()))
+    except Exception:
+        pass
+    all_time_visit_clients.discard(None)
+    lifetime_map = await _bulk_client_lifetime_revenue(list(all_time_visit_clients)) if all_time_visit_clients else {}
+    lifetime_totals = [round(v.get("bookings", 0.0) + v.get("retail", 0.0), 2) for v in lifetime_map.values()]
+    avg_client_spend = round(sum(lifetime_totals) / len(lifetime_totals), 2) if lifetime_totals else 0.0
+
+    return {
+        "year": y,
+        "start_date": year_start,
+        "end_date": year_end,
+        "total_visits": total_visits,
+        "visits_yoy_pct": visits_yoy_pct,
+        "occupancy_rate": occupancy_rate,
+        "new_clients_total": new_clients_total,
+        "avg_client_spend": avg_client_spend,
+        "busiest_weekday": busiest_weekday,
+        "by_month": by_month,
+        "occupancy_heatmap": occupancy_heatmap,
+        "clients_by_month": clients_by_month,
+        "service_mix": service_mix,
+        "top_sellers": top_sellers,
+        "fun_stats": {
+            "dogs_served_all_time": await _dogs_served_all_time(),
+            "busiest_day_ever": await _busiest_day_ever(),
+            "biggest_single_sale": await _biggest_single_sale(),
         },
     }
 
