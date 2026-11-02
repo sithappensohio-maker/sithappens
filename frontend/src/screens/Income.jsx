@@ -17,6 +17,23 @@ import TakePaymentModal from "../components/TakePaymentModal";
 import FinancialCorrectionModal from "../components/FinancialCorrectionModal";
 
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
+// "2026-10-19" -> "Oct 19" — the sidebar's Best Week tile is narrow; the
+// full ISO range ("2026-10-19 → 2026-10-25") wraps into a jagged stack there.
+function shortDate(iso) {
+  if (!iso) return "";
+  const [, m, d] = iso.split("-").map(Number);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${MONTHS[(m || 1) - 1]} ${d || ""}`.trim();
+}
+function weekRangeLabel(startIso, endIso) {
+  if (!startIso || !endIso) return "";
+  const startMonth = startIso.slice(5, 7);
+  const endMonth = endIso.slice(5, 7);
+  if (startMonth === endMonth) {
+    return `${shortDate(startIso)}–${Number(endIso.slice(8, 10))}`;
+  }
+  return `${shortDate(startIso)} – ${shortDate(endIso)}`;
+}
 function cashAmount(r) { return Number(r?.cash_revenue ?? r?.amount_paid ?? (r?.payment_status === "paid" ? r?.actual_price : 0)) || 0; }
 function balanceAmount(r) { return Number(r?.balance_due ?? (r?.payment_status === "paid_partial" ? (Number(r?.actual_price || 0) - Number(r?.amount_paid || 0)) : (r?.payment_status === "unpaid" ? r?.actual_price : 0))) || 0; }
 
@@ -458,7 +475,9 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
               <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-trophy mr-1 text-shPrimary"/>Best Week</p>
               {yearOverview.best_week ? (
                 <>
-                  <p className="text-shText font-black">{yearOverview.best_week.week_start} → {yearOverview.best_week.week_end}</p>
+                  <p className="text-shText font-black text-[14px] whitespace-nowrap" title={`${yearOverview.best_week.week_start} → ${yearOverview.best_week.week_end}`}>
+                    {weekRangeLabel(yearOverview.best_week.week_start, yearOverview.best_week.week_end)}
+                  </p>
                   <p className="text-[17px] font-black text-shPrimary">{fmt(yearOverview.best_week.total)}</p>
                 </>
               ) : <p className="text-[13px] text-shTextMuted italic">No activity yet</p>}
@@ -604,6 +623,16 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-6" data-testid="income-main">
+
+      {/* Revenue Trend — the whole year's shape at a glance, every month a
+          bar (quiet ones included), separate from the drill-down range view
+          below which is necessarily sparse early in a day/week/month. */}
+      {yearOverview?.by_month?.length > 0 && (
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="revenue-trend">
+          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted mb-4">Revenue Trend — {yearOverview.year}</p>
+          <MonthlyBarChart points={yearOverview.by_month} />
+        </div>
+      )}
 
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
@@ -1002,12 +1031,15 @@ function DailyBarChart({ points }) {
   const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
   return (
     <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4" data-testid="daily-bar-chart">
-      <div className="flex items-end gap-[3px] h-56 overflow-x-auto pt-6">
+      {/* justify-center + a per-bar max-width keep a sparse range (e.g. two
+          days into a fresh month) from stretching into one giant block —
+          bars only grow to fill the row once there are enough of them. */}
+      <div className="flex items-end justify-center gap-[3px] h-56 overflow-x-auto pt-6">
         {points.map((p, i) => {
           const h = Math.max((p.total / max) * 100, 2);
           const isPeak = i === peakIdx && p.total > 0;
           return (
-            <div key={p.date} className="flex-1 min-w-[6px] h-full flex flex-col justify-end items-center group relative" title={`${p.date} · $${p.total.toFixed(2)}`}>
+            <div key={p.date} className="flex-1 max-w-[44px] min-w-[6px] h-full flex flex-col justify-end items-center group relative" title={`${p.date} · $${p.total.toFixed(2)}`}>
               {isPeak && (
                 <span className="absolute -top-5 text-[11px] font-black text-shPrimary whitespace-nowrap">{fmt(p.total)}</span>
               )}
@@ -1028,6 +1060,40 @@ function DailyBarChart({ points }) {
         <span>{points[0]?.date}</span>
         <span>{points.length} days w/ revenue</span>
         <span>{points[points.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
+// The year's shape at a glance — one bar per month (quiet months included
+// as $0, never dropped), every bar labeled since there are at most 12.
+function MonthlyBarChart({ points }) {
+  if (!points || points.length === 0) return null;
+  const max = Math.max(...points.map(p => p.total), 1);
+  const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
+  return (
+    <div data-testid="monthly-bar-chart">
+      <div className="flex items-end justify-center gap-3 h-56 pt-6">
+        {points.map((p, i) => {
+          const h = Math.max((p.total / max) * 100, 2);
+          const isPeak = i === peakIdx && p.total > 0;
+          return (
+            <div key={p.month} className="flex-1 max-w-[64px] h-full flex flex-col justify-end items-center group relative" title={`${p.label} · $${p.total.toFixed(2)}`}>
+              {isPeak && (
+                <span className="absolute -top-5 text-[11px] font-black text-shPrimary whitespace-nowrap">{fmt(p.total)}</span>
+              )}
+              <div
+                className={`w-full transition rounded-t-md ${isPeak ? "bg-shPrimary" : "bg-[#1c2430] group-hover:bg-[#2a3648]"}`}
+                style={{ height: `${h}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-center gap-3 mt-3 pt-3 border-t border-shBorder/60">
+        {points.map(p => (
+          <span key={p.month} className="flex-1 max-w-[64px] text-center text-[12px] text-shTextMuted font-black uppercase tracking-widest">{p.label}</span>
+        ))}
       </div>
     </div>
   );

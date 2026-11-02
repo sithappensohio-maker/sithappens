@@ -36255,6 +36255,15 @@ async def year_overview(
     months = _year_bucket(by_day, lambda dt: (dt.strftime("%Y-%m"), {"month": dt.strftime("%Y-%m"), "label": dt.strftime("%B %Y")}))
     best_month = max(months.values(), key=lambda m: m["total"]) if months else None
 
+    # Every month Jan..(this one) gets a bar, $0 ones included — a trend
+    # chart with gaps for quiet months reads as missing data, not "$0".
+    end_month = date.fromisoformat(year_end).month
+    by_month = [
+        {"month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"),
+         "total": months.get(f"{y}-{m:02d}", {}).get("total", 0.0)}
+        for m in range(1, end_month + 1)
+    ]
+
     def _week_key(dt):
         monday = dt - timedelta(days=dt.weekday())
         return monday.isoformat(), {"week_start": monday.isoformat(), "week_end": (monday + timedelta(days=6)).isoformat()}
@@ -36286,6 +36295,7 @@ async def year_overview(
         "net_total": current["net_total"],
         "best_month": best_month,
         "best_week": best_week,
+        "by_month": by_month,
         "prior_year": {
             "year": prior_year,
             "through": prior_through.isoformat(),

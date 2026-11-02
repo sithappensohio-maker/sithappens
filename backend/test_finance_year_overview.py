@@ -96,6 +96,19 @@ def test_year_overview_gross_expenses_net_best_month_best_week_and_yoy():
         assert data["best_week"]["week_end"] == "2024-06-09"
         assert data["best_week"]["total"] == 500.0
 
+        # The monthly trend chart: every month Jan..Dec gets a bar, quiet
+        # months included as $0 — a gap in the chart would read as missing
+        # data rather than "nothing happened".
+        by_month = {m["month"]: m for m in data["by_month"]}
+        assert len(data["by_month"]) == 12
+        assert [m["month"] for m in data["by_month"]] == [f"2024-{i:02d}" for i in range(1, 13)], "months must stay in calendar order"
+        assert by_month["2024-01"]["total"] == 100.0
+        assert by_month["2024-01"]["label"] == "Jan"
+        assert by_month["2024-02"]["total"] == 0.0, "a quiet month is a $0 bar, not a missing one"
+        assert by_month["2024-06"]["total"] == 500.0
+        assert by_month["2024-08"]["total"] == 200.0
+        assert by_month["2024-12"]["total"] == 0.0
+
         py = data["prior_year"]
         assert py["year"] == 2023
         assert py["through"] == "2023-12-31"
