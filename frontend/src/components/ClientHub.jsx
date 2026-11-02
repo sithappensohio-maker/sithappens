@@ -47,6 +47,7 @@ export default function ClientHub({
 
   const [bookings, setBookings] = useState(null);
   const [invoices, setInvoices] = useState(null);
+  const [revenue, setRevenue] = useState(null); // lifetime revenue from this client, from the canonical Finance helpers
   const [lots, setLots] = useState(null);
   const [receipts, setReceipts] = useState(null);
   const [trophies, setTrophies] = useState(null);
@@ -68,6 +69,9 @@ export default function ClientHub({
     }
     if (tab === "money" && invoices === null && can("finance_reports")) {
       api.get(`/clients/${client.id}/invoices`).then(({ data }) => setInvoices(data || [])).catch(() => setInvoices([]));
+    }
+    if (tab === "money" && revenue === null && can("finance_reports")) {
+      api.get(`/clients/${client.id}/revenue`).then(({ data }) => setRevenue(data || false)).catch(() => setRevenue(false));
     }
     if (tab === "prepaid" && lots === null && can("finance_reports")) {
       api.get(`/clients/${client.id}/credit-lots`).then(({ data }) => setLots(data || [])).catch(() => setLots([]));
@@ -299,6 +303,18 @@ export default function ClientHub({
 
           {tab === "money" && can("finance_reports") && (
             <div className="space-y-4">
+              <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3">
+                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Lifetime Revenue</p>
+                {revenue === null && <p className="text-gray-500 text-sm mt-1">Loading…</p>}
+                {revenue && (
+                  <>
+                    <p className="text-white font-black text-2xl mt-1" data-testid="hub-lifetime-revenue">{money(revenue.total)}</p>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      {money(revenue.bookings)} services · {money(revenue.retail)} shop/packs/gift cards
+                    </p>
+                  </>
+                )}
+              </div>
               {can("pricing") && (
                 <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 flex items-center justify-between">
                   <div>

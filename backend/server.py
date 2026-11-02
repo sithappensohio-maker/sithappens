@@ -35683,6 +35683,44 @@ def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
     return False
 
 
+async def _client_lifetime_revenue(client_id: str) -> Dict[str, float]:
+    """Lifetime business revenue attributable to one client, through the
+    same canonical helpers every other Finance surface uses so this can
+    never disagree with the P&L or weekly summary:
+
+      * booking revenue they paid for, including as a friends & family
+        payer (`bill_to_client_id or client_id` — the family that paid,
+        same attribution pl_report's "top clients" uses);
+      * every retail_sales row stamped with their client_id — shop/POS
+        items, gift cards, credit packs, training programs, invoice/tab
+        payments — net of sales tax and reversals.
+
+    Pure training-program credit redemptions are skipped (the program sale
+    already counted as revenue at the sale); cash collected on top of one
+    still counts, same rule as pl_report.py's top-clients tally.
+    """
+    events = await _booking_collection_events("2000-01-01", business_today().isoformat())
+    program_lot_ids = await _get_training_program_lot_ids()
+    booking_total = 0.0
+    for ev in events:
+        b = ev.get("booking") or {}
+        payer = b.get("bill_to_client_id") or b.get("client_id")  # the family that paid
+        if payer != client_id:
+            continue
+        if _is_program_credit_redemption(b, program_lot_ids) and not b.get("is_prepaid_program_session"):
+            continue
+        booking_total += _business_revenue_from_booking_event(ev)
+    booking_total = round(booking_total, 2)
+
+    retail_rows = await db.retail_sales.find(
+        {"client_id": client_id},
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1},
+    ).to_list(50000)
+    retail_total = round(sum(_business_revenue_net_of_sales_tax(r) for r in retail_rows), 2)
+
+    return {"bookings": booking_total, "retail": retail_total, "total": round(booking_total + retail_total, 2)}
+
+
 @api.get("/transactions/weekly-summary")
 async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance_reports")), ref_date: Optional[str] = None):
     """Mon-Sun income tally. Default = current week. Pass ?ref_date=YYYY-MM-DD
@@ -38633,6 +38671,13 @@ async def get_invoice(invoice_id: str, _: dict = Depends(require_admin_and_permi
 async def list_client_invoices(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     invoices = await db.invoices.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return await billing_resolve.annotate_bills(invoices)
+
+
+@api.get("/clients/{client_id}/revenue")
+async def client_revenue(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
+    """How much business revenue this client has brought in, lifetime —
+    the Money tab's headline number."""
+    return await _client_lifetime_revenue(client_id)
 
 
 @api.get("/clients/{client_id}/open-invoices")
