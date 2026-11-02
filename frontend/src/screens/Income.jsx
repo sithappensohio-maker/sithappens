@@ -49,6 +49,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   });
   useEffect(() => { clearScreenTab("income"); }, []);
   const [summary, setSummary] = useState(null);
+  const [yearOverview, setYearOverview] = useState(null);  // persistent This Year card — gross/expenses/net, best month/week, vs last year
   const [unpaidOpen, setUnpaidOpen] = useState(false);
   const [refDate, setRefDate] = useState(todayISO());
   const [rangeSummary, setRangeSummary] = useState(null);
@@ -127,6 +128,13 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   // cron is configured and when the last email went out.
   useEffect(() => {
     api.get("/admin/pl-monthly-status").then(r => setPlAutoStatus(r.data)).catch(()=>{});
+  }, []);
+
+  // Persistent "This Year" card — always the current calendar year, no
+  // range picker needed; it naturally starts comparing against last year
+  // the moment the calendar flips.
+  useEffect(() => {
+    api.get("/transactions/year-overview").then(r => setYearOverview(r.data)).catch(()=>{});
   }, []);
 
   const refreshAfterExpenseChange = () => {
@@ -405,6 +413,81 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
             </>
           ) : (
             <span className="normal-case">Auto-email OFF — set <code>ADMIN_NOTIFICATION_EMAIL</code> and <code>RESEND_API_KEY</code> in backend env to enable.</span>
+          )}
+        </div>
+      )}
+
+      {/* This Year — persistent gross/expenses/net, best month/week, vs last year */}
+      {yearOverview && (
+        <div className="max-w-3xl bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="year-overview">
+          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted mb-1">This Year</p>
+          <p className="text-shText font-black uppercase italic tracking-tight mb-4">{yearOverview.start_date} → {yearOverview.end_date}</p>
+          <div className="divide-y divide-shBorder/60 mb-4">
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shText">Gross</span>
+              <span className="text-[17px] font-black text-shPrimary whitespace-nowrap" data-testid="year-gross">{fmt(yearOverview.gross_total)}</span>
+            </div>
+            <div className="flex items-baseline justify-between py-2.5">
+              <span className="text-[15px] text-shTextMuted">Expenses</span>
+              <span className="text-[17px] font-black text-red-300 whitespace-nowrap" data-testid="year-expenses">({fmt(yearOverview.expenses_total)})</span>
+            </div>
+            <div className="flex items-baseline justify-between py-3 border-t-2 border-shBorder mt-1">
+              <span className="text-[16px] font-black uppercase tracking-widest text-shText">Net (after labor)</span>
+              <span className={`text-[24px] font-black whitespace-nowrap ${(yearOverview.net_total ?? 0) >= 0 ? "text-shSecondary" : "text-red-400"}`} data-testid="year-net">
+                {fmt(yearOverview.net_total)}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="bg-black/20 rounded-lg p-3" data-testid="year-best-month">
+              <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-trophy mr-1 text-shPrimary"/>Best Month</p>
+              {yearOverview.best_month ? (
+                <>
+                  <p className="text-shText font-black">{yearOverview.best_month.label}</p>
+                  <p className="text-[17px] font-black text-shPrimary">{fmt(yearOverview.best_month.total)}</p>
+                </>
+              ) : <p className="text-[13px] text-shTextMuted italic">No activity yet</p>}
+            </div>
+            <div className="bg-black/20 rounded-lg p-3" data-testid="year-best-week">
+              <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-trophy mr-1 text-shPrimary"/>Best Week</p>
+              {yearOverview.best_week ? (
+                <>
+                  <p className="text-shText font-black">{yearOverview.best_week.week_start} → {yearOverview.best_week.week_end}</p>
+                  <p className="text-[17px] font-black text-shPrimary">{fmt(yearOverview.best_week.total)}</p>
+                </>
+              ) : <p className="text-[13px] text-shTextMuted italic">No activity yet</p>}
+            </div>
+          </div>
+          {yearOverview.prior_year && (
+            <div className="border-t border-shBorder pt-3" data-testid="year-vs-last-year">
+              <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2">
+                vs {yearOverview.prior_year.year} (through {yearOverview.prior_year.through})
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[14px] text-shTextMuted">Gross</span>
+                  <span className="text-[14px] font-black text-shText whitespace-nowrap">
+                    {fmt(yearOverview.prior_year.gross_total)}
+                    {yearOverview.prior_year.gross_change_pct != null && (
+                      <span className={`ml-1.5 text-[12px] ${yearOverview.prior_year.gross_change_pct >= 0 ? "text-shSecondary" : "text-red-400"}`}>
+                        <i className={`fas fa-arrow-${yearOverview.prior_year.gross_change_pct >= 0 ? "up" : "down"}`}/> {Math.abs(yearOverview.prior_year.gross_change_pct)}%
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[14px] text-shTextMuted">Net</span>
+                  <span className="text-[14px] font-black text-shText whitespace-nowrap">
+                    {fmt(yearOverview.prior_year.net_total)}
+                    {yearOverview.prior_year.net_change_pct != null && (
+                      <span className={`ml-1.5 text-[12px] ${yearOverview.prior_year.net_change_pct >= 0 ? "text-shSecondary" : "text-red-400"}`}>
+                        <i className={`fas fa-arrow-${yearOverview.prior_year.net_change_pct >= 0 ? "up" : "down"}`}/> {Math.abs(yearOverview.prior_year.net_change_pct)}%
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

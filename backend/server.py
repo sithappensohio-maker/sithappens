@@ -36008,13 +36008,11 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     }
 
 
-@api.get("/transactions/summary-range")
-async def summary_range(
-    _: dict = Depends(require_admin_and_permission("finance_reports")),
-    start_date: str = ...,
-    end_date: str = ...,
-):
-    """Aggregate income over an arbitrary date range (for monthly / quarterly views)."""
+async def _summary_range_data(start_date: str, end_date: str) -> Dict[str, Any]:
+    """Aggregate income over an arbitrary date range (for monthly / quarterly
+    views) — the canonical range aggregation. Both /transactions/summary-range
+    and /transactions/year-overview call this so their numbers can never
+    disagree."""
     rows = await _booking_rows_anywhere(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
@@ -36195,6 +36193,108 @@ async def summary_range(
         "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
         "expense_count": expense_count,
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
+    }
+
+
+@api.get("/transactions/summary-range")
+async def summary_range(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    start_date: str = ...,
+    end_date: str = ...,
+):
+    """Aggregate income over an arbitrary date range (for monthly / quarterly views)."""
+    return await _summary_range_data(start_date, end_date)
+
+
+def _year_bucket(by_day: List[Dict[str, Any]], key_fn) -> Dict[str, Dict[str, Any]]:
+    """Group a by_day list ([{date, total}]) into buckets keyed by key_fn(date)."""
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for d in by_day:
+        try:
+            dt = datetime.strptime(d["date"], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        key, meta = key_fn(dt)
+        slot = buckets.setdefault(key, {**meta, "total": 0.0})
+        slot["total"] = round(slot["total"] + float(d.get("total") or 0), 2)
+    return buckets
+
+
+@api.get("/transactions/year-overview")
+async def year_overview(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    """Persistent yearly Gross / Expenses / Net for the Finance page, plus
+    this year's best month, best week, and a same-period comparison against
+    last year. Built entirely on _summary_range_data (the same canonical
+    aggregation the Longer-Range View card already uses) so none of these
+    numbers can ever disagree with the rest of the Finance page — best
+    month/week come free from its by_day breakdown, no extra queries.
+
+    The "last year" comparison is apples-to-apples: Jan 1 through the SAME
+    month/day as the current range's end, not the full prior year, so the
+    comparison means something on day 3 of January just as it does in
+    December — the card just naturally fills in as the year goes on.
+    """
+    today = business_today()
+    y = int(year) if year is not None else today.year
+    # Reject anything that isn't a real, non-future calendar year up front —
+    # `y < today.year` below only has a past-year/current-year branch, so an
+    # unvalidated future year would silently invert the range (year_start >
+    # year_end) and an out-of-range year would crash date.fromisoformat
+    # downstream instead of erroring cleanly here.
+    if y < 2000 or y > today.year:
+        raise HTTPException(status_code=400, detail=f"year must be between 2000 and {today.year}")
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+
+    current = await _summary_range_data(year_start, year_end)
+    by_day = current.get("by_day") or []
+
+    months = _year_bucket(by_day, lambda dt: (dt.strftime("%Y-%m"), {"month": dt.strftime("%Y-%m"), "label": dt.strftime("%B %Y")}))
+    best_month = max(months.values(), key=lambda m: m["total"]) if months else None
+
+    def _week_key(dt):
+        monday = dt - timedelta(days=dt.weekday())
+        return monday.isoformat(), {"week_start": monday.isoformat(), "week_end": (monday + timedelta(days=6)).isoformat()}
+    weeks = _year_bucket(by_day, _week_key)
+    best_week = max(weeks.values(), key=lambda w: w["total"]) if weeks else None
+
+    # Same-period comparison against last year (audit-style apples-to-apples —
+    # a Dec 31 YTD this year must not be compared against a Jan 3 YTD last year).
+    prior_year = y - 1
+    end_dt = date.fromisoformat(year_end)
+    try:
+        prior_through = end_dt.replace(year=prior_year)
+    except ValueError:
+        prior_through = date(prior_year, 2, 28)  # Feb 29 on a non-leap prior year
+    prior = await _summary_range_data(f"{prior_year}-01-01", prior_through.isoformat())
+
+    def _pct_change(curr: float, prev: float) -> Optional[float]:
+        if not prev:
+            return None
+        return round((curr - prev) / abs(prev) * 100, 1)
+
+    return {
+        "year": y,
+        "start_date": year_start,
+        "end_date": year_end,
+        "gross_total": current["completed_total"],
+        "expenses_total": current["expenses_total"],
+        "labor_total": current["labor_total"],
+        "net_total": current["net_total"],
+        "best_month": best_month,
+        "best_week": best_week,
+        "prior_year": {
+            "year": prior_year,
+            "through": prior_through.isoformat(),
+            "gross_total": prior["completed_total"],
+            "expenses_total": prior["expenses_total"],
+            "net_total": prior["net_total"],
+            "gross_change_pct": _pct_change(current["completed_total"], prior["completed_total"]),
+            "net_change_pct": _pct_change(current["net_total"], prior["net_total"]),
+        },
     }
 
 
