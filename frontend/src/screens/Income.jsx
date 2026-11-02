@@ -418,7 +418,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* This Year — gross/expenses/net */}
       {yearOverview && (
-        <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl p-5" data-testid="year-overview">
+        <div className="bg-[#10151f] border border-shBorder rounded-xl p-5" data-testid="year-overview">
           <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-3">This Year · {yearOverview.year}</p>
           <div className="divide-y divide-shBorder/60">
             <div className="flex items-baseline justify-between py-2.5">
@@ -441,7 +441,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Best Month / Best Week */}
       {yearOverview && (yearOverview.best_month || yearOverview.best_week) && (
-        <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl p-5">
+        <div className="bg-[#10151f] border border-shBorder rounded-xl p-5">
           <div className="grid grid-cols-2 gap-4">
             <div data-testid="year-best-month">
               <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1"><i className="fas fa-trophy mr-1 text-shPrimary"/>Best Month</p>
@@ -469,7 +469,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* vs Last Year */}
       {yearOverview?.prior_year && (
-        <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl p-5" data-testid="year-vs-last-year">
+        <div className="bg-[#10151f] border border-shBorder rounded-xl p-5" data-testid="year-vs-last-year">
           <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-3">
             vs {yearOverview.prior_year.year} (through {shortDate(yearOverview.prior_year.through)})
           </p>
@@ -502,7 +502,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Weekly tally tiles */}
       {summary && (
-        <div className="bg-[var(--sh-surface)] border border-shAccent/20 rounded-xl p-5" data-testid="weekly-summary">
+        <div className="bg-[#10151f] border border-shAccent/20 rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">This Week (Mon–Sun)</p>
@@ -616,15 +616,15 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
           <i className="fas fa-bag-shopping mr-1.5"/>Log Retail Sale
         </button>
         <button onClick={downloadPL} disabled={plBusy} data-testid="pl-download-btn"
-                className="bg-[var(--sh-surface)] border border-shSecondary/40 text-shSecondary px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:bg-shSecondary/10 disabled:opacity-50 transition">
+                className="bg-[#10151f] border border-shSecondary/40 text-shSecondary px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:bg-shSecondary/10 disabled:opacity-50 transition">
           <i className={`fas ${plBusy ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1.5`}/>P&L PDF
         </button>
         <button onClick={emailPL} disabled={plBusy} data-testid="pl-email-btn"
-                className="bg-[var(--sh-surface)] border border-shAccent/40 text-shAccent px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:bg-shAccent/10 disabled:opacity-50 transition">
+                className="bg-[#10151f] border border-shAccent/40 text-shAccent px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:bg-shAccent/10 disabled:opacity-50 transition">
           <i className="fas fa-envelope mr-1.5"/>Email Me
         </button>
         <button onClick={exportCSV} data-testid="income-export-csv"
-                className="bg-[var(--sh-surface)] border border-shBorder text-gray-200 px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:border-shSecondary transition">
+                className="bg-[#10151f] border border-shBorder text-gray-200 px-4 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest hover:border-shSecondary transition">
           <i className="fas fa-file-csv mr-1.5"/>Export CSV
         </button>
       </div>
@@ -636,7 +636,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
           bar (quiet ones included), separate from the drill-down range view
           below which is necessarily sparse early in a day/week/month. */}
       {yearOverview?.by_month?.length > 0 && (
-        <div className="bg-[var(--sh-surface)] border border-shAccent/20 rounded-xl p-5" data-testid="revenue-trend">
+        <div className="bg-[#10151f] border border-shAccent/20 rounded-xl p-5" data-testid="revenue-trend">
           <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted mb-4">Revenue Trend — {yearOverview.year}</p>
           <MonthlyBarChart points={yearOverview.by_month} currentMonth={yearOverview.end_date === todayISO() ? yearOverview.end_date.slice(0, 7) : null} />
         </div>
@@ -644,7 +644,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
-        <div className="bg-[var(--sh-surface)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
+        <div className="bg-[#10151f] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">Longer-Range View</p>
@@ -706,7 +706,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       )}
 
       {/* Retail Sales (external POS) — date range matches Range View above */}
-      <div className="bg-[var(--sh-surface)] border border-shAccent/20 rounded-xl p-5" data-testid="retail-card">
+      <div className="bg-[#10151f] border border-shAccent/20 rounded-xl p-5" data-testid="retail-card">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-purple-300 uppercase tracking-widest"><i className="fas fa-bag-shopping mr-2"/>Retail Sales</h4>
@@ -771,7 +771,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       )}
 
       {/* Expenses (date range matches Range View above) */}
-      <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl p-5" data-testid="expenses-card">
+      <div className="bg-[#10151f] border border-shBorder rounded-xl p-5" data-testid="expenses-card">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-red-300 uppercase tracking-widest"><i className="fas fa-receipt mr-2"/>Expenses</h4>
@@ -870,7 +870,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Spreadsheet table OR grouped-by-date view */}
       {groupByDate ? (
-        <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl p-4" data-testid="income-grouped">
+        <div className="bg-[#10151f] border border-shBorder rounded-xl p-4" data-testid="income-grouped">
           <CollapsibleDateGroups
             rows={filtered}
             getDate={(r) => r.date}
@@ -911,7 +911,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
           />
         </div>
       ) : (
-      <div className="bg-[var(--sh-surface)] border border-shBorder rounded-xl overflow-hidden" data-testid="income-table">
+      <div className="bg-[#10151f] border border-shBorder rounded-xl overflow-hidden" data-testid="income-table">
         <div className="overflow-x-auto">
           <table className="w-full text-[15px]">
             <thead className="bg-[var(--sh-card-base)] border-b border-shBorder text-[13px] font-black uppercase tracking-widest text-shTextMuted">
@@ -1038,7 +1038,7 @@ function DailyBarChart({ points }) {
   const max = Math.max(...points.map(p => p.total), 1);
   const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
   return (
-    <div className="bg-[var(--sh-surface)] border border-shBorder rounded-lg p-4" data-testid="daily-bar-chart">
+    <div className="bg-[#10151f] border border-shBorder rounded-lg p-4" data-testid="daily-bar-chart">
       {/* justify-center + a per-bar max-width keep a sparse range (e.g. two
           days into a fresh month) from stretching into one giant block —
           bars only grow to fill the row once there are enough of them. */}
@@ -1075,26 +1075,28 @@ function DailyBarChart({ points }) {
 
 // The year's shape at a glance — one bar per month (quiet months included
 // as $0, never dropped), every bar labeled since there are at most 12.
+// "$1,550" — a compact dollar label with no cents, for a narrow bar column
+// where fmt()'s full "$1550.00" would crowd 11-12 of these in a row.
+function compactFmt(n) { return `$${Math.round(Number(n) || 0).toLocaleString()}`; }
+
 function MonthlyBarChart({ points, currentMonth }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
   const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
   return (
     <div data-testid="monthly-bar-chart">
-      <div className="flex items-end justify-center gap-3 h-56 pt-6">
+      <div className="flex items-end justify-center gap-3 h-56 pt-7">
         {points.map((p, i) => {
           const h = Math.max((p.total / max) * 100, 2);
           const isCurrent = p.month === currentMonth;
           // "this month" always wins the highlight over "best month ever" —
           // more useful day-to-day, and the two colors never fight on one bar.
           const isPeak = i === peakIdx && p.total > 0 && !isCurrent;
-          const labelColor = isCurrent ? "text-shSecondary" : "text-shPrimary";
+          const labelColor = isCurrent ? "text-shSecondary" : isPeak ? "text-shPrimary" : "text-shTextMuted";
           const barColor = isCurrent ? "bg-shSecondary" : isPeak ? "bg-shPrimary" : "bg-[#1c2430] group-hover:bg-[#2a3648]";
           return (
             <div key={p.month} className="flex-1 max-w-[64px] h-full flex flex-col justify-end items-center group relative" title={`${p.label} · $${p.total.toFixed(2)}`}>
-              {(isPeak || isCurrent) && (
-                <span className={`absolute -top-5 text-[11px] font-black whitespace-nowrap ${labelColor}`}>{fmt(p.total)}</span>
-              )}
+              <span className={`absolute -top-5 text-[10px] font-black whitespace-nowrap ${labelColor}`}>{compactFmt(p.total)}</span>
               <div className={`w-full transition rounded-t-md ${barColor}`} style={{ height: `${h}%` }} />
             </div>
           );
