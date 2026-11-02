@@ -92,6 +92,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [visitMap, setVisitMap] = useState({});    // client_id -> {visits, held, next} (award engine's own count)
   const [awardPicker, setAwardPicker] = useState(null);  // client object
   const [plansByClient, setPlansByClient] = useState({});  // client_id -> plans[]
+  const [revenueMap, setRevenueMap] = useState({});  // client_id -> {bookings, retail, total} lifetime (finance_reports only)
 
   // Phase 6 — debounce server-side client directory search. The old Clients
   // screen downloaded and decorated up to 1,000 families before rendering
@@ -122,6 +123,18 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       clientList.forEach(c => { map[c.id] = data?.[c.id] || []; });
       setTrophyMap(map);
     } catch (e) { console.warn("Clients trophy load failed:", e); }
+  }, []);
+
+  // Lifetime revenue per client, for the collapsed card view. Staff without
+  // finance_reports get a 403 here (same as the Money tab) — caught quietly
+  // so the stat just doesn't render for them, not an error toast.
+  const loadRevenue = useCallback(async (clientList) => {
+    try {
+      const ids = clientList.map((c) => c.id).filter(Boolean);
+      if (!ids.length) { setRevenueMap({}); return; }
+      const { data } = await api.get("/admin/client-revenue-totals", { params: { client_ids: ids.join(",") } });
+      setRevenueMap(data || {});
+    } catch (e) { setRevenueMap({}); }
   }, []);
 
   // Credit-pack definitions are reference data; paging through the directory
@@ -157,10 +170,11 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       setPlansByClient(byClient);
       await loadTrophies(rows);
       loadVisits(rows);
+      loadRevenue(rows);
     } finally {
       setClientsLoading(false);
     }
-  }, [clientQuery, clientPage, loadTrophies, loadVisits]);
+  }, [clientQuery, clientPage, loadTrophies, loadVisits, loadRevenue]);
   useEffect(() => { load(); }, [load]);
 
   const openNewClient = () => {
@@ -582,6 +596,12 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 <p className="text-[11px] uppercase font-black text-shTextMuted tracking-widest">Boarding</p>
                 <p className="text-lg font-black text-shAccent" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
               </div>
+              {revenueMap[c.id] && (
+                <div>
+                  <p className="text-[11px] uppercase font-black text-shTextMuted tracking-widest">Spent</p>
+                  <p className="text-lg font-black text-white" data-testid={`lifetime-revenue-${c.id}`}>${Number(revenueMap[c.id].total || 0).toFixed(2)}</p>
+                </div>
+              )}
               <span className="ml-auto text-[12px] font-black uppercase tracking-widest text-shTextMuted flex items-center gap-1.5 shrink-0">
                 {isOpen ? "Less" : "More"}<i className={`fas fa-chevron-${isOpen ? "up" : "down"}`} />
               </span>

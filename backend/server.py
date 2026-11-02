@@ -35683,9 +35683,9 @@ def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
     return False
 
 
-async def _client_lifetime_revenue(client_id: str) -> Dict[str, float]:
-    """Lifetime business revenue attributable to one client, through the
-    same canonical helpers every other Finance surface uses so this can
+async def _bulk_client_lifetime_revenue(client_ids: List[str]) -> Dict[str, Dict[str, float]]:
+    """Lifetime business revenue for a BATCH of clients in one pass, through
+    the same canonical helpers every other Finance surface uses so this can
     never disagree with the P&L or weekly summary:
 
       * booking revenue they paid for, including as a friends & family
@@ -35698,27 +35698,50 @@ async def _client_lifetime_revenue(client_id: str) -> Dict[str, float]:
     Pure training-program credit redemptions are skipped (the program sale
     already counted as revenue at the sale); cash collected on top of one
     still counts, same rule as pl_report.py's top-clients tally.
+
+    Batched because the booking side needs one full lifetime scan of
+    collection events no matter how many clients are asked about — the
+    Clients directory renders a page of clients at a time, and 48 separate
+    single-client calls would each redundantly re-run that same scan.
+    Returns {client_id: {bookings, retail, total}} for every requested id
+    (zeros included).
     """
+    ids = set(client_ids)
+    out: Dict[str, Dict[str, float]] = {cid: {"bookings": 0.0, "retail": 0.0} for cid in ids}
+    if not ids:
+        return out
+
     events = await _booking_collection_events("2000-01-01", business_today().isoformat())
     program_lot_ids = await _get_training_program_lot_ids()
-    booking_total = 0.0
     for ev in events:
         b = ev.get("booking") or {}
         payer = b.get("bill_to_client_id") or b.get("client_id")  # the family that paid
-        if payer != client_id:
+        if payer not in ids:
             continue
         if _is_program_credit_redemption(b, program_lot_ids) and not b.get("is_prepaid_program_session"):
             continue
-        booking_total += _business_revenue_from_booking_event(ev)
-    booking_total = round(booking_total, 2)
+        out[payer]["bookings"] += _business_revenue_from_booking_event(ev)
 
     retail_rows = await db.retail_sales.find(
-        {"client_id": client_id},
-        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1},
-    ).to_list(50000)
-    retail_total = round(sum(_business_revenue_net_of_sales_tax(r) for r in retail_rows), 2)
+        {"client_id": {"$in": list(ids)}},
+        {"_id": 0, "client_id": 1, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1},
+    ).to_list(100000)
+    for r in retail_rows:
+        cid = r.get("client_id")
+        if cid in out:
+            out[cid]["retail"] += _business_revenue_net_of_sales_tax(r)
 
-    return {"bookings": booking_total, "retail": retail_total, "total": round(booking_total + retail_total, 2)}
+    for cid, v in out.items():
+        v["bookings"] = round(v["bookings"], 2)
+        v["retail"] = round(v["retail"], 2)
+        v["total"] = round(v["bookings"] + v["retail"], 2)
+    return out
+
+
+async def _client_lifetime_revenue(client_id: str) -> Dict[str, float]:
+    """Lifetime business revenue attributable to one client — see
+    _bulk_client_lifetime_revenue, the canonical implementation this wraps."""
+    return (await _bulk_client_lifetime_revenue([client_id]))[client_id]
 
 
 @api.get("/transactions/weekly-summary")
@@ -38678,6 +38701,18 @@ async def client_revenue(client_id: str, _: dict = Depends(require_admin_and_per
     """How much business revenue this client has brought in, lifetime —
     the Money tab's headline number."""
     return await _client_lifetime_revenue(client_id)
+
+
+@api.get("/admin/client-revenue-totals")
+async def client_revenue_totals(client_ids: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
+    """Lifetime revenue for a page of clients in ONE round trip — same
+    pattern as /admin/client-visit-counts (the Clients directory renders a
+    page of cards; one call per card would 429). Returns
+    {client_id: {bookings, retail, total}} for every requested id."""
+    ids = [v.strip() for v in (client_ids or "").split(",") if v.strip()][:500]
+    if not ids:
+        return {}
+    return await _bulk_client_lifetime_revenue(ids)
 
 
 @api.get("/clients/{client_id}/open-invoices")

@@ -112,6 +112,24 @@ def test_retail_sales_net_of_tax_and_gift_card_funded():
         _cleanup(client_id)
 
 
+def test_bulk_totals_isolate_each_client_and_zero_fill_the_rest():
+    a = _client("bulk-a")
+    b = _client("bulk-b")
+    c = _client("bulk-c")  # asked for, but has no revenue at all
+    dog_a = _dog(a)
+    try:
+        _legacy_paid_booking(a, dog_a, 20.0)
+        _retail_row(b, amount=50.0)
+        result = run(server.client_revenue_totals(client_ids=f"{a},{b},{c}", _=None))
+        assert result[a]["total"] == 20.0
+        assert result[b]["total"] == 50.0
+        assert result[c]["total"] == 0.0, "a client with no activity still gets a zero row, not a missing key"
+        # single-client and bulk paths must agree — same canonical helper underneath
+        assert run(server.client_revenue(a, _=None))["total"] == result[a]["total"]
+    finally:
+        _cleanup(a, b, c)
+
+
 def test_training_program_credit_redemption_does_not_double_count():
     client_id = _client("program-client")
     dog = _dog(client_id)
