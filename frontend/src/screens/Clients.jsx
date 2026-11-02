@@ -58,6 +58,12 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [clientMeta, setClientMeta] = useState({ total: 0, total_clients: 0, page: 1, pages: 1, page_size: 48 });
   const [clientsLoading, setClientsLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);   // audit #36
+  const [expandedIds, setExpandedIds] = useState(() => new Set()); // cards start collapsed to name + credits (owner request)
+  const toggleExpanded = (id) => setExpandedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const archiveAction = useArchiveAction();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -498,7 +504,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
 
       <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 ${showArchived ? "hidden" : ""}`} data-testid="client-grid">
         {!clientsLoading && clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">{clientQuery ? "No clients match that search." : "No clients yet — add your first."}</div>}
-        {clients.map(c => (
+        {clients.map(c => { const isOpen = expandedIds.has(c.id); return (
           <div key={c.id} className="sh-entity-card p-5 sm:p-6 group relative" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
               {c.email && (
@@ -562,6 +568,25 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 </div>
               </div>
             </div>
+            <button onClick={()=>toggleExpanded(c.id)} data-testid={`toggle-client-${c.id}`}
+                    className="mt-3 w-full flex items-center gap-4 border-t border-shBorder pt-3 text-left">
+              <div>
+                <p className="text-[11px] uppercase font-black text-shTextMuted tracking-widest">Daycare</p>
+                <p className="text-lg font-black text-shPrimary" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase font-black text-shTextMuted tracking-widest">Training</p>
+                <p className="text-lg font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{fmtCredits(c.training_credits || 0)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase font-black text-shTextMuted tracking-widest">Boarding</p>
+                <p className="text-lg font-black text-shAccent" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
+              </div>
+              <span className="ml-auto text-[12px] font-black uppercase tracking-widest text-shTextMuted flex items-center gap-1.5 shrink-0">
+                {isOpen ? "Less" : "More"}<i className={`fas fa-chevron-${isOpen ? "up" : "down"}`} />
+              </span>
+            </button>
+            {isOpen && <>
             <div className="mt-2 space-y-1 text-xs text-shTextMuted">
               {c.phone && <p><i className="fas fa-phone w-4 text-shSecondary" /> {c.phone}</p>}
               {c.email && <p><i className="fas fa-envelope w-4 text-shSecondary" /> {c.email}</p>}
@@ -600,18 +625,6 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                       : visitMap[c.id].next ? `${visitMap[c.id].next.remaining} to ${visitMap[c.id].next.name}` : ""}
                   </p>
                 )}
-              </div>
-              <div>
-                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Daycare</p>
-                <p className="text-xl font-black text-shPrimary" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
-              </div>
-              <div>
-                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Training</p>
-                <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{fmtCredits(c.training_credits || 0)}</p>
-              </div>
-              <div>
-                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Boarding</p>
-                <p className="text-xl font-black text-shAccent" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
               </div>
               {/* Sprint 110di-51 — Running tab. Positive = client owes,
                   negative = pre-paid credit on file. Hidden when balance is
@@ -704,8 +717,9 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 <ReviewRequestButton clientId={c.id} clientName={c.name} compact={true}/>
               </div>
             </LazyMount>
+            </>}
           </div>
-        ))}
+        ); })}
       </div>
 
       {clientMeta.pages > 1 && !showArchived && (
