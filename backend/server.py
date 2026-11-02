@@ -36459,6 +36459,56 @@ async def _top_sellers_for_range(start_date: str, end_date: str, *, limit: int =
     return out[:limit]
 
 
+async def _all_time_visit_client_ids() -> List[str]:
+    """Every client who has EVER had a visit, hot + archived — the universe
+    "lifetime"/"all-time" tiles (avg spend, top clients, retention) are
+    computed over. Shared so those tiles can't silently disagree on who
+    counts as a client."""
+    ids = set(await db.bookings.distinct("client_id", _visit_clause()))
+    try:
+        ids |= set(await db.bookings_archive.distinct("client_id", _visit_clause()))
+    except Exception:
+        pass
+    ids.discard(None)
+    return list(ids)
+
+
+async def _lifetime_totals_for_clients(client_ids: List[str]) -> List[float]:
+    """Lifetime (bookings + retail) revenue total per client, through the
+    canonical _bulk_client_lifetime_revenue so this can never disagree with
+    the Clients page's own "Spent" column."""
+    if not client_ids:
+        return []
+    lifetime_map = await _bulk_client_lifetime_revenue(client_ids)
+    return [round(v.get("bookings", 0.0) + v.get("retail", 0.0), 2) for v in lifetime_map.values()]
+
+
+def _weekday_breakdown(visit_rows: List[Dict[str, Any]], year_start: str, year_end: str) -> List[Dict[str, Any]]:
+    """Visits per weekday, plus the average per OCCURRENCE of that weekday so
+    far in the window — a raw sum just favors whichever weekday has happened
+    the most times, not the one that's actually busiest."""
+    counts = [0] * 7
+    for r in visit_rows:
+        try:
+            counts[date.fromisoformat(r["date"]).weekday()] += 1
+        except Exception:
+            continue
+    occurrences = [0] * 7
+    cur = date.fromisoformat(year_start)
+    end_d = date.fromisoformat(year_end)
+    while cur <= end_d:
+        occurrences[cur.weekday()] += 1
+        cur += timedelta(days=1)
+    return [
+        {
+            "name": _ANALYTICS_WEEKDAY_NAMES[i],
+            "total_visits": counts[i],
+            "avg_visits": round(counts[i] / occurrences[i], 1) if occurrences[i] else 0.0,
+        }
+        for i in range(7)
+    ]
+
+
 async def _dogs_served_all_time() -> int:
     ids = set(await db.bookings.distinct("dog_id", _visit_clause()))
     try:
@@ -36666,14 +36716,8 @@ async def analytics_overview(
     top_sellers = await _top_sellers_for_range(year_start, year_end)
     occupancy_rate = await _occupancy_rate_this_month()
 
-    all_time_visit_clients = set(await db.bookings.distinct("client_id", _visit_clause()))
-    try:
-        all_time_visit_clients |= set(await db.bookings_archive.distinct("client_id", _visit_clause()))
-    except Exception:
-        pass
-    all_time_visit_clients.discard(None)
-    lifetime_map = await _bulk_client_lifetime_revenue(list(all_time_visit_clients)) if all_time_visit_clients else {}
-    lifetime_totals = [round(v.get("bookings", 0.0) + v.get("retail", 0.0), 2) for v in lifetime_map.values()]
+    all_time_visit_clients = await _all_time_visit_client_ids()
+    lifetime_totals = await _lifetime_totals_for_clients(all_time_visit_clients)
     avg_client_spend = round(sum(lifetime_totals) / len(lifetime_totals), 2) if lifetime_totals else 0.0
 
     return {
@@ -36696,6 +36740,392 @@ async def analytics_overview(
             "busiest_day_ever": await _busiest_day_ever(),
             "biggest_single_sale": await _biggest_single_sale(),
         },
+    }
+
+
+# ── Analytics drill-down tabs — Visits / Clients / Services / Retail / Staff ──
+# Owner request 2026-11-02 (follow-up): the Overview tab's pills (Visits,
+# Clients, Services, Retail, Staff) become real pages, each going deeper than
+# its Overview card. Every one of these reuses the SAME helpers the Overview
+# endpoint and Finance already use — nothing here recomputes a number a
+# canonical helper already owns.
+
+@api.get("/analytics/visits")
+async def analytics_visits(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    visit_rows = await _visit_rows_in_range(year_start, year_end)
+    total_visits = len(visit_rows)
+
+    visits_by_month_counts: Dict[str, int] = {}
+    heat_grid = [[0] * 4 for _ in range(7)]
+    for r in visit_rows:
+        d = r.get("date") or ""
+        if len(d) >= 7:
+            visits_by_month_counts[d[:7]] = visits_by_month_counts.get(d[:7], 0) + 1
+        ts = r.get("checked_in_at")
+        if ts:
+            try:
+                dt_local = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if dt_local.tzinfo is None:
+                    dt_local = dt_local.replace(tzinfo=timezone.utc)
+                dt_local = dt_local.astimezone(BUSINESS_TZ)
+                heat_grid[dt_local.weekday()][_analytics_time_band(dt_local.hour)] += 1
+            except Exception:
+                pass
+    by_month = [
+        {"month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"),
+         "total": visits_by_month_counts.get(f"{y}-{m:02d}", 0)}
+        for m in range(1, end_month + 1)
+    ]
+    heat_max = max((max(row) for row in heat_grid), default=0)
+    occupancy_heatmap = {
+        "weekdays": _ANALYTICS_WEEKDAY_NAMES,
+        "bands": _ANALYTICS_TIME_BANDS,
+        "grid": [
+            [{"count": heat_grid[wd][b], "intensity": round(heat_grid[wd][b] / heat_max, 3) if heat_max else 0.0} for b in range(4)]
+            for wd in range(7)
+        ],
+        "max_count": heat_max,
+    }
+
+    # No-show rate — of appointments that were actually resolved one way or
+    # the other (kept or missed outright), what share were missed.
+    #
+    # There is no clean "no_show" status in the current booking model: the
+    # live cancel flow marks a kept-the-money cancellation as status=
+    # "cancelled" + cancellation_charged=True (_cancel_booking_impl's own
+    # comment calls this the mechanism "for late-cancels/no-shows where the
+    # policy is we keep the money" — the two aren't distinguished further),
+    # Photo Specials sets an explicit no_show=True flag on its own bookings,
+    # and literal status="no_show" is legacy data that predates the current
+    # status enum (server.py's booking-status comment). Matching all three
+    # is the only way this doesn't silently read as "no no-shows, ever" on a
+    # business with real forfeited cancellations happening every week.
+    no_show_clause = {"$or": [{"no_show": True}, {"status": "no_show"}, {"status": "cancelled", "cancellation_charged": True}]}
+    no_show_count = await db.bookings.count_documents({"date": {"$gte": year_start, "$lte": year_end}, **no_show_clause})
+    try:
+        no_show_count += await db.bookings_archive.count_documents({"date": {"$gte": year_start, "$lte": year_end}, **no_show_clause})
+    except Exception:
+        pass
+    resolved_total = total_visits + no_show_count
+    no_show_rate = {
+        "no_show_count": no_show_count,
+        "resolved_total": resolved_total,
+        "pct": round(no_show_count / resolved_total * 100, 1) if resolved_total else None,
+    }
+
+    return {
+        "year": y, "start_date": year_start, "end_date": year_end,
+        "total_visits": total_visits,
+        "by_month": by_month,
+        "by_weekday": _weekday_breakdown(visit_rows, year_start, year_end),
+        "occupancy_heatmap": occupancy_heatmap,
+        "occupancy_rate_this_month": await _occupancy_rate_this_month(),
+        "no_show_rate": no_show_rate,
+    }
+
+
+@api.get("/analytics/clients")
+async def analytics_clients(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    visit_rows = await _visit_rows_in_range(year_start, year_end)
+    month_client_sets: Dict[str, set] = {}
+    for r in visit_rows:
+        d = r.get("date") or ""
+        cid = r.get("client_id")
+        if cid and len(d) >= 7:
+            month_client_sets.setdefault(d[:7], set()).add(cid)
+    visit_client_ids = sorted({r["client_id"] for r in visit_rows if r.get("client_id")})
+    first_visit_map = await _first_visit_date_for_clients(visit_client_ids)
+
+    clients_by_month = []
+    new_clients_total = 0
+    for m in range(1, end_month + 1):
+        key = f"{y}-{m:02d}"
+        new_count = 0
+        returning_count = 0
+        for cid in month_client_sets.get(key, set()):
+            first = first_visit_map.get(cid, key)
+            if first[:7] == key:
+                new_count += 1
+            else:
+                returning_count += 1
+        new_clients_total += new_count
+        clients_by_month.append({"month": key, "label": date(y, m, 1).strftime("%b"), "new": new_count, "returning": returning_count})
+
+    # Retention — distinct clients with a visit in the trailing N days from
+    # today (not from year_end), so this always reads "as of right now"
+    # regardless of which year is selected.
+    today_iso = today.isoformat()
+    retention = {}
+    for days, key in ((30, "active_30d"), (60, "active_60d"), (90, "active_90d")):
+        cutoff = (today - timedelta(days=days - 1)).isoformat()
+        rows = await _visit_rows_in_range(cutoff, today_iso)
+        retention[key] = len({r["client_id"] for r in rows if r.get("client_id")})
+
+    all_time_ids = await _all_time_visit_client_ids()
+    retention["total_clients_ever"] = len(all_time_ids)
+
+    # Top clients by lifetime spend. Filter to a POSITIVE total before
+    # ranking/slicing — a client whose refunds exceeded their revenue can
+    # land anywhere in the raw sort, and filtering after the [:10] slice
+    # would just drop them from the list instead of letting the next
+    # genuinely-positive client take their spot.
+    lifetime_map = await _bulk_client_lifetime_revenue(all_time_ids) if all_time_ids else {}
+    positive_totals = [
+        (cid, round(v.get("bookings", 0.0) + v.get("retail", 0.0), 2))
+        for cid, v in lifetime_map.items()
+    ]
+    positive_totals = [t for t in positive_totals if t[1] > 0]
+    ranked = sorted(positive_totals, key=lambda t: -t[1])[:10]
+    name_rows = await db.clients.find({"id": {"$in": [cid for cid, _ in ranked]}}, {"_id": 0, "id": 1, "name": 1}).to_list(10) if ranked else []
+    names = {r["id"]: r.get("name") for r in name_rows}
+    top_clients = [{"client_id": cid, "name": names.get(cid) or "Unknown client", "lifetime_spend": total} for cid, total in ranked]
+
+    lifetime_totals = await _lifetime_totals_for_clients(all_time_ids)
+    avg_client_spend = round(sum(lifetime_totals) / len(lifetime_totals), 2) if lifetime_totals else 0.0
+
+    return {
+        "year": y, "start_date": year_start, "end_date": year_end,
+        "new_clients_total": new_clients_total,
+        "clients_by_month": clients_by_month,
+        "retention": retention,
+        "top_clients": top_clients,
+        "avg_client_spend": avg_client_spend,
+    }
+
+
+@api.get("/analytics/services")
+async def analytics_services(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    program_lot_ids = await _get_training_program_lot_ids()
+    booking_cat_totals: Dict[str, float] = {}
+    by_month_booking: Dict[str, Dict[str, float]] = {}
+    for ev in await _booking_collection_events(year_start, year_end):
+        b = ev.get("booking") or {}
+        if _is_program_credit_redemption(b, program_lot_ids) and not b.get("is_prepaid_program_session"):
+            continue
+        svc = b.get("service_type") or "other"
+        amt = _business_revenue_from_booking_event(ev)
+        booking_cat_totals[svc] = booking_cat_totals.get(svc, 0.0) + amt
+        mkey = (ev.get("date") or "")[:7]
+        if mkey:
+            by_month_booking.setdefault(mkey, {}).setdefault(svc, 0.0)
+            by_month_booking[mkey][svc] += amt
+
+    retail_cat_totals: Dict[str, float] = {}
+    by_month_retail: Dict[str, float] = {}
+    async for r in db.retail_sales.find(
+        {"date": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1, "date": 1},
+    ):
+        cat = _finance_income_category(r)
+        rev = _business_revenue_net_of_sales_tax(r)
+        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + rev
+        if cat == "retail":
+            mkey = (r.get("date") or "")[:7]
+            if mkey:
+                by_month_retail[mkey] = by_month_retail.get(mkey, 0.0) + rev
+
+    retail_total_for_mix = round(retail_cat_totals.get("retail", 0.0), 2)
+    other_retail_sales = sum(v for k, v in retail_cat_totals.items() if k not in ("retail", "refunds_reversals"))
+    other_services = sum(v for k, v in booking_cat_totals.items() if k not in ("daycare", "boarding", "training", "grooming"))
+    service_mix_raw = {
+        "Daycare": round(booking_cat_totals.get("daycare", 0.0), 2),
+        "Boarding": round(booking_cat_totals.get("boarding", 0.0), 2),
+        "Training": round(booking_cat_totals.get("training", 0.0), 2),
+        "Grooming": round(booking_cat_totals.get("grooming", 0.0), 2),
+        "Retail": retail_total_for_mix,
+        "Other": round(other_services + other_retail_sales, 2),
+    }
+    mix_total = sum(service_mix_raw.values())
+    service_mix = sorted(
+        ({"label": label, "total": total, "pct": round(total / mix_total * 100, 1) if mix_total else 0.0}
+         for label, total in service_mix_raw.items() if total > 0),
+        key=lambda x: -x["total"],
+    )
+
+    by_month = []
+    for m in range(1, end_month + 1):
+        key = f"{y}-{m:02d}"
+        bm = by_month_booking.get(key, {})
+        by_month.append({
+            "month": key, "label": date(y, m, 1).strftime("%b"),
+            "Daycare": round(bm.get("daycare", 0.0), 2),
+            "Boarding": round(bm.get("boarding", 0.0), 2),
+            "Training": round(bm.get("training", 0.0), 2),
+            "Grooming": round(bm.get("grooming", 0.0), 2),
+            "Retail": round(by_month_retail.get(key, 0.0), 2),
+        })
+
+    summary = await _summary_range_data(year_start, year_end)
+
+    return {
+        "year": y, "start_date": year_start, "end_date": year_end,
+        "service_mix": service_mix,
+        "by_month": by_month,
+        "credit_pack_redeemed": {
+            "count": summary.get("credit_pack_redeemed_count", 0),
+            "value": summary.get("credit_pack_redeemed_value", 0.0),
+        },
+    }
+
+
+async def _register_retail_totals(start_date: str, end_date: str) -> Dict[str, float]:
+    """In-store (register) merchandise revenue/units for a date range — the
+    register-side half of the retail channel split, same per-line math
+    _top_sellers_for_range's register loop uses."""
+    revenue = 0.0
+    units = 0.0
+    sales = await db.pos_sales.find(
+        {"business_date": {"$gte": start_date, "$lte": end_date}, "status": {"$ne": "voided"}},
+        {"_id": 0, "line_items": 1},
+    ).to_list(50000)
+    for sale in sales:
+        for line in sale.get("line_items") or []:
+            # Same filter as _top_sellers_for_range's register loop,
+            # including the product_id requirement — otherwise a line with
+            # no catalog product counts toward this channel total but is
+            # invisible to top_sellers, and the two numbers stop reconciling.
+            if line.get("kind") != "retail" or not line.get("product_id"):
+                continue
+            qty = float(line.get("qty") or 0)
+            if qty <= 0:
+                continue
+            net_qty = max(0.0, qty - float(line.get("returned_qty") or 0))
+            if net_qty <= 0:
+                continue
+            units += net_qty
+            revenue += float(line.get("net_amount") or 0) * (net_qty / qty)
+    return {"revenue": round(revenue, 2), "units": round(units, 1)}
+
+
+@api.get("/analytics/retail")
+async def analytics_retail(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    top_sellers = await _top_sellers_for_range(year_start, year_end, limit=10)
+
+    in_store = await _register_retail_totals(year_start, year_end)
+    start_utc, end_utc = _business_range_utc_bounds(year_start, year_end)
+    online_orders = await shop_analytics_reports._paid_orders(db, start_utc, end_utc)
+    online_snapshot = shop_analytics_reports.sales_snapshot(online_orders)
+    online = {"revenue": online_snapshot["revenue"], "units": online_snapshot["units"], "orders": online_snapshot["orders"],
+              "average_order_value": online_snapshot["average_order_value"]}
+
+    by_month_counts: Dict[str, float] = {}
+    async for r in db.retail_sales.find(
+        {"date": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1, "date": 1},
+    ):
+        if _finance_income_category(r) != "retail":
+            continue
+        mkey = (r.get("date") or "")[:7]
+        if mkey:
+            by_month_counts[mkey] = by_month_counts.get(mkey, 0.0) + _business_revenue_net_of_sales_tax(r)
+    by_month = [
+        {"month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"), "total": round(by_month_counts.get(f"{y}-{m:02d}", 0.0), 2)}
+        for m in range(1, end_month + 1)
+    ]
+
+    return {
+        "year": y, "start_date": year_start, "end_date": year_end,
+        "top_sellers": top_sellers,
+        "channel_split": {"in_store": in_store, "online": online},
+        "by_month": by_month,
+    }
+
+
+@api.get("/analytics/staff")
+async def analytics_staff(
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+    year: Optional[int] = None,
+):
+    today = business_today()
+    y = _resolve_report_year(year)
+    year_start = f"{y}-01-01"
+    year_end = f"{y}-12-31" if y < today.year else today.isoformat()
+    end_month = date.fromisoformat(year_end).month
+
+    # Labor cost + revenue per month, through the SAME canonical
+    # _summary_range_data every Finance surface uses — one call per month so
+    # the per-month labor/revenue split can never drift from the whole
+    # year's own totals.
+    by_month = []
+    for m in range(1, end_month + 1):
+        m_start = date(y, m, 1)
+        if y == today.year and m == today.month:
+            m_end = today
+        else:
+            next_month = date(y + (1 if m == 12 else 0), 1 if m == 12 else m + 1, 1)
+            m_end = next_month - timedelta(days=1)
+        month_summary = await _summary_range_data(m_start.isoformat(), m_end.isoformat())
+        revenue = month_summary["completed_total"]
+        labor = month_summary["labor_total"]
+        by_month.append({
+            "month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"),
+            "labor_total": labor, "revenue": revenue,
+            "labor_pct_of_revenue": round(labor / revenue * 100, 1) if revenue else None,
+        })
+
+    # Hours worked per staff member this year — the sole proprietor's own
+    # hours are a draw out of profit, not labor (audit #19), same exclusion
+    # _summary_range_data applies.
+    start_utc, end_utc = _business_range_utc_bounds(year_start, year_end)
+    owner_ids = await _get_owner_user_ids()
+    entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": start_utc, "$lt": end_utc}, "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+    hours_by_user: Dict[str, float] = {}
+    for e in entries:
+        uid = e.get("user_id")
+        if not uid or uid in owner_ids:
+            continue
+        hours_by_user[uid] = hours_by_user.get(uid, 0.0) + float(e.get("hours") or 0)
+    uids = list(hours_by_user.keys())
+    users = await db.users.find({"id": {"$in": uids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1}).to_list(500) if uids else []
+    user_names = {u["id"]: (u.get("display_name") or u.get("name") or "Staff") for u in users}
+    staff_hours = sorted(
+        [{"user_id": uid, "name": user_names.get(uid, "Staff"), "hours": round(hrs, 1)} for uid, hrs in hours_by_user.items()],
+        key=lambda x: -x["hours"],
+    )
+
+    return {
+        "year": y, "start_date": year_start, "end_date": year_end,
+        "by_month": by_month,
+        "staff_hours": staff_hours,
     }
 
 
