@@ -417,6 +417,12 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         </div>
       )}
 
+      {/* Sidebar + main layout — the persistent glance (This Year, This Week)
+          stays visible on the left while the chart and ledger get the room
+          they need on the right, instead of one long stacked column. */}
+      <div className="flex flex-col xl:flex-row gap-6 items-start" data-testid="income-layout">
+      <div className="w-full xl:w-[360px] xl:shrink-0 flex flex-col gap-6" data-testid="income-sidebar">
+
       {/* This Year — persistent gross/expenses/net, best month/week, vs last year */}
       {yearOverview && (
         <div className="max-w-3xl bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="year-overview">
@@ -596,9 +602,12 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         </div>
       )}
 
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col gap-6" data-testid="income-main">
+
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
-        <div className="max-w-3xl bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">Longer-Range View</p>
@@ -966,6 +975,9 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       </div>
       )}
 
+      </div>
+      </div>
+
       {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={load} dogs={dogs} services={services} />}
       {takePaymentOpen && (
         <TakePaymentModal onClose={()=>setTakePaymentOpen(false)}
@@ -987,19 +999,32 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 function DailyBarChart({ points }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
+  const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
   return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3" data-testid="daily-bar-chart">
-      <div className="flex items-end gap-[2px] h-32 overflow-x-auto">
-        {points.map((p) => {
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4" data-testid="daily-bar-chart">
+      <div className="flex items-end gap-[3px] h-56 overflow-x-auto pt-6">
+        {points.map((p, i) => {
           const h = Math.max((p.total / max) * 100, 2);
+          const isPeak = i === peakIdx && p.total > 0;
           return (
-            <div key={p.date} className="flex-1 min-w-[6px] flex flex-col items-center group" title={`${p.date} · $${p.total.toFixed(2)}`}>
-              <div className="w-full bg-shPrimary/30 hover:bg-shPrimary transition rounded-t" style={{ height: `${h}%` }} />
+            <div key={p.date} className="flex-1 min-w-[6px] h-full flex flex-col justify-end items-center group relative" title={`${p.date} · $${p.total.toFixed(2)}`}>
+              {isPeak && (
+                <span className="absolute -top-5 text-[11px] font-black text-shPrimary whitespace-nowrap">{fmt(p.total)}</span>
+              )}
+              {/* bg-shSecondary/40 resolves to transparent here — the sh*
+                  theme colors are plain var() references, not Tailwind's
+                  alpha-channel format, so a background opacity modifier on
+                  them silently drops the color entirely. Arbitrary hex
+                  values sidestep that instead of relying on the modifier. */}
+              <div
+                className={`w-full transition rounded-t-md ${isPeak ? "bg-shPrimary" : "bg-[#1c2430] group-hover:bg-[#2a3648]"}`}
+                style={{ height: `${h}%` }}
+              />
             </div>
           );
         })}
       </div>
-      <div className="flex justify-between mt-2 text-[12px] text-shTextMuted font-black uppercase tracking-widest">
+      <div className="flex justify-between mt-3 pt-3 border-t border-shBorder/60 text-[12px] text-shTextMuted font-black uppercase tracking-widest">
         <span>{points[0]?.date}</span>
         <span>{points.length} days w/ revenue</span>
         <span>{points[points.length - 1]?.date}</span>
