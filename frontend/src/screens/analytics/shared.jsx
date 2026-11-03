@@ -161,6 +161,26 @@ export function ServiceMixBars({ mix }) {
   );
 }
 
+// Itemizes what's actually inside a Service Mix chart's "Other" bucket
+// (payment plans, invoice/account payments, unattributed credit-pack/
+// training-program sales, photography, etc.) instead of leaving it opaque.
+export function OtherBreakdown({ items }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="mt-4 pt-4 border-t border-shBorder/60" data-testid="other-breakdown">
+      <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">What's in "Other"</p>
+      <div className="space-y-1.5">
+        {items.map((it) => (
+          <div key={it.label} className="flex justify-between text-[12px]">
+            <span className="text-shTextMuted">{it.label}</span>
+            <span className="text-shText font-black">{fmt(it.total)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Card({ title, testid, children, className = "" }) {
   return (
     <div className={`bg-[#10151f] border border-shBorder rounded-xl p-5 ${className}`} data-testid={testid}>

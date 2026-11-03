@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import { fmt, StatTile, ServiceMixBars, Card, SERVICE_COLORS } from "./shared";
+import { fmt, StatTile, ServiceMixBars, OtherBreakdown, Card, SERVICE_COLORS } from "./shared";
 
 const STACK_CATEGORIES = ["Daycare", "Boarding", "Training", "Grooming", "Retail"];
 
@@ -69,6 +69,7 @@ export default function ServicesTab() {
 
       <Card title="Service Mix — Revenue Share" testid="service-mix">
         <ServiceMixBars mix={data.service_mix} />
+        <OtherBreakdown items={data.service_mix_other_breakdown} />
       </Card>
     </>
   );

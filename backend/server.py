@@ -35365,6 +35365,33 @@ async def _credit_pack_service_types(pack_ids) -> Dict[str, str]:
     return out
 
 
+_SERVICE_MIX_OTHER_RETAIL_LABELS = {
+    "credit_packs": "Credit Packs (unattributed)",
+    "training_programs": "Training Programs (unattributed)",
+    "payment_plans": "Payment Plans",
+    "account_payments": "Invoice / Account Payments",
+}
+_SERVICE_MIX_OTHER_BOOKING_LABELS = {"photography": "Photography", "other": "Other Services"}
+
+
+def _service_mix_other_breakdown(retail_cat_totals: Dict[str, float], booking_cat_totals: Dict[str, float]) -> List[Dict[str, Any]]:
+    """Itemize what's actually inside a Service Mix chart's "Other" bucket
+    (owner request 2026-11-03) instead of a single opaque total — whatever
+    is left after retail/refunds and the four named services are pulled
+    out, same split the "Other" total itself is built from."""
+    rows: List[Dict[str, Any]] = []
+    for k, v in retail_cat_totals.items():
+        if k in ("retail", "refunds_reversals") or v <= 0:
+            continue
+        rows.append({"label": _SERVICE_MIX_OTHER_RETAIL_LABELS.get(k, k.replace("_", " ").title()), "total": round(v, 2)})
+    for k, v in booking_cat_totals.items():
+        if k in _SERVICE_MIX_KNOWN_SERVICES or v <= 0:
+            continue
+        rows.append({"label": _SERVICE_MIX_OTHER_BOOKING_LABELS.get(k, (k or "other").replace("_", " ").title()), "total": round(v, 2)})
+    rows.sort(key=lambda r: -r["total"])
+    return rows
+
+
 async def _get_training_program_lot_ids() -> set:
     """Sprint 110cj/110cs — Returns the set of credit_lot IDs whose revenue
     has ALREADY been recognized at sale-time (so any booking that consumes
@@ -36772,6 +36799,9 @@ async def analytics_overview(
         for label, total in service_mix_raw.items() if total > 0
     ]
     service_mix.sort(key=lambda x: -x["total"])
+    # Owner request 2026-11-03 — itemize what's actually inside "Other"
+    # instead of one opaque total.
+    service_mix_other_breakdown = _service_mix_other_breakdown(retail_cat_totals, booking_cat_totals)
 
     top_sellers = await _top_sellers_for_range(year_start, year_end)
     occupancy_rate = await _occupancy_rate_this_month()
@@ -36794,6 +36824,7 @@ async def analytics_overview(
         "occupancy_heatmap": occupancy_heatmap,
         "clients_by_month": clients_by_month,
         "service_mix": service_mix,
+        "service_mix_other_breakdown": service_mix_other_breakdown,
         "top_sellers": top_sellers,
         "fun_stats": {
             "dogs_served_all_time": await _dogs_served_all_time(),
@@ -37046,6 +37077,9 @@ async def analytics_services(
          for label, total in service_mix_raw.items() if total > 0),
         key=lambda x: -x["total"],
     )
+    # Owner request 2026-11-03 — itemize what's actually inside "Other"
+    # instead of one opaque total.
+    service_mix_other_breakdown = _service_mix_other_breakdown(retail_cat_totals, booking_cat_totals)
 
     by_month = []
     for m in range(1, end_month + 1):
@@ -37065,6 +37099,7 @@ async def analytics_services(
     return {
         "year": y, "start_date": year_start, "end_date": year_end,
         "service_mix": service_mix,
+        "service_mix_other_breakdown": service_mix_other_breakdown,
         "by_month": by_month,
         "credit_pack_redeemed": {
             "count": summary.get("credit_pack_redeemed_count", 0),

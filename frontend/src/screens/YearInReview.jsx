@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { todayISO } from "../lib/date";
 import { MonthlyBarChart } from "./Income";
-import { fmt, prettyDate, StatTile, Card, ServiceMixBars, RankedBars } from "./analytics/shared";
+import { fmt, prettyDate, StatTile, Card, ServiceMixBars, OtherBreakdown, RankedBars } from "./analytics/shared";
 
 function ChangeBadge({ pct }) {
   if (pct == null) return null;
@@ -197,6 +197,7 @@ export default function YearInReview() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card title="Where the Money Came From" testid="yir-service-mix">
               <ServiceMixBars mix={overview.service_mix} />
+              <OtherBreakdown items={overview.service_mix_other_breakdown} />
             </Card>
             <Card title="Top Sellers" testid="yir-top-sellers">
               <RankedBars items={overview.top_sellers} labelOf={(p) => p.name} valueOf={(p) => p.units} valueLabelOf={(p) => `${p.units} sold`} emptyText="No retail sales yet this year" />

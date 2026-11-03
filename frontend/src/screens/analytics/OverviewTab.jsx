@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import { fmt, prettyDate, StatTile, CountBarChart, TwoColorStackedChart, OccupancyHeatmap, ServiceMixBars, RankedBars, Card } from "./shared";
+import { fmt, prettyDate, StatTile, CountBarChart, TwoColorStackedChart, OccupancyHeatmap, ServiceMixBars, OtherBreakdown, RankedBars, Card } from "./shared";
 
 export default function OverviewTab() {
   const [data, setData] = useState(null);
@@ -54,6 +54,7 @@ export default function OverviewTab() {
 
         <Card title="Service Mix — Revenue Share" testid="service-mix">
           <ServiceMixBars mix={data.service_mix} />
+          <OtherBreakdown items={data.service_mix_other_breakdown} />
         </Card>
 
         <Card title="Top Sellers — Retail" testid="top-sellers">
