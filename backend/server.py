@@ -35342,6 +35342,29 @@ async def list_transactions(
     return enriched
 
 
+_SERVICE_MIX_KNOWN_SERVICES = {"daycare", "boarding", "training", "grooming"}
+
+
+async def _credit_pack_service_types(pack_ids) -> Dict[str, str]:
+    """pack_id -> service_type for a batch of credit packs.
+
+    Used so a Service Mix chart can attribute a credit-pack sale's revenue
+    to the service it's actually for (Daycare/Boarding/Training/Grooming)
+    instead of lumping every credit-pack/training-program sale into "Other"
+    — the pack's service_type is already known at sale time (CreditPackIn.
+    service_type; training-program sales are always "training", no lookup
+    needed), it just was never looked up when building the chart. Shared by
+    /analytics/overview and /analytics/services so the two can't drift on
+    how this is resolved."""
+    ids = {pid for pid in pack_ids if pid}
+    if not ids:
+        return {}
+    out: Dict[str, str] = {}
+    async for p in db.credit_packs.find({"id": {"$in": list(ids)}}, {"_id": 0, "id": 1, "service_type": 1}):
+        out[p["id"]] = p.get("service_type") or ""
+    return out
+
+
 async def _get_training_program_lot_ids() -> set:
     """Sprint 110cj/110cs — Returns the set of credit_lot IDs whose revenue
     has ALREADY been recognized at sale-time (so any booking that consumes
@@ -36705,18 +36728,34 @@ async def analytics_overview(
     # program/account-payment rows as "Retail", and a signed refund row
     # (always negative, always categorized "refunds_reversals") would drag
     # the whole mix total negative and invert every percentage.
-    retail_cat_totals: Dict[str, float] = {}
-    async for r in db.retail_sales.find(
+    retail_rows_for_mix = await db.retail_sales.find(
         {"date": {"$gte": year_start, "$lte": year_end}},
-        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1},
-    ):
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1, "pack_id": 1},
+    ).to_list(50000)
+    pack_service_for_mix = await _credit_pack_service_types(r.get("pack_id") for r in retail_rows_for_mix)
+    retail_cat_totals: Dict[str, float] = {}
+    for r in retail_rows_for_mix:
         cat = _finance_income_category(r)
-        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + _business_revenue_net_of_sales_tax(r)
+        rev = _business_revenue_net_of_sales_tax(r)
+        # Attribute credit-pack/training-program sales to the real service
+        # they're for — already known at sale time — instead of "Other".
+        if cat == "training_programs":
+            booking_cat_totals["training"] = booking_cat_totals.get("training", 0.0) + rev
+            continue
+        if cat == "credit_packs":
+            svc = pack_service_for_mix.get(r.get("pack_id"))
+            if svc in _SERVICE_MIX_KNOWN_SERVICES:
+                booking_cat_totals[svc] = booking_cat_totals.get(svc, 0.0) + rev
+                continue
+            # Pack not found, or an unrecognized service_type — fall through
+            # to the old "Other" behavior rather than guessing.
+        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + rev
     retail_total_for_mix = round(retail_cat_totals.get("retail", 0.0), 2)
     # Real revenue, just not merchandise or one of the four named services —
-    # credit packs, training-program sales, payment plans, account/invoice
-    # payments. refunds_reversals is excluded outright: it's a signed
-    # reduction, not a revenue source, and would make this go negative.
+    # payment plans, account/invoice payments, and any credit-pack/training-
+    # program sale that couldn't be attributed above. refunds_reversals is
+    # excluded outright: it's a signed reduction, not a revenue source, and
+    # would make this go negative.
     other_retail_sales = sum(v for k, v in retail_cat_totals.items() if k not in ("retail", "refunds_reversals"))
     other_services = sum(v for k, v in booking_cat_totals.items() if k not in ("daycare", "boarding", "training", "grooming"))
     service_mix_raw = {
@@ -36958,19 +36997,37 @@ async def analytics_services(
             by_month_booking.setdefault(mkey, {}).setdefault(svc, 0.0)
             by_month_booking[mkey][svc] += amt
 
+    retail_rows_for_mix = await db.retail_sales.find(
+        {"date": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1, "pack_id": 1, "date": 1},
+    ).to_list(50000)
+    pack_service_for_mix = await _credit_pack_service_types(r.get("pack_id") for r in retail_rows_for_mix)
     retail_cat_totals: Dict[str, float] = {}
     by_month_retail: Dict[str, float] = {}
-    async for r in db.retail_sales.find(
-        {"date": {"$gte": year_start, "$lte": year_end}},
-        {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1, "date": 1},
-    ):
+    for r in retail_rows_for_mix:
         cat = _finance_income_category(r)
         rev = _business_revenue_net_of_sales_tax(r)
-        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + rev
-        if cat == "retail":
-            mkey = (r.get("date") or "")[:7]
+        # Attribute credit-pack/training-program sales to the real service
+        # they're for, same rule /analytics/overview applies, including the
+        # month-by-month breakdown — instead of "Other".
+        mkey = (r.get("date") or "")[:7]
+        if cat == "training_programs":
+            booking_cat_totals["training"] = booking_cat_totals.get("training", 0.0) + rev
             if mkey:
-                by_month_retail[mkey] = by_month_retail.get(mkey, 0.0) + rev
+                by_month_booking.setdefault(mkey, {}).setdefault("training", 0.0)
+                by_month_booking[mkey]["training"] += rev
+            continue
+        if cat == "credit_packs":
+            svc = pack_service_for_mix.get(r.get("pack_id"))
+            if svc in _SERVICE_MIX_KNOWN_SERVICES:
+                booking_cat_totals[svc] = booking_cat_totals.get(svc, 0.0) + rev
+                if mkey:
+                    by_month_booking.setdefault(mkey, {}).setdefault(svc, 0.0)
+                    by_month_booking[mkey][svc] += rev
+                continue
+        retail_cat_totals[cat] = retail_cat_totals.get(cat, 0.0) + rev
+        if cat == "retail" and mkey:
+            by_month_retail[mkey] = by_month_retail.get(mkey, 0.0) + rev
 
     retail_total_for_mix = round(retail_cat_totals.get("retail", 0.0), 2)
     other_retail_sales = sum(v for k, v in retail_cat_totals.items() if k not in ("retail", "refunds_reversals"))
