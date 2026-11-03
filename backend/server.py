@@ -3385,8 +3385,8 @@ def _presence_dates(start: str, end: Optional[str]) -> List[str]:
 
 
 from domains.pricing.boarding_units import (  # the stay-units rules, moved to domains/pricing (audit: server.py cap)
-    DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF, _billable_boarding_nights, _clock_minutes,
-    _boarding_full_day_cutoff_from_rules, _boarding_pickup_day_units, _billable_boarding_units,
+    DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF, DEFAULT_BOARDING_FREE_PICKUP_CUTOFF, _billable_boarding_nights, _clock_minutes,
+    _boarding_full_day_cutoff_from_rules, _boarding_free_pickup_cutoff_from_rules, _boarding_pickup_day_units, _billable_boarding_units,
 )
 from domains.bookings.checkout_quotes import (  # checkout quotes, moved to domains/bookings (step 2)
     _boarding_late_pickup_daycare_fee, _boarding_auto_base, _money_modifier_breakdown,

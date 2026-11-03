@@ -19,14 +19,15 @@ _boarding_pickup_day_units_fn = None
 _get_settings_fn = None
 _clock_minutes_fn = None
 _boarding_cutoff_from_rules_fn = None
+_boarding_free_cutoff_from_rules_fn = None
 _business_tz = None
 _now_iso_fn = None
 _default_boarding_cutoff = None
 _UNSET = object()
 
 
-def configure(*, db, business_today, billable_boarding_units, now_iso, default_boarding_cutoff, boarding_pickup_day_units=None, get_settings=None, clock_minutes=None, boarding_cutoff_from_rules=None, business_tz=None) -> None:
-    global _db, _business_today_fn, _billable_boarding_units_fn, _boarding_pickup_day_units_fn, _get_settings_fn, _clock_minutes_fn, _boarding_cutoff_from_rules_fn, _business_tz, _now_iso_fn, _default_boarding_cutoff
+def configure(*, db, business_today, billable_boarding_units, now_iso, default_boarding_cutoff, boarding_pickup_day_units=None, get_settings=None, clock_minutes=None, boarding_cutoff_from_rules=None, boarding_free_cutoff_from_rules=None, business_tz=None) -> None:
+    global _db, _business_today_fn, _billable_boarding_units_fn, _boarding_pickup_day_units_fn, _get_settings_fn, _clock_minutes_fn, _boarding_cutoff_from_rules_fn, _boarding_free_cutoff_from_rules_fn, _business_tz, _now_iso_fn, _default_boarding_cutoff
     _db = db
     _business_today_fn = business_today
     _billable_boarding_units_fn = billable_boarding_units
@@ -34,6 +35,7 @@ def configure(*, db, business_today, billable_boarding_units, now_iso, default_b
     _get_settings_fn = get_settings
     _clock_minutes_fn = clock_minutes
     _boarding_cutoff_from_rules_fn = boarding_cutoff_from_rules
+    _boarding_free_cutoff_from_rules_fn = boarding_free_cutoff_from_rules
     _business_tz = business_tz
     _now_iso_fn = now_iso
     _default_boarding_cutoff = default_boarding_cutoff
@@ -372,7 +374,9 @@ async def stay_policy_payload() -> Dict[str, Any]:
     _configured()
     s = await _get_settings_fn()
     rules = s.get("booking_rules") or {}
-    cutoff = _boarding_cutoff_from_rules_fn(rules) if _boarding_cutoff_from_rules_fn else "17:00"
+    free_cutoff = _boarding_free_cutoff_from_rules_fn(rules) if _boarding_free_cutoff_from_rules_fn else "12:00"
+    free_cutoff_12 = clock_12h(free_cutoff)
+    cutoff = _boarding_cutoff_from_rules_fn(rules) if _boarding_cutoff_from_rules_fn else "19:00"
     cutoff_12 = clock_12h(cutoff)
     policy = late_pickup_rules(s)
 
@@ -402,15 +406,17 @@ async def stay_policy_payload() -> Dict[str, Any]:
         boarding_lines.append(f"Boarding is billed per night (${boarding_price:.2f}/night).")
     grace = policy["grace_minutes"]
     grace_note = f" (with a {grace}-minute grace window)" if grace else ""
-    boarding_lines.append(f"Checkout time is {cutoff_12} — pickups at or before {cutoff_12}{grace_note} are free.")
+    boarding_lines.append(f"Pickups at or before {free_cutoff_12}{grace_note} are free.")
     if policy["mode"] == "full_daycare_day" and daycare_price:
-        boarding_lines.append(f"Pickups after {cutoff_12} add one full daycare day (${daycare_price:.2f} per dog).")
+        boarding_lines.append(f"Pickups between {free_cutoff_12} and {cutoff_12} add one full daycare day (${daycare_price:.2f} per dog).")
     elif policy["mode"] == "half_daycare_day" and daycare_price:
-        boarding_lines.append(f"Pickups after {cutoff_12} add a half daycare day (${daycare_price * 0.5:.2f} per dog).")
+        boarding_lines.append(f"Pickups between {free_cutoff_12} and {cutoff_12} add a half daycare day (${daycare_price * 0.5:.2f} per dog).")
     elif policy["mode"] == "flat_fee" and policy["flat_fee"] > 0:
-        boarding_lines.append(f"Pickups after {cutoff_12} add a ${policy['flat_fee']:.2f} late-pickup fee per dog.")
+        boarding_lines.append(f"Pickups between {free_cutoff_12} and {cutoff_12} add a ${policy['flat_fee']:.2f} late-pickup fee per dog.")
     else:
-        boarding_lines.append(f"No extra charge for pickups after {cutoff_12}.")
+        boarding_lines.append(f"No extra charge for pickups between {free_cutoff_12} and {cutoff_12}.")
+    if boarding_price:
+        boarding_lines.append(f"Pickups after {cutoff_12} are billed as one more full night of boarding (${boarding_price:.2f} per dog).")
     md_b = _md_line(md_boarding)
     if md_b:
         boarding_lines.append(md_b)
@@ -492,15 +498,19 @@ async def late_pickup_daycare_fee(
 ) -> Dict[str, Any]:
     """One dog's late-pickup charge at the FULL (first-dog) rate.
 
-    Boarding's pickup-day rule (industry-standard model): pickup at or before
-    the boarding checkout time (plus the configured grace window) is free;
-    pickup after it bills per the admin-configured charge mode — a full or
-    half daycare day at the default daycare service price (honoring the
-    client's grandfathered rate), a flat fee, or nothing. Callers apply the
-    additional-dog discount row factor themselves, exactly like the boarding
-    base. Returns amount 0.0 when the pickup is on time, no pickup time is
-    stored, the mode is none, no daycare service exists, or the rule helper
-    isn't wired (minimal test harnesses).
+    Boarding's pickup-day rule (owner request 2026-11-03) — three tiers:
+    pickup at or before the FREE cutoff (plus the configured grace window,
+    default noon) is free; between the free cutoff and `cutoff_time` (the
+    FULL-DAY cutoff, default 7 PM) bills per the admin-configured charge
+    mode — a full or half daycare day at the default daycare service price
+    (honoring the client's grandfathered rate), a flat fee, or nothing; at
+    or after the full-day cutoff this returns 0.0 (no daycare fee) because
+    that tier bills a full extra BOARDING night instead — see
+    `_billable_boarding_units` in domains/pricing/boarding_units.py.
+    Callers apply the additional-dog discount row factor themselves, exactly
+    like the boarding base. Returns amount 0.0 when the pickup is on time,
+    no pickup time is stored, the mode is none, no daycare service exists,
+    or the rule helper isn't wired (minimal test harnesses).
     """
     _configured()
     if cutoff_time is _UNSET:
@@ -517,7 +527,11 @@ async def late_pickup_daycare_fee(
     policy = late_pickup_rules(settings)
     if policy["mode"] == "none":
         return out
-    if float(_boarding_pickup_day_units_fn(pickup_time, cutoff_time, policy["grace_minutes"]) or 0) <= 0:
+    free_cutoff = (
+        _boarding_free_cutoff_from_rules_fn((settings or {}).get("booking_rules") or {})
+        if _boarding_free_cutoff_from_rules_fn else "12:00"
+    )
+    if float(_boarding_pickup_day_units_fn(pickup_time, free_cutoff, cutoff_time, policy["grace_minutes"]) or 0) <= 0:
         return out
     if policy["mode"] == "flat_fee":
         if policy["flat_fee"] <= 0:

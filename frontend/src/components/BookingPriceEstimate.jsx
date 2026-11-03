@@ -203,29 +203,40 @@ export default function BookingPriceEstimate({
     }
 
     // Late-pickup fee mirror (server is authoritative; this covers the
-    // multi-dog/multi-date fallback paths that skip /pricing/quote). Charge
-    // mode, grace window, and flat fee come from booking_rules, same as the
-    // backend engine reads.
+    // multi-dog/multi-date fallback paths that skip /pricing/quote). Three
+    // tiers, mirroring domains/pricing/boarding_units.py: at/before the free
+    // cutoff is free; between the free cutoff and the full-day cutoff bills
+    // the daycare-rate fee (mode/grace/flat fee from booking_rules); after
+    // the full-day cutoff bills one more full boarding NIGHT instead (added
+    // onto `units`, at the boarding rate, not the daycare fee).
     let latePickupFeeUnit = 0;
     const lpMode = ["full_daycare_day", "half_daycare_day", "flat_fee", "none"].includes(rules?.boarding_late_pickup_mode)
       ? rules.boarding_late_pickup_mode : "full_daycare_day";
-    if (serviceType === "boarding" && unitsValid && lpMode !== "none") {
+    if (serviceType === "boarding" && unitsValid) {
       const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
         ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
         : null;
-      const cutoffRaw = String(rules?.boarding_full_day_pickup_cutoff || "17:00");
-      const cutoffMinutes = /^\d{2}:\d{2}/.test(cutoffRaw)
-        ? Number(cutoffRaw.slice(0, 2)) * 60 + Number(cutoffRaw.slice(3, 5))
-        : 17 * 60;
-      const grace = Math.max(0, parseInt(rules?.boarding_late_pickup_grace_minutes, 10) || 0);
-      if (pickupMinutes !== null && pickupMinutes > cutoffMinutes + grace) {
-        if (lpMode === "flat_fee") {
-          latePickupFeeUnit = Math.max(0, Number(rules?.boarding_late_pickup_flat_fee || 0));
-        } else {
-          const daycareSvc = services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false && s.is_default)
-            || services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false);
-          const dayRate = Number(daycareSvc?.base_price || 0);
-          latePickupFeeUnit = lpMode === "half_daycare_day" ? dayRate * 0.5 : dayRate;
+      if (pickupMinutes !== null) {
+        const freeRaw = String(rules?.boarding_free_pickup_cutoff || "12:00");
+        const freeMinutes = /^\d{2}:\d{2}/.test(freeRaw)
+          ? Number(freeRaw.slice(0, 2)) * 60 + Number(freeRaw.slice(3, 5))
+          : 12 * 60;
+        const fullDayRaw = String(rules?.boarding_full_day_pickup_cutoff || "19:00");
+        const fullDayMinutes = /^\d{2}:\d{2}/.test(fullDayRaw)
+          ? Number(fullDayRaw.slice(0, 2)) * 60 + Number(fullDayRaw.slice(3, 5))
+          : 19 * 60;
+        const grace = Math.max(0, parseInt(rules?.boarding_late_pickup_grace_minutes, 10) || 0);
+        if (pickupMinutes > fullDayMinutes) {
+          units += 1; // very late — one more full boarding night, not a fee
+        } else if (pickupMinutes > freeMinutes + grace && lpMode !== "none") {
+          if (lpMode === "flat_fee") {
+            latePickupFeeUnit = Math.max(0, Number(rules?.boarding_late_pickup_flat_fee || 0));
+          } else {
+            const daycareSvc = services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false && s.is_default)
+              || services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false);
+            const dayRate = Number(daycareSvc?.base_price || 0);
+            latePickupFeeUnit = lpMode === "half_daycare_day" ? dayRate * 0.5 : dayRate;
+          }
         }
       }
     }

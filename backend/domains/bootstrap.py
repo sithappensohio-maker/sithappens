@@ -131,6 +131,7 @@ def register_domains(
         get_settings=server_globals["get_settings"],
         clock_minutes=server_globals["_clock_minutes"],
         boarding_cutoff_from_rules=server_globals["_boarding_full_day_cutoff_from_rules"],
+        boarding_free_cutoff_from_rules=server_globals["_boarding_free_pickup_cutoff_from_rules"],
         business_tz=server_globals["BUSINESS_TZ"],
         now_iso=now_iso,
         default_boarding_cutoff=server_globals["DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF"],

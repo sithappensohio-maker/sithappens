@@ -254,7 +254,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     api.get("/settings/public")
        .then(r => {
          setClosedDates(Array.isArray(r.data?.closed_dates) ? r.data.closed_dates : []);
-         const cutoff = r.data?.booking_rules?.boarding_full_day_pickup_cutoff;
+         const cutoff = r.data?.booking_rules?.boarding_free_pickup_cutoff;
          if (/^\d{2}:\d{2}$/.test(cutoff || "")) setPickupTime(cutoff);
        })
        .catch(() => setClosedDates([]));
