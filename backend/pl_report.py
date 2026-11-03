@@ -313,17 +313,25 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         s["total"] = round(s["total"] + cash, 2)
     by_service = sorted(by_service_map.values(), key=lambda x: -x["total"])
 
-    # ── Top 5 clients by collected revenue
+    # ── Top 5 clients by collected revenue.
+    # Bug fix (owner report 2026-11-03): this used to count COLLECTION
+    # EVENTS, not visits — a client who always pays via a prepaid credit
+    # pack (no cash collected at checkout) showed 0 visits / $0 here and
+    # could vanish from the ranking entirely, even with a dozen real
+    # visits, while top_dogs (below) counted the same visits correctly.
+    # Now sourced from the same `completed` pool and `_cash_revenue` rule
+    # as by_dog_map, so "visits" means the same thing on both cards, and a
+    # booking paid in two installments (previously two collection events,
+    # i.e. two "visits") counts once, correctly.
     by_client_map: Dict[str, Dict[str, Any]] = {}
-    for ev in collection_events:
-        b = ev.get("booking") or {}
+    for b in completed:
         cid = b.get("bill_to_client_id") or b.get("client_id")  # the family that paid (friends & family: the payer)
-        name = b.get("bill_to_client_name") or b.get("client_name") or "Unknown"
         if not cid:
             continue
+        name = b.get("bill_to_client_name") or b.get("client_name") or "Unknown"
         c = by_client_map.setdefault(cid, {"client_id": cid, "name": name, "visits": 0, "total": 0.0})
         c["visits"] += 1
-        c["total"] = round(c["total"] + float(ev["amount"]), 2)
+        c["total"] = round(c["total"] + _cash_revenue(b), 2)
     top_clients = sorted(by_client_map.values(), key=lambda x: -x["total"])[:5]
 
     # ── Per-dog visit counts (operational — actual completed visits by
