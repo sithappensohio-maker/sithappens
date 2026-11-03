@@ -190,10 +190,10 @@ export default function MonthlyReports() {
     setDetail(null);
     setDetailLoading(true);
     try {
-      const { data } = await api.get("/reports/monthly/detail", { params: { year, month: m } });
+      const { data } = await api.get("/reports/monthly/detail", { params: { year, month: m }, timeout: 45000 });
       setDetail(data);
     } catch (e) {
-      setMsg(`Load failed: ${e.response?.data?.detail || e.message}`);
+      setMsg(`Load failed: ${e.code === "ECONNABORTED" ? "Timed out — try again." : (e.response?.data?.detail || e.message)}`);
     } finally { setDetailLoading(false); }
   };
 
@@ -201,20 +201,20 @@ export default function MonthlyReports() {
     const key = `m${m}`;
     setPdfBusyKey(key);
     try {
-      const res = await api.get("/reports/monthly/detail/pdf", { params: { year, month: m }, responseType: "blob" });
+      const res = await api.get("/reports/monthly/detail/pdf", { params: { year, month: m }, responseType: "blob", timeout: 45000 });
       downloadBlob(res.data, `Monthly_Report_${year}-${String(m).padStart(2, "0")}.pdf`);
     } catch (e) {
-      setMsg(`Download failed: ${e.response?.data?.detail || e.message}`);
+      setMsg(`Download failed: ${e.code === "ECONNABORTED" ? "Timed out — try again, or check a smaller range." : (e.response?.data?.detail || e.message)}`);
     } finally { setPdfBusyKey(null); }
   };
 
   const downloadYearPdf = async () => {
     setPdfBusyKey("year");
     try {
-      const res = await api.get("/reports/monthly/year-pdf", { params: { year }, responseType: "blob" });
+      const res = await api.get("/reports/monthly/year-pdf", { params: { year }, responseType: "blob", timeout: 120000 });
       downloadBlob(res.data, `Monthly_Reports_${year}.pdf`);
     } catch (e) {
-      setMsg(`Download failed: ${e.response?.data?.detail || e.message}`);
+      setMsg(`Download failed: ${e.code === "ECONNABORTED" ? "Timed out — a full year is a lot of data, try one month at a time." : (e.response?.data?.detail || e.message)}`);
     } finally { setPdfBusyKey(null); }
   };
 

@@ -38961,6 +38961,71 @@ def _register_method_delta(expected: Dict[str, float], closeout: Optional[Dict[s
     return out
 
 
+async def _payment_method_totals_for_range(start_date: str, end_date: str) -> Dict[str, float]:
+    """Payment-method dollar split for a date range, in a handful of
+    range-wide queries — NOT via _register_range_summary.
+
+    _register_range_summary loops one full _register_day_cash_flow (several
+    queries of its own — payment_ledger, two _booking_rows_anywhere calls,
+    retail_sales, pos_sales, till adjustments, closeout lookup) for EVERY
+    day in the range. That's correct for drawer reconciliation (which needs
+    the full day-by-day closeout/till picture) but on a real month it's
+    100+ sequential round trips, and on a full year it's thousands — slow
+    enough to look hung to the caller. A monthly/yearly report only needs
+    the method totals, so this applies the exact same bucketing rules
+    (_register_day_cash_flow's POS split-tender + void-reversal logic,
+    copied verbatim) over ONE range-wide retail_sales fetch + ONE range-wide
+    pos_sales lookup + the already-range-wide _booking_collection_events,
+    instead of per day. Keep this in sync with _register_day_cash_flow's
+    bucketing rules if those ever change — do not swap back to
+    _register_range_summary here for "simplicity"; that regresses the hang.
+    """
+    incoming_by_method = _empty_method_totals()
+
+    for ev in await _booking_collection_events(start_date, end_date):
+        b = ev.get("booking") or {}
+        amt = float(ev.get("amount") or 0)
+        if amt <= 0:
+            continue
+        collected_method = b.get("cash_payment_method") if b.get("payment_method") == "credits" else b.get("payment_method")
+        _add_method_total(incoming_by_method, collected_method, amt)
+
+    retail = await db.retail_sales.find(
+        {"date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0},
+    ).to_list(50000)
+    pos_sale_ids = sorted({r.get("pos_sale_id") for r in retail if r.get("pos_sale_id")})
+    pos_tenders_by_sale: Dict[str, List[Dict[str, Any]]] = {}
+    if pos_sale_ids:
+        async for s in db.pos_sales.find({"id": {"$in": pos_sale_ids}}, {"_id": 0, "id": 1, "tenders": 1}):
+            tds = [t for t in (s.get("tenders") or []) if abs(float(t.get("amount") or 0)) >= 0.005]
+            if tds:
+                pos_tenders_by_sale[s["id"]] = tds
+    pos_sales_bucketed: set = set()
+    pos_voids_bucketed: set = set()
+    for r in retail:
+        amt = round(float(r.get("amount") or 0), 2)
+        if abs(amt) < 0.005:
+            continue
+        pos_id = r.get("pos_sale_id")
+        row_kind = r.get("source_kind") or ""
+        partial_reversal = row_kind in ("pos_sale_return", "refund") or amt < 0
+        if pos_id and pos_id in pos_tenders_by_sale and not (partial_reversal and row_kind != "pos_sale_void"):
+            if row_kind == "pos_sale_void":
+                if pos_id not in pos_voids_bucketed:
+                    pos_voids_bucketed.add(pos_id)
+                    for t in pos_tenders_by_sale[pos_id]:
+                        _add_method_total(incoming_by_method, t.get("method"), -round(float(t.get("amount") or 0), 2))
+            else:
+                if pos_id not in pos_sales_bucketed:
+                    pos_sales_bucketed.add(pos_id)
+                    for t in pos_tenders_by_sale[pos_id]:
+                        _add_method_total(incoming_by_method, t.get("method"), round(float(t.get("amount") or 0), 2))
+        else:
+            _add_method_total(incoming_by_method, r.get("payment_method"), amt)
+
+    return incoming_by_method
+
+
 async def _register_range_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
     """Register-first reporting summary over a date range.
 

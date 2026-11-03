@@ -25,12 +25,12 @@ def month_bounds(year: int, month: int) -> tuple[str, str]:
 async def build_monthly_report_data(db, year: int, month: int) -> Dict[str, Any]:
     """Full report payload for one calendar month."""
     import pl_report
-    from server import _sales_tax_window_summary, _register_range_summary, mileage_rate_for_year
+    from server import _sales_tax_window_summary, _payment_method_totals_for_range, mileage_rate_for_year
 
     start_date, end_date = month_bounds(year, month)
     pl = await pl_report.build_pl_data(db, start_date, end_date)
     sales_tax = await _sales_tax_window_summary(start_date, end_date)
-    register = await _register_range_summary(start_date, end_date)
+    payment_methods = await _payment_method_totals_for_range(start_date, end_date)
 
     # Recurring bills paid this month — a labeled subset of the expenses
     # pl_report already totaled (bills.py tags every bill payment with
@@ -76,7 +76,7 @@ async def build_monthly_report_data(db, year: int, month: int) -> Dict[str, Any]
         "generated_at": pl["generated_at"],
         "pl": pl,
         "sales_tax": sales_tax,
-        "payment_methods": register.get("incoming_by_method") or {},
+        "payment_methods": payment_methods,
         "bills_paid": {"rows": bills_paid, "total": bills_paid_total},
         "one_off_expenses_total": one_off_expenses_total,
         "gift_cards": {
