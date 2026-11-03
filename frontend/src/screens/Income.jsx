@@ -1033,10 +1033,30 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   );
 }
 
+// Heat-map coloring: light blue (lowest in the set) grading smoothly up
+// through cyan/green/yellow/orange to bright red (highest). Zero-value bars
+// stay a neutral "no data" grey rather than joining the cold end of the
+// scale — a quiet month isn't the "coldest" dollar amount, it's no amount.
+function heatColor(value, min, max) {
+  if (!(value > 0)) return null;
+  const t = max === min ? 1 : (value - min) / (max - min); // 0 (coldest) → 1 (hottest)
+  const hue = 215 - t * 215; // 215° light blue → 0° red
+  const sat = 85;
+  const light = 58 - t * 8; // slightly deeper toward the red end for contrast
+  return `hsl(${hue}, ${sat}%, ${light}%)`;
+}
+
+function heatRange(points, valueOf) {
+  const vals = points.map(valueOf).filter((v) => v > 0);
+  if (!vals.length) return { min: 0, max: 0 };
+  return { min: Math.min(...vals), max: Math.max(...vals) };
+}
+
 function DailyBarChart({ points }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
   const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
+  const { min: heatMin, max: heatMax } = heatRange(points, (p) => p.total);
   return (
     <div className="bg-[#10151f] border border-shBorder rounded-lg p-4" data-testid="daily-bar-chart">
       {/* justify-center + a per-bar max-width keep a sparse range (e.g. two
@@ -1046,19 +1066,15 @@ function DailyBarChart({ points }) {
         {points.map((p, i) => {
           const h = Math.max((p.total / max) * 100, 2);
           const isPeak = i === peakIdx && p.total > 0;
+          const color = heatColor(p.total, heatMin, heatMax);
           return (
             <div key={p.date} className="flex-1 max-w-[44px] min-w-[6px] h-full flex flex-col justify-end items-center group relative" title={`${p.date} · $${p.total.toFixed(2)}`}>
               {isPeak && (
                 <span className="absolute -top-5 text-[11px] font-black text-shPrimary whitespace-nowrap">{fmt(p.total)}</span>
               )}
-              {/* bg-shSecondary/40 resolves to transparent here — the sh*
-                  theme colors are plain var() references, not Tailwind's
-                  alpha-channel format, so a background opacity modifier on
-                  them silently drops the color entirely. Arbitrary hex
-                  values sidestep that instead of relying on the modifier. */}
               <div
-                className={`w-full transition rounded-t-md ${isPeak ? "bg-shPrimary" : "bg-[#1c2430] group-hover:bg-[#2a3648]"}`}
-                style={{ height: `${h}%` }}
+                className="w-full transition rounded-t-md"
+                style={{ height: `${h}%`, background: color || "#1c2430" }}
               />
             </div>
           );
@@ -1082,22 +1098,24 @@ function compactFmt(n) { return `$${Math.round(Number(n) || 0).toLocaleString()}
 function MonthlyBarChart({ points, currentMonth }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
-  const peakIdx = points.reduce((best, p, i) => p.total > points[best].total ? i : best, 0);
+  const { min: heatMin, max: heatMax } = heatRange(points, (p) => p.total);
   return (
     <div data-testid="monthly-bar-chart">
       <div className="flex items-end justify-center gap-3 h-56 pt-7">
-        {points.map((p, i) => {
+        {points.map((p) => {
           const h = Math.max((p.total / max) * 100, 2);
           const isCurrent = p.month === currentMonth;
-          // "this month" always wins the highlight over "best month ever" —
-          // more useful day-to-day, and the two colors never fight on one bar.
-          const isPeak = i === peakIdx && p.total > 0 && !isCurrent;
-          const labelColor = isCurrent ? "text-shSecondary" : isPeak ? "text-shPrimary" : "text-shTextMuted";
-          const barColor = isCurrent ? "bg-shSecondary" : isPeak ? "bg-shPrimary" : "bg-[#1c2430] group-hover:bg-[#2a3648]";
+          const color = heatColor(p.total, heatMin, heatMax);
+          const labelColor = isCurrent ? "text-shSecondary" : "text-shTextMuted";
           return (
             <div key={p.month} className="flex-1 max-w-[64px] h-full flex flex-col justify-end items-center group relative" title={`${p.label} · $${p.total.toFixed(2)}`}>
               <span className={`absolute -top-5 text-[10px] font-black whitespace-nowrap ${labelColor}`}>{compactFmt(p.total)}</span>
-              <div className={`w-full transition rounded-t-md ${barColor}`} style={{ height: `${h}%` }} />
+              {/* Current month keeps a ring so "today" stays findable even
+                  when its heat color blends in with a neighboring bar. */}
+              <div
+                className={`w-full transition rounded-t-md ${isCurrent ? "ring-2 ring-shSecondary ring-inset" : ""}`}
+                style={{ height: `${h}%`, background: color || "#1c2430" }}
+              />
             </div>
           );
         })}
