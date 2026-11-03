@@ -223,12 +223,6 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # only the cash slice ABOVE its credit_value, and nothing a gift card
     # paid. Pure credit burns return $0 — the original pack sale already
     # wrote a retail_sales row.
-    # Sprint 110eg — `_is_program_redemption` retained for backwards-compat
-    # filtering (the old per-redemption path), but credit-pack burns now
-    # also yield $0 via `_cash_revenue`. We DON'T pre-filter the booking
-    # list anymore — instead each aggregator below uses `_cash_revenue`
-    # so credit-paid rows still appear in counts (so the operator can see
-    # them) but contribute $0 to revenue.
     program_lots = await db.credit_lots.find(
         {"$or": [
             {"pack_kind": "training_program"},
@@ -248,15 +242,19 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
                 return True
         return False
 
-    # Filter program redemptions out of the booking pool BEFORE aggregations
-    # so every downstream tally (totals, by_service, by_client, by_day, top_dogs)
-    # naturally excludes the double-count. (Other credit redemptions stay in
-    # the list and earn $0 via `_cash_revenue` so they still show up in
-    # counts / by_service rows when there's a paid add-on slice.)
-    # Outstanding reads every service-date row in the window, unfiltered, the
-    # same rows the weekly Unpaid tile reads (end_of_day.window_owed).
+    # `bookings`/`completed` stay UNFILTERED by _is_program_redemption — a
+    # training-program session a dog actually attended is a real visit and
+    # real staff-hours, whether or not any new cash changed hands that day.
+    # Bug fix (owner report 2026-11-03): this used to remove those bookings
+    # from the pool entirely, which didn't just zero their dollars (the
+    # correct, intended behavior — `_cash_revenue` already returns $0 for a
+    # pure credit redemption, since the pack sale recognized that revenue
+    # already) but also deleted the VISIT — so a dog that came in for a
+    # prepaid training session vanished from top_dogs/completed_count/staff-
+    # hours as if it never happened. `_is_program_redemption` is kept only
+    # for the narrower `collection_events` filter below, which guards
+    # REVENUE (not visit counts) and is unaffected by this fix.
     window_rows = bookings
-    bookings = [b for b in bookings if not _is_program_redemption(b)]
 
     # ── Income totals — Step 4B-8: booking REVENUE is attributed to the
     # America/New_York business date the money was collected (matching the
