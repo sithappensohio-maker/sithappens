@@ -1047,7 +1047,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 // through cyan/green/yellow/orange to bright red (highest). Zero-value bars
 // stay a neutral "no data" grey rather than joining the cold end of the
 // scale — a quiet month isn't the "coldest" dollar amount, it's no amount.
-function heatColor(value, min, max) {
+export function heatColor(value, min, max) {
   if (!(value > 0)) return null;
   const t = max === min ? 1 : (value - min) / (max - min); // 0 (coldest) → 1 (hottest)
   const hue = 215 - t * 215; // 215° light blue → 0° red
@@ -1056,7 +1056,7 @@ function heatColor(value, min, max) {
   return `hsl(${hue}, ${sat}%, ${light}%)`;
 }
 
-function heatRange(points, valueOf) {
+export function heatRange(points, valueOf) {
   const vals = points.map(valueOf).filter((v) => v > 0);
   if (!vals.length) return { min: 0, max: 0 };
   return { min: Math.min(...vals), max: Math.max(...vals) };
@@ -1105,7 +1105,7 @@ function DailyBarChart({ points }) {
 // where fmt()'s full "$1550.00" would crowd 11-12 of these in a row.
 function compactFmt(n) { return `$${Math.round(Number(n) || 0).toLocaleString()}`; }
 
-function MonthlyBarChart({ points, currentMonth }) {
+export function MonthlyBarChart({ points, currentMonth }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
   const { min: heatMin, max: heatMax } = heatRange(points, (p) => p.total);

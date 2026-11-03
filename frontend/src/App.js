@@ -24,6 +24,7 @@ import RunSheet from "./screens/RunSheet";
 import Income from "./screens/Income";
 import Analytics from "./screens/Analytics";
 import MonthlyReports from "./screens/MonthlyReports";
+import YearInReview from "./screens/YearInReview";
 import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
 import Pos from "./screens/Pos";
@@ -193,7 +194,7 @@ function AdminShell() {
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },
-    { label: "Money", ids: ["income", "analytics", "monthly_reports", "gift_cards", "credit_reconciliation"] },
+    { label: "Money", ids: ["income", "analytics", "monthly_reports", "year_in_review", "gift_cards", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
     { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "theme_studio", "tutorials"] },
   ];
@@ -759,6 +760,7 @@ function AdminShell() {
           {tab === "income" && navAllowed("income") && <Income openCreateExpenseOnMount={pendingCreateTab === "income"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
           {tab === "analytics" && navAllowed("analytics") && <Analytics />}
           {tab === "monthly_reports" && navAllowed("monthly_reports") && <MonthlyReports />}
+          {tab === "year_in_review" && navAllowed("year_in_review") && <YearInReview />}
           {tab === "credit_reconciliation" && navAllowed("credit_reconciliation") && <CreditReconciliation />}
           {tab === "shop_manager" && navAllowed("shop_manager") && <ShopManager openCreateOnMount={pendingCreateTab === "shop_manager"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
           {/* Old "shop_organization" tab id redirects here rather than showing a broken/blank screen. */}
@@ -924,6 +926,7 @@ export const NAV_ITEMS = [
     { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "analytics", label: "Analytics", icon: "fa-chart-pie", perm: "finance_reports" },
     { id: "monthly_reports", label: "Monthly Reports", icon: "fa-file-invoice-dollar", perm: "finance_reports" },
+    { id: "year_in_review", label: "Year in Review", icon: "fa-star", perm: "finance_reports" },
     { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
     { id: "shop_manager", label: "Shop Manager", icon: "fa-bag-shopping", perm: "view_shop_categories" },
     { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
