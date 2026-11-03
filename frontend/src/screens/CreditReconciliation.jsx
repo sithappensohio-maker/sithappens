@@ -50,29 +50,89 @@ function PoolBox({ name, row }) {
   );
 }
 
-function DetailModal({ client, onClose }) {
+function RepairPoolForm({ clientId, pool, row, onRepaired }) {
+  const [target, setTarget] = useState(() => {
+    const guess = row?.tracked_total ?? row?.lot_remaining ?? 0;
+    return String(guess);
+  });
+  const [note, setNote] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    setErr("");
+    const value = parseFloat(target);
+    if (Number.isNaN(value) || value < 0) { setErr("Enter a valid balance, 0 or more."); return; }
+    setBusy(true);
+    try {
+      await api.post(`/admin/credits/reconciliation/${clientId}/repair`, {
+        service_type: pool, target_balance: value, note,
+      });
+      setConfirming(false);
+      setNote("");
+      if (onRepaired) await onRepaired();
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Repair failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 rounded-lg border border-shAccent/35 bg-shAccent/5 p-3 space-y-2">
+      <div className="text-[10px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-wrench mr-1.5"/>Repair {pool}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-shTextMuted">Correct balance should be</label>
+        <input type="number" step="0.01" min="0" value={target} onChange={(e)=>{ setTarget(e.target.value); setConfirming(false); }}
+          className="w-24 bg-black/25 border border-shBorder rounded-lg px-2 py-1.5 text-shText text-sm"/>
+      </div>
+      <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="Note (shown in her credit history)"
+        className="w-full bg-black/25 border border-shBorder rounded-lg px-2 py-1.5 text-shText text-xs"/>
+      {err && <div className="text-xs text-red-300 font-semibold">{err}</div>}
+      {!confirming ? (
+        <button onClick={()=>setConfirming(true)} disabled={busy || target === ""} className="bg-shAccent text-black px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+          Repair this pool
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 bg-black/20 rounded-lg p-2">
+          <span className="text-xs text-shTextMuted">Set her displayed balance <strong className="text-shText">and</strong> backing credit lots to <strong className="text-shText">{fmt(parseFloat(target) || 0)}</strong>?</span>
+          <button onClick={submit} disabled={busy} className="bg-red-500 text-white px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+            {busy ? "Applying…" : "Confirm repair"}
+          </button>
+          <button onClick={()=>setConfirming(false)} disabled={busy} className="text-xs text-shTextMuted underline">Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailModal({ client, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let alive = true;
-    setLoading(true); setError(""); setData(null);
-    api.get(`/admin/credits/reconciliation/${client.id}`)
-      .then((r) => { if (alive) setData(r.data || {}); })
-      .catch((e) => { if (alive) setError(e.response?.data?.detail || "Could not load credit history"); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+  const reload = useCallback(() => {
+    setLoading(true); setError("");
+    return api.get(`/admin/credits/reconciliation/${client.id}`)
+      .then((r) => setData(r.data || {}))
+      .catch((e) => setError(e.response?.data?.detail || "Could not load credit history"))
+      .finally(() => setLoading(false));
   }, [client.id]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const handleRepaired = async () => {
+    await reload();
+    if (onChanged) await onChanged();
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3" onMouseDown={(e)=>{ if (e.target === e.currentTarget) onClose(); }}>
       <div className="bg-[var(--sh-card-base)] border border-shSecondary/35 rounded-2xl w-full max-w-6xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto p-4 md:p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-eye mr-2"/>Read-only detail</div>
+            <div className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-eye mr-2"/>Detail</div>
             <h2 className="text-xl font-black uppercase italic text-shText mt-1">{client.name}</h2>
-            <p className="text-xs text-shTextMuted mt-1">Nothing on this screen can change credits.</p>
+            <p className="text-xs text-shTextMuted mt-1">Everything here is read-only except the Repair action on a flagged pool below — that always writes a normal, visible credit adjustment.</p>
           </div>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText p-2"><i className="fas fa-times text-xl"/></button>
         </div>
@@ -87,6 +147,23 @@ function DetailModal({ client, onClose }) {
               <StatCard icon="fa-graduation-cap" label="Training displayed" value={fmt(data.client?.training_credits)} tone="blue" />
               <StatCard icon="fa-moon" label="Boarding displayed" value={fmt(data.client?.boarding_credits)} tone="orange" />
             </div>
+
+            <section>
+              <h3 className="text-sm font-black uppercase italic text-shText mb-2">Pool status</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                {["daycare", "training", "boarding"].map((pool) => {
+                  const row = client.pools?.[pool];
+                  return (
+                    <div key={pool}>
+                      <PoolBox name={pool.charAt(0).toUpperCase() + pool.slice(1)} row={row} />
+                      {row?.status === "issue" && (
+                        <RepairPoolForm clientId={client.id} pool={pool} row={row} onRepaired={handleRepaired} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
 
             <section>
               <h3 className="text-sm font-black uppercase italic text-shText mb-2">Credit lots ({data.lots?.length || 0})</h3>
@@ -153,6 +230,13 @@ export default function CreditReconciliation() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Keep an open detail modal's pool numbers fresh after a repair triggers a reload.
+  useEffect(() => {
+    if (!detailClient || !data) return;
+    const fresh = (data.clients || []).find((c) => c.id === detailClient.id);
+    if (fresh) setDetailClient(fresh);
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (data?.clients || []).filter((row) => {
@@ -189,7 +273,7 @@ export default function CreditReconciliation() {
         right={<div className="flex flex-wrap gap-2"><button onClick={exportCsv} disabled={!data} className="bg-[var(--sh-card-base)] border border-shBorder text-gray-200 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-40"><i className="fas fa-file-csv mr-2"/>Export</button><button onClick={load} disabled={loading} className="bg-shPrimary text-black px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-50"><i className={`fas ${loading ? "fa-spinner fa-spin" : "fa-rotate"} mr-2`}/>{loading ? "Checking…" : "Refresh"}</button></div>}
       />
 
-      <div className="bg-shSecondary/10 border border-shSecondary/30 rounded-xl p-3 text-sm text-shTextMuted"><i className="fas fa-lock text-shSecondary mr-2"/><strong className="text-shText">Read-only:</strong> this report cannot add, remove, or repair credits. A flagged legacy balance is not changed unless you review it separately.</div>
+      <div className="bg-shSecondary/10 border border-shSecondary/30 rounded-xl p-3 text-sm text-shTextMuted"><i className="fas fa-lock text-shSecondary mr-2"/><strong className="text-shText">Mostly read-only:</strong> this report never changes credits on its own. Open a flagged client's history to repair a specific pool — every repair sets both the displayed balance and its backing credit lots together, and is logged like any other adjustment.</div>
       {error && <div className="bg-red-500/10 border border-red-500/35 rounded-xl p-3 text-red-300 text-sm font-semibold">{error}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -222,7 +306,7 @@ export default function CreditReconciliation() {
 
       {((data?.orphan_lots || []).length > 0 || (data?.orphan_adjustments || []).length > 0) && <div className="bg-red-500/10 border border-red-500/35 rounded-xl p-4"><h3 className="text-red-300 font-black uppercase italic"><i className="fas fa-link-slash mr-2"/>Orphan credit records</h3><p className="text-sm text-shTextMuted mt-1">These credit records reference a client ID that is not present in the selected client set. This section is still read-only.</p><div className="text-xs text-shTextMuted mt-2">Lot groups: {data.orphan_lots?.length || 0} · Adjustment groups: {data.orphan_adjustments?.length || 0}</div></div>}
 
-      {detailClient && <DetailModal client={detailClient} onClose={()=>setDetailClient(null)}/>} 
+      {detailClient && <DetailModal client={detailClient} onClose={()=>setDetailClient(null)} onChanged={load}/>}
     </div>
   );
 }

@@ -5569,6 +5569,139 @@ async def _mutate_client_credits(
     return {"before": before, "after": after, "delta": applied, "lot_id": lot_id, "adjustment_id": adjustment_id}
 
 
+async def _repair_credit_ledger(
+    client_id: str,
+    service_type: str,
+    target_balance: float,
+    *,
+    reason: str = "",
+    actor_id: str = "system",
+    actor_name: str = "system",
+) -> Dict[str, Any]:
+    """Force a client's displayed credit balance AND its backing credit_lots
+    back into agreement at an exact value — the one kind of drift
+    _mutate_client_credits cannot fix, because it only ever moves the
+    balance by a RELATIVE delta and correctly refuses (409) to drain a lot
+    pool that already holds less than the displayed balance claims (see the
+    delta<0 branch above). That refusal is what the Credit Audit screen's
+    "run the credit balance audit" message points a stuck manual adjustment
+    at — this is that follow-up repair.
+
+    Unlike _mutate_client_credits, this takes an ABSOLUTE target: both the
+    balance field and the sum of that pool's credit_lots.qty_remaining end
+    up exactly equal to target_balance.
+
+      - Lots total less than target: mints one new $0-value lot (tagged
+        source="ledger_repair") for the shortfall — same shape a manual
+        positive adjustment mints.
+      - Lots total more than target: drains the excess oldest-lot-first via
+        _consume_credit_lots, the same FIFO order checkout trusts.
+      - Always writes one credit_adjustments audit row, so the correction
+        shows up in the client's credit history exactly like any other
+        adjustment — never a silent data patch.
+
+    Refuses a negative target. Returns {before, after, lot_before, lot_after,
+    delta, adjustment_id}.
+    """
+    field = _credit_balance_field(service_type)
+    if not field:
+        raise HTTPException(status_code=400, detail=f"Unknown credit pool for service_type={service_type!r}")
+    target = round(max(0.0, float(target_balance or 0)), 2)
+
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1, field: 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    before = round(float(client.get(field) or 0), 2)
+
+    lot_rows = await db.credit_lots.find(
+        {"client_id": client_id, "service_type": service_type, "qty_remaining": {"$gt": 0}},
+        {"_id": 0, "qty_remaining": 1},
+    ).to_list(5000)
+    lot_before = round(sum(float(r.get("qty_remaining") or 0) for r in lot_rows), 2)
+    lot_delta = round(target - lot_before, 2)
+
+    ts = now_iso()
+    lot_id: Optional[str] = None
+    redemptions: List[Dict[str, Any]] = []
+    drained = 0.0
+    balance_mutated = False
+    adjustment_id: Optional[str] = None
+
+    try:
+        if lot_delta > 0.0001:
+            lot_id = str(uuid.uuid4())
+            await db.credit_lots.insert_one({
+                "id": lot_id,
+                "client_id": client_id,
+                "pack_id": None,
+                "pack_name": reason or "Ledger repair",
+                "service_type": service_type,
+                "qty_total": lot_delta,
+                "qty_remaining": lot_delta,
+                "price_paid": 0.0,
+                "list_price": 0.0,
+                "price_override_id": None,
+                "value_each": 0.0,
+                "payment_method": None,
+                "note": reason or "",
+                "sold_by": actor_name or "Admin",
+                "purchased_at": ts,
+                "recognize_at_sale": True,
+                "source": "ledger_repair",
+                "source_id": None,
+            })
+        elif lot_delta < -0.0001:
+            _value, redemptions, drained = await _consume_credit_lots(client_id, -lot_delta, service_type)
+
+        lot_after = round(lot_before + lot_delta, 2) if lot_delta > 0.0001 else round(lot_before - drained, 2)
+
+        await db.clients.update_one({"id": client_id}, {"$set": {field: target}})
+        balance_mutated = True
+        after = target
+
+        adjustment_id = str(uuid.uuid4())
+        await db.credit_adjustments.insert_one({
+            "id": adjustment_id,
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "changes": {service_type: {"before": before, "delta": round(after - before, 2), "after": after}},
+            "note": reason or f"Ledger repair: lots {lot_before:g} -> {lot_after:g}, balance {before:g} -> {after:g}",
+            "adjusted_by": actor_name or actor_id or "system",
+            "adjusted_at": ts,
+            "source": "ledger_repair",
+            "source_id": None,
+        })
+    except Exception:
+        if lot_id:
+            try:
+                await deletion_log.delete_one(db, "credit_lots", {"id": lot_id})
+            except Exception as exc:
+                logger.critical("credit ledger repair rollback could not remove lot %s: %s", lot_id, exc)
+        if drained > 0:
+            try:
+                await _restore_credit_lots(redemptions, drained)
+            except Exception as exc:
+                logger.critical("credit ledger repair rollback could not restore lots for client %s: %s", client_id, exc)
+        if balance_mutated:
+            try:
+                await db.clients.update_one({"id": client_id}, {"$set": {field: before}})
+            except Exception as exc:
+                logger.critical("credit ledger repair rollback could not restore client balance for %s: %s", client_id, exc)
+        if adjustment_id:
+            try:
+                await deletion_log.delete_one(db, "credit_adjustments", {"id": adjustment_id})
+            except Exception as exc:
+                logger.critical("credit ledger repair rollback could not remove audit row %s: %s", adjustment_id, exc)
+        raise
+
+    return {
+        "before": before, "after": after,
+        "lot_before": lot_before, "lot_after": lot_after,
+        "delta": round(after - before, 2),
+        "adjustment_id": adjustment_id,
+    }
+
+
 async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
     # Same matrix gate as approve_booking — declining is a booking decision.
     _require_booking_edit(user)
@@ -53584,6 +53717,29 @@ async def credit_reconciliation_detail(client_id: str, _: dict = Depends(require
         "adjustments": adjustments,
         "credit_bookings": credit_bookings,
     }
+
+
+class CreditLedgerRepairIn(BaseModel):
+    service_type: str
+    target_balance: float
+    note: Optional[str] = ""
+
+
+@api.post("/admin/credits/reconciliation/{client_id}/repair")
+async def repair_client_credit_ledger_route(
+    client_id: str, body: CreditLedgerRepairIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """The one write action on the otherwise read-only Credit Audit screen —
+    see _repair_credit_ledger. Scoped to a single pool flagged by the report;
+    always logged as a normal credit_adjustments row, never a silent patch."""
+    service_type = (body.service_type or "").strip().lower()
+    if service_type not in ("daycare", "training", "boarding"):
+        raise HTTPException(status_code=400, detail=f"Unknown credit pool for service_type={service_type!r}")
+    return await _repair_credit_ledger(
+        client_id, service_type, body.target_balance,
+        reason=body.note or "", actor_id=user.get("id", "admin"), actor_name=user.get("name", "Admin"),
+    )
 
 
 @api.post("/credit-packs/seed-standard")
