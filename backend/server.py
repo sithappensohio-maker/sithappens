@@ -37207,6 +37207,95 @@ async def pl_monthly_status(_: dict = Depends(require_admin_and_permission("fina
     }
 
 
+# ─────────────────── Monthly Financial Reports (year-end/tax) ───────────────────
+# One complete, printable report per calendar month, all in one place for
+# year-end accounting. Every number is built from the same canonical helpers
+# Finance/Analytics/Sales-Tax already use — monthly_report.py only assembles
+# them per month and adds the few sections no existing report breaks out
+# (payment-method split, bills-paid detail, gift card activity, mileage).
+def _resolve_report_month(year: int, month: Optional[int]) -> int:
+    today = business_today()
+    m = int(month) if month is not None else today.month
+    if m < 1 or m > 12:
+        raise HTTPException(status_code=400, detail="month must be between 1 and 12")
+    if year == today.year and m > today.month:
+        raise HTTPException(status_code=400, detail="month is in the future")
+    return m
+
+
+@api.get("/reports/monthly/year-overview")
+async def monthly_report_year_overview(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Quick revenue/expenses/net for all 12 months of a year — feeds the
+    Monthly Reports grid."""
+    import monthly_report
+    y = _resolve_report_year(year)
+    return await monthly_report.build_year_overview(db, y)
+
+
+@api.get("/reports/monthly/detail")
+async def monthly_report_detail(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Full JSON snapshot for one calendar month (used by both the on-screen
+    preview and the PDF render)."""
+    import monthly_report
+    y = _resolve_report_year(year)
+    m = _resolve_report_month(y, month)
+    return await monthly_report.build_monthly_report_data(db, y, m)
+
+
+@api.get("/reports/monthly/detail/pdf")
+async def monthly_report_detail_pdf(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Download a printable PDF for one calendar month."""
+    import monthly_report
+    from fastapi.responses import Response
+    y = _resolve_report_year(year)
+    m = _resolve_report_month(y, month)
+    settings = await get_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+    data = await monthly_report.build_monthly_report_data(db, y, m)
+    pdf_bytes = await asyncio.to_thread(monthly_report.render_monthly_report_pdf, data, brand_name)
+    filename = f"Monthly_Report_{y}-{m:02d}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api.get("/reports/monthly/year-pdf")
+async def monthly_report_year_pdf(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Download ALL available months of a year bundled into one PDF — hand
+    the whole year to an accountant or print it once for tax filing."""
+    import monthly_report
+    from fastapi.responses import Response
+    y = _resolve_report_year(year)
+    today = business_today()
+    last_month = today.month if y == today.year else 12
+    months_data = [await monthly_report.build_monthly_report_data(db, y, m) for m in range(1, last_month + 1)]
+    settings = await get_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+    pdf_bytes = await asyncio.to_thread(monthly_report.render_year_report_pdf, months_data, y, brand_name)
+    filename = f"Monthly_Reports_{y}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # Sprint 110eg-5 — Email deliverability "health" pill. The Resend API key
 # is send-only (can't list domains), so we approximate the verification
 # state by directly resolving the SPF + DKIM TXT records the operator's

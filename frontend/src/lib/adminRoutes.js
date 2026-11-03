@@ -38,6 +38,7 @@ export const ADMIN_PATH_BY_TAB = {
   income: "/admin/finance",
   analytics: "/admin/analytics",
   credit_reconciliation: "/admin/finance/credit-audit",
+  monthly_reports: "/admin/finance/monthly-reports",
   shop_manager: "/admin/shop-manager",
   staff: "/admin/team",
   incidents: "/admin/incidents",
@@ -251,6 +252,10 @@ export function parseAdminLocation(pathname = "/", search = "") {
 
   if (first === "finance" && parts[2] === "credit-audit") {
     return { isAdminPath: true, tab: "credit_reconciliation", target: null, canonicalPath: "/admin/finance/credit-audit" };
+  }
+
+  if (first === "finance" && parts[2] === "monthly-reports") {
+    return { isAdminPath: true, tab: "monthly_reports", target: null, canonicalPath: "/admin/finance/monthly-reports" };
   }
 
   const tab = SIMPLE_ROUTE_TO_TAB[first];
