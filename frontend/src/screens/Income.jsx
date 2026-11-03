@@ -642,6 +642,16 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         </div>
       )}
 
+      {/* Expense Trend — same heat-map bar chart as Revenue Trend, just fed
+          expenses_by_month instead. A hot (red) month here is an expense
+          spike worth a second look, not "good performance" like on revenue. */}
+      {yearOverview?.expenses_by_month?.length > 0 && (
+        <div className="bg-[#10151f] border border-red-500/20 rounded-xl p-5" data-testid="expense-trend">
+          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted mb-4">Expense Trend — {yearOverview.year}</p>
+          <MonthlyBarChart points={yearOverview.expenses_by_month} currentMonth={yearOverview.end_date === todayISO() ? yearOverview.end_date.slice(0, 7) : null} />
+        </div>
+      )}
+
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
         <div className="bg-[#10151f] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">

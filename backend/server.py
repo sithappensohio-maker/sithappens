@@ -36278,6 +36278,26 @@ async def year_overview(
     weeks = _year_bucket(by_day, _week_key)
     best_week = max(weeks.values(), key=lambda w: w["total"]) if weeks else None
 
+    # Expenses by month — same Jan..(this month) full coverage as revenue
+    # above, so a quiet month reads as "$0 spent" rather than a gap in the
+    # chart. db.expenses rows are already flat/dated, so this is a direct
+    # bucket pass rather than routed through _summary_range_data (which only
+    # returns a scalar expenses_total for an arbitrary range).
+    expense_rows = await db.expenses.find(
+        {"date": {"$gte": year_start, "$lte": year_end}},
+        {"_id": 0, "date": 1, "amount": 1},
+    ).to_list(50000)
+    expenses_by_month_map: Dict[str, float] = {}
+    for e in expense_rows:
+        ym = (e.get("date") or "")[:7]
+        if ym:
+            expenses_by_month_map[ym] = expenses_by_month_map.get(ym, 0.0) + float(e.get("amount") or 0)
+    expenses_by_month = [
+        {"month": f"{y}-{m:02d}", "label": date(y, m, 1).strftime("%b"),
+         "total": round(expenses_by_month_map.get(f"{y}-{m:02d}", 0.0), 2)}
+        for m in range(1, end_month + 1)
+    ]
+
     # Same-period comparison against last year (audit-style apples-to-apples —
     # a Dec 31 YTD this year must not be compared against a Jan 3 YTD last year).
     prior_year = y - 1
@@ -36304,6 +36324,7 @@ async def year_overview(
         "best_month": best_month,
         "best_week": best_week,
         "by_month": by_month,
+        "expenses_by_month": expenses_by_month,
         "prior_year": {
             "year": prior_year,
             "through": prior_through.isoformat(),
