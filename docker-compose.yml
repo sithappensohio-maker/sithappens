@@ -123,6 +123,21 @@ services:
       # module import time. Not otherwise used by this worker.
       JWT_SECRET: "${JWT_SECRET:-}"
     # No ports exposed — this service does not serve HTTP traffic.
+    # Dockerfile.backend bakes in a HEALTHCHECK that curls
+    # localhost:8001/api/health — correct for the `backend` service, but
+    # this service reuses the same image with a different command
+    # (email_worker.py, no HTTP server at all) and inherits that healthcheck
+    # unless overridden. Nothing ever listens on 8001 here, so it failed
+    # every 30s for its entire lifetime and sat permanently "unhealthy" —
+    # confirmed live (2026-11-04) the worker itself was running fine the
+    # whole time (continuous "sent"/"failed: 0" outbox cycles in its logs);
+    # the status was simply never meaningful for this service. Disabled
+    # rather than given a fake alternate check — restart: unless-stopped
+    # already covers the only thing that actually matters (the process
+    # exiting), and plain `docker compose` doesn't act on health status
+    # anyway (no swarm/orchestrator here).
+    healthcheck:
+      disable: true
 
   frontend:
     build:
