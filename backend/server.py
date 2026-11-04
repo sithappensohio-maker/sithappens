@@ -34543,6 +34543,15 @@ async def startup():
         # legacy rows predate paid_at and never carry it (see that
         # function's own "legacy fallback" comment).
         (db.bookings, "paid_at", {"sparse": True, "name": "bookings_paid_at"}),
+        # Same field, same reason, but on the ARCHIVE side — this one was
+        # missing entirely. _booking_collection_events (admin_quarterly_tax,
+        # and therefore the whole Tax Center) filters+sorts bookings_archive
+        # by paid_at too, every call, and had no index to use there — a full
+        # collection scan + in-memory sort of the entire archive on every
+        # Tax Center load, confirmed live at ~35s for one such call
+        # (2026-11-04). Sparse for the same reason as the bookings.paid_at
+        # index above.
+        (db.bookings_archive, "paid_at", {"sparse": True, "name": "bookings_archive_paid_at"}),
         (db.bookings_archive, "financial_reopened_at", {"sparse": True, "name": "bookings_archive_financial_reopened_at"}),
         (db.bookings, "status", {}),
         # Phase 6 global search: one batch lookup finds each matched dog's
@@ -50058,9 +50067,17 @@ import federal_estimated_tax as fed_engine
 from federal_tax_constants import federal_constants_for
 
 
-async def _federal_estimated_tax_payload(year: int, as_of: Optional[date] = None) -> Dict[str, Any]:
+async def _federal_estimated_tax_payload(
+    year: int, as_of: Optional[date] = None, quarterly: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """`as_of` is the deterministic calculation date — the live endpoint uses
-    the business date; tests inject frozen dates (Step 4D-2B-1)."""
+    the business date; tests inject frozen dates (Step 4D-2B-1).
+
+    `quarterly`: an already-computed admin_quarterly_tax(year=year) result,
+    so a caller that's also calling _ohio_estimated_tax_payload for the same
+    year (the Tax Center aggregator) computes that expensive YTD books scan
+    ONCE instead of twice. Standalone callers (the /admin/federal-estimated-
+    tax endpoint) omit it and this computes its own, unchanged."""
     yr = int(year)
     today = as_of or business_today()
     profile = await _get_tax_profile(yr)
@@ -50068,7 +50085,7 @@ async def _federal_estimated_tax_payload(year: int, as_of: Optional[date] = None
 
     # Canonical YTD business profit — straight from the quarterly projection
     # endpoint's books (collection-dated, refund-signed, sales-tax-excluded).
-    q = await admin_quarterly_tax(_={"role": "admin"}, year=yr)
+    q = quarterly if quarterly is not None else await admin_quarterly_tax(_={"role": "admin"}, year=yr)
     ytd_profit = float(q["net_profit"])
 
     proj = (profile.get("projection") or {})
@@ -50185,16 +50202,23 @@ import ohio_estimated_tax as oh_engine
 from ohio_tax_constants import ohio_constants_for
 
 
-async def _ohio_estimated_tax_payload(year: int, as_of: Optional[date] = None) -> Dict[str, Any]:
+async def _ohio_estimated_tax_payload(
+    year: int, as_of: Optional[date] = None, quarterly: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Ohio + SDIT estimate. Independent tax law (R.C. 5747/5748 via
     ohio_estimated_tax.py); shares only the canonical business projection
-    and household income facts. Same status contract as federal."""
+    and household income facts. Same status contract as federal.
+
+    `quarterly`: see _federal_estimated_tax_payload's docstring — an
+    already-computed admin_quarterly_tax(year=year) result, so the Tax
+    Center aggregator computes it once for both jurisdictions instead of
+    twice."""
     yr = int(year)
     today = as_of or business_today()
     profile = await _get_tax_profile(yr)
     completeness = _tax_profile_completeness(profile)
 
-    q = await admin_quarterly_tax(_={"role": "admin"}, year=yr)
+    q = quarterly if quarterly is not None else await admin_quarterly_tax(_={"role": "admin"}, year=yr)
     ytd_profit = float(q["net_profit"])
     proj = (profile.get("projection") or {})
     remaining = proj.get("remaining_business_profit")
@@ -50393,8 +50417,16 @@ async def _tax_center_payload(year: int, as_of: Optional[date] = None) -> Dict[s
     today = as_of or business_today()
     today_iso = today.isoformat()
 
-    fed = await _federal_estimated_tax_payload(yr, as_of=today)
-    oh = await _ohio_estimated_tax_payload(yr, as_of=today)
+    # Computed ONCE and shared — _federal_estimated_tax_payload and
+    # _ohio_estimated_tax_payload each independently call admin_quarterly_tax
+    # for the exact same year when it isn't passed in, and that's a real
+    # full-year books scan (bookings + archive + retail_sales + expenses +
+    # mileage + collection-event reconstruction), not a cheap lookup —
+    # confirmed live at ~35s for a single call. Calling it twice in a row is
+    # what made this page feel permanently stuck (2026-11-04).
+    quarterly = await admin_quarterly_tax(_={"role": "admin"}, year=yr)
+    fed = await _federal_estimated_tax_payload(yr, as_of=today, quarterly=quarterly)
+    oh = await _ohio_estimated_tax_payload(yr, as_of=today, quarterly=quarterly)
     sales = await _sales_tax_tracker_payload()
     profile = await _get_tax_profile(yr)
     completeness = _tax_profile_completeness(profile)
