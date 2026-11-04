@@ -5293,7 +5293,14 @@ async def _consume_credit_lots(
             lot = await db.credit_lots.find_one(
                 {
                     "client_id": client_id,
-                    "qty_remaining": {"$gt": 0},
+                    # > 0.0001, not > 0 — repeated $inc subtraction can leave
+                    # a fully-drained lot at a float-drift dust value like
+                    # 5.551115123125783e-17 instead of exactly 0. That dust
+                    # is still "> 0", so a strict $gt:0 filter would pick it
+                    # (it's the oldest lot, FIFO-first) ahead of a real,
+                    # newer lot with real credits — see the take<=0 branch
+                    # below for what used to happen next.
+                    "qty_remaining": {"$gt": 0.0001},
                     "service_type": service_type,
                     **filter_extra,
                 },
@@ -5305,7 +5312,16 @@ async def _consume_credit_lots(
             available = round(max(0.0, float(lot.get("qty_remaining") or 0)), 2)
             take = round(min(remaining, available), 2)
             if take <= 0:
-                break
+                # A lot that passed the >0.0001 filter but still rounds to
+                # nothing usable (e.g. 0.003 remaining). This used to just
+                # `break` — aborting the ENTIRE search and silently reporting
+                # 0 consumed, even when a real, newer lot sat right behind
+                # this one (confirmed live: a client with 10 real daycare
+                # credits in an Oct lot got "0 available to remove" because
+                # an older, fully-spent Sept lot had this exact dust).
+                # Self-heal it to exactly 0 and keep walking FIFO order.
+                await db.credit_lots.update_one({"id": lot["id"]}, {"$set": {"qty_remaining": 0}})
+                continue
             before = await db.credit_lots.find_one_and_update(
                 {"id": lot["id"], "qty_remaining": {"$gte": take}},
                 {
@@ -5327,6 +5343,11 @@ async def _consume_credit_lots(
                 "value_each": value_each,
             })
             remaining = round(remaining - take, 2)
+            if available - take <= 0.0001:
+                # Fully drained this lot — snap to exactly 0 rather than
+                # whatever float the $inc above landed on, so the dust this
+                # function just worked around can't reappear here later.
+                await db.credit_lots.update_one({"id": lot["id"]}, {"$set": {"qty_remaining": 0}})
 
     if prefer_program_id:
         await _drain({"program_id": prefer_program_id})
@@ -34893,6 +34914,11 @@ async def startup():
         await _migrate_clear_shippable_on_non_internal_products()
     except Exception as exc:
         logger.warning("Non-internal shippable-field migration failed: %s", exc)
+    # Credit-lot float-drift dust cleanup — see _migrate_snap_credit_lot_dust_to_zero.
+    try:
+        await _migrate_snap_credit_lot_dust_to_zero()
+    except Exception as exc:
+        logger.warning("Credit lot dust migration failed: %s", exc)
 
 
 async def _migrate_shop_manager_fields_if_needed() -> None:
@@ -34950,6 +34976,43 @@ async def _migrate_shop_manager_fields_if_needed() -> None:
         )
         if res2.modified_count:
             logger.info("Shop Manager migration: set featured=False on %d existing %s", res2.modified_count, coll_name)
+
+
+async def _migrate_snap_credit_lot_dust_to_zero() -> None:
+    """One-time, idempotent cleanup for existing float-drift dust in
+    credit_lots.qty_remaining.
+
+    _consume_credit_lots decrements a lot via repeated `$inc`, which can
+    leave a fully-spent lot at a tiny nonzero float (e.g.
+    5.551115123125783e-17) instead of exactly 0 — ordinary binary
+    floating-point error, not a data problem anyone caused. That dust still
+    satisfied a strict `qty_remaining: {"$gt": 0}` filter, so the FIFO drain
+    picked it as the oldest "available" lot, found it rounds to nothing
+    usable, and gave up on the ENTIRE redemption — even when a real, newer
+    lot sat right behind it with real credits. Confirmed live: Stephanie
+    Musial had 10 genuine daycare credits in an October lot, but both
+    checkout redemption and the manual Adjust Credits action silently/
+    loudly failed ("lots only have 0 available") because an older,
+    fully-spent September lot had this exact dust — invisible on the Credit
+    Audit report because it rounds before comparing, so the report showed a
+    clean match while live redemption was broken underneath it.
+
+    _consume_credit_lots is now fixed to self-heal this going forward (skips
+    and zeroes a dust lot instead of aborting, and snaps every lot it fully
+    drains to exactly 0). This is the one-time backfill for dust that
+    already exists in the DB. The range (0, 0.0001] can only ever be float
+    drift — every real grant/consumption amount in this app is rounded to
+    cents before being written, so a genuine balance is never that small —
+    so this can never zero out an actually-available lot."""
+    res = await db.credit_lots.update_many(
+        {"qty_remaining": {"$gt": 0, "$lte": 0.0001}},
+        {"$set": {"qty_remaining": 0}},
+    )
+    if res.modified_count:
+        logger.warning(
+            "Credit lot dust migration: snapped %d lot(s) with float-drift "
+            "qty_remaining dust to exactly 0 (these were silently blocking "
+            "FIFO credit redemption behind them)", res.modified_count)
 
 
 async def _migrate_clear_shippable_on_non_internal_products() -> None:
