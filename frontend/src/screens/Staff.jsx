@@ -111,6 +111,7 @@ export default function Staff() {
   const [userFilter, setUserFilter] = useState("");
   const [tcData, setTcData] = useState(null);
   const [editingEntry, setEditingEntry] = useState(null);
+  const [addingEntry, setAddingEntry] = useState(false);
   const [subtab, setSubtab] = useState(() => screenTabFor("staff") || "ops");
   useEffect(() => { clearScreenTab("staff"); }, []);
   const [paySnap, setPaySnap] = useState(null);
@@ -134,6 +135,22 @@ export default function Staff() {
   }, [start, end, userFilter]);
   useEffect(() => { loadEmployees(); loadPaySnap(); }, []);
   useEffect(() => { loadTimecards(); }, [loadTimecards]);
+
+  // A shift the admin just added must be on screen afterwards: stretch the date
+  // range to reach it and drop an employee filter that would hide it.
+  const afterEntryAdded = (saved) => {
+    setAddingEntry(false);
+    const day = String(saved?.clock_in_at || "").slice(0, 10);   // the list is filtered on this stored date
+    const hiddenByFilter = !!(userFilter && saved?.user_id && userFilter !== saved.user_id);
+    if (day && day < start) setStart(day);
+    if (day && day > end) setEnd(day);
+    if (hiddenByFilter) setUserFilter("");
+    // Changing the range or filter reloads the list by itself. Reloading here as
+    // well would race it with the old range and could put the old list back.
+    if (!((day && (day < start || day > end)) || hiddenByFilter)) loadTimecards();
+    loadPaySnap();
+    toast.success(`Added ${Number(saved?.hours || 0).toFixed(2)} hours for ${saved?.user_name || "the employee"}.`);
+  };
 
   // Low-priority polish — the Employees roster had no search/filter, unlike
   // every other roster screen. Client-side, case-insensitive name match over
@@ -305,6 +322,11 @@ export default function Staff() {
               {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
             </select>
           </label>
+          <button onClick={()=>setAddingEntry(true)} data-testid="tc-add-btn"
+                  title="Add a shift an employee forgot to punch in and out for"
+                  className="ml-auto bg-shPrimary text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/90 transition">
+            <i className="fas fa-plus mr-2"/>Add entry
+          </button>
         </div>
         {tcData && (
           <>
@@ -395,6 +417,9 @@ export default function Staff() {
       {editingEntry && <TimeClockEditModal entry={editingEntry}
                                           onClose={()=>setEditingEntry(null)}
                                           onSaved={()=>{ setEditingEntry(null); loadTimecards(); }}/>}
+      {addingEntry && <TimeClockAddModal employees={employees} defaultUserId={userFilter}
+                                         onClose={()=>setAddingEntry(false)}
+                                         onSaved={afterEntryAdded}/>}
     </div>
   );
 }
@@ -772,6 +797,107 @@ export function TimeClockEditModal({ entry, onClose, onSaved }) {
           <button onClick={save} disabled={busy} data-testid="tc-save"
                   className="bg-shPrimary text-bgHeader py-2 px-4 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-50">
             {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The clock-in and clock-out moments for a shift typed as a day plus two wall-clock
+// times. A clock-out earlier than the clock-in means the shift ran past midnight.
+// Null until all three are filled in, or when both times are the same.
+export function shiftTimes(day, timeIn, timeOut) {
+  if (!day || !timeIn || !timeOut || timeIn === timeOut) return null;
+  const start = new Date(`${day}T${timeIn}`);
+  const end = new Date(`${day}T${timeOut}`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const overnight = end <= start;
+  if (overnight) end.setDate(end.getDate() + 1);
+  return { start, end, overnight };
+}
+
+// Admin adds a whole shift an employee never punched in or out for.
+export function TimeClockAddModal({ employees, defaultUserId = "", onClose, onSaved }) {
+  const staff = useMemo(() => (employees || []).filter(e => e.active !== false), [employees]);
+  const [form, setForm] = useState({
+    user_id: staff.some(e => e.id === defaultUserId) ? defaultUserId : "",
+    day: todayISO(),
+    time_in: "",
+    time_out: "",
+    break_minutes: 0,
+    note: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const sending = useRef(false);   // a second tap while the first save is still going must not add the shift twice
+
+  const times = shiftTimes(form.day, form.time_in, form.time_out);
+  const breakMin = Math.max(Number(form.break_minutes) || 0, 0);
+  const hours = times ? Math.max((times.end - times.start) / 3600000 - breakMin / 60, 0) : 0;
+  const emp = staff.find(e => e.id === form.user_id);
+  const rate = Number(emp?.hourly_rate) || 0;
+  const ready = !!form.user_id && !!times && hours > 0;
+
+  const save = async () => {
+    if (!ready || sending.current) return;
+    sending.current = true;
+    setBusy(true); setErr("");
+    try {
+      const r = await api.post("/admin/time-clock", {
+        user_id: form.user_id,
+        clock_in_at: times.start.toISOString(),
+        clock_out_at: times.end.toISOString(),
+        break_minutes: breakMin,
+        note: form.note,
+      });
+      onSaved(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Could not add the shift. Try again."); }
+    finally { sending.current = false; setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3" onClick={onClose}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl max-w-md w-full p-5 space-y-3 max-h-[95vh] overflow-y-auto" onClick={e=>e.stopPropagation()} data-testid="tc-add-modal">
+        <div className="flex items-center justify-between">
+          <h3 className="text-shText font-black uppercase italic tracking-tight">Add Clock Entry</h3>
+          <button onClick={onClose} className="text-shTextMuted" aria-label="Close"><i className="fas fa-times"/></button>
+        </div>
+        <p className="text-[13px] text-shTextMuted">For a shift someone worked but never punched in or out for. It counts on their timecard and payroll like any other shift.</p>
+        <label className="block">
+          <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Employee</span>
+          <select value={form.user_id} onChange={(e)=>setForm({...form, user_id: e.target.value})} data-testid="tc-add-emp"
+                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mt-1">
+            <option value="">Choose an employee…</option>
+            {staff.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </label>
+        <Field label="Day worked" type="date" value={form.day} onChange={v=>setForm({...form, day: v})} testid="tc-add-day"/>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Clock in" type="time" value={form.time_in} onChange={v=>setForm({...form, time_in: v})} testid="tc-add-in"/>
+          <Field label="Clock out" type="time" value={form.time_out} onChange={v=>setForm({...form, time_out: v})} testid="tc-add-out"/>
+        </div>
+        <Field label="Unpaid break (minutes)" type="number" value={form.break_minutes} onChange={v=>setForm({...form, break_minutes: v})} testid="tc-add-break"/>
+        <Field label="Note (why it was added)" value={form.note} onChange={v=>setForm({...form, note: v})} testid="tc-add-note"/>
+        {times && (
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-[14px]" data-testid="tc-add-preview">
+            <p className="text-shText font-black">
+              {hours.toFixed(2)} paid hours{rate > 0 && hours > 0 ? ` · $${(hours * rate).toFixed(2)} at $${rate.toFixed(2)}/hr` : ""}
+            </p>
+            {times.overnight && <p className="text-shAccent text-[13px] mt-1" data-testid="tc-add-overnight"><i className="fas fa-moon mr-1"/>Clock out is the next day ({times.end.toLocaleDateString([], { dateStyle: "medium" })}).</p>}
+            {hours <= 0 && <p className="text-red-400 text-[13px] mt-1">The break is as long as the shift. Check the break minutes.</p>}
+          </div>
+        )}
+        {form.time_in && form.time_out && form.time_in === form.time_out && (
+          <p className="text-red-400 text-[13px]">Clock in and clock out can't be the same time.</p>
+        )}
+        {err && <p className="text-red-400 text-[14px] font-black" data-testid="tc-add-error">{err}</p>}
+        <div className="flex gap-2 pt-2">
+          <div className="flex-1"/>
+          <button onClick={onClose} className="text-shTextMuted py-2 px-3 text-[13px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={save} disabled={busy || !ready} data-testid="tc-add-save"
+                  className="bg-shPrimary text-bgHeader py-2 px-4 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-50">
+            {busy ? "Adding…" : "Add entry"}
           </button>
         </div>
       </div>

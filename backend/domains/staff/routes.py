@@ -484,6 +484,151 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
             raise HTTPException(status_code=404, detail="Entry not found")
         return {"ok": True}
 
+    class TimeClockAddIn(BaseModel):
+        user_id: str = Field(min_length=1, max_length=100)
+        clock_in_at: str = Field(min_length=10, max_length=40)    # ISO datetime
+        clock_out_at: str = Field(min_length=10, max_length=40)   # ISO datetime
+        break_minutes: float = Field(default=0, ge=0, le=1440)    # a break cannot be negative (audit #59)
+        note: Optional[str] = Field(default="", max_length=500)
+
+    def _read_time(value: Any) -> Optional[datetime]:
+        """A stored or sent time as a UTC datetime; None when it can't be read.
+        A time with no offset reads as UTC, the same as shift_hours."""
+        if not value:
+            return None
+        try:
+            t = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            t = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+        except Exception:
+            return None
+        return t if 2000 <= t.year <= 2200 else None   # a year that can't be a real shift
+
+    async def _shift_in_the_way(user_id: str, ci: datetime, co: datetime, skip_id: str = "") -> Optional[dict]:
+        """A shift already on this employee's timecard that shares time with
+        ci..co, or None. Pulls every shift of theirs that could touch the window
+        (a day of slack either side, plus anything still open), then compares
+        real times — stored times are not all written the same way. The row
+        comes back with `open` set when it was never clocked out."""
+        near = await db.time_clock_entries.find(
+            {
+                "user_id": user_id,
+                "clock_in_at": {"$lt": (co + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")},
+                "$or": [
+                    {"clock_out_at": {"$in": [None, ""]}},
+                    {"clock_out_at": {"$gt": (ci - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")}},
+                ],
+            },
+            {"_id": 0, "id": 1, "clock_in_at": 1, "clock_out_at": 1},
+        ).to_list(2000)
+        for other in near:
+            if skip_id and other.get("id") == skip_id:
+                continue
+            o_in = _read_time(other.get("clock_in_at"))
+            if o_in is None or o_in >= co:
+                continue
+            if not other.get("clock_out_at"):
+                return {**other, "open": True}
+            o_out = _read_time(other.get("clock_out_at"))
+            if o_out is not None and o_out > ci:
+                return {**other, "open": False}
+        return None
+
+    def _refuse_shift_in_the_way(name: str, other: dict) -> None:
+        if other.get("open"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} has a shift that was never clocked out, started before this one ends. Fix that shift's clock-out first.",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"{name} already has a shift on the timecard that overlaps these times. Edit that shift instead.",
+        )
+
+    @api.post("/admin/time-clock")
+    async def admin_add_time_clock(body: TimeClockAddIn, admin: dict = Depends(require_admin)):
+        """Admin adds a whole finished shift the employee never punched in or out
+        for. It is a normal time-clock entry from then on: it counts on timecards
+        and payroll and can be edited or deleted like any other.
+
+        Refused when it would pay twice (it overlaps a shift already on the
+        employee's timecard) or can't be a real finished shift (ends before it
+        starts, runs past 24 hours, hasn't happened yet, break longer than the shift)."""
+        emp = await db.users.find_one(
+            {"id": body.user_id, "role": {"$in": ["employee", "admin"]}},
+            {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1},
+        )
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        name = emp.get("display_name") or emp.get("name") or "This employee"
+        ci, co = _read_time(body.clock_in_at), _read_time(body.clock_out_at)
+        if ci is None or co is None:
+            raise HTTPException(status_code=400, detail="Enter both a clock-in and a clock-out time.")
+        if co <= ci:
+            raise HTTPException(status_code=400, detail="Clock-out must be after clock-in.")
+        if co - ci > timedelta(hours=24):
+            raise HTTPException(status_code=400, detail="A shift can't be longer than 24 hours. Check the dates.")
+        if co > datetime.now(timezone.utc) + timedelta(minutes=1):
+            raise HTTPException(status_code=400, detail="That shift hasn't finished yet. Only a shift that already happened can be added.")
+        break_min = float(body.break_minutes or 0)
+        if break_min * 60 >= (co - ci).total_seconds():
+            raise HTTPException(status_code=400, detail="The break is as long as the shift. Check the break minutes.")
+
+        # Would this pay the same time twice?
+        in_the_way = await _shift_in_the_way(emp["id"], ci, co)
+        if in_the_way:
+            _refuse_shift_in_the_way(name, in_the_way)
+        # The employee may already have asked for this same missed shift. Approving
+        # that request later would add the shift a second time, so it is settled first.
+        waiting = await db.punch_corrections.find(
+            {"user_id": emp["id"], "status": "pending", "target_entry_id": {"$in": ["", None]}},
+            {"_id": 0, "requested_clock_in": 1, "requested_clock_out": 1},
+        ).to_list(500)
+        for req in waiting:
+            r_in, r_out = _read_time(req.get("requested_clock_in")), _read_time(req.get("requested_clock_out"))
+            if r_in is None and r_out is None:
+                continue
+            asked_from, asked_to = r_in or r_out, r_out or r_in
+            if asked_from <= co and asked_to >= ci:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{name} already sent a punch correction for this shift. Approve or deny it under Staff → Corrections instead of adding it here.",
+                )
+
+        stamp = now_iso()
+        row = {
+            "id": str(uuid.uuid4()),
+            "user_id": emp["id"],
+            "user_name": emp.get("display_name") or emp.get("name") or "",
+            "clock_in_at": ci.isoformat(),
+            "clock_out_at": co.isoformat(),
+            "break_minutes": break_min,
+            "hours": shift_hours(ci.isoformat(), co.isoformat(), break_min),
+            "created_at": stamp,
+            "added_by_admin_at": stamp,
+            "added_by_admin_id": admin["id"],
+            "admin_note": (body.note or "").strip(),
+        }
+        # A whole shift added later is paid at the rate in force when it is added,
+        # the same as one added by an approved punch correction (audit #24).
+        rate_now = stamp_rate(emp.get("hourly_rate"))
+        if rate_now is not None:
+            row["pay_rate"] = rate_now
+        await db.time_clock_entries.insert_one(row)
+        row.pop("_id", None)
+        # Two saves of the same shift at the same instant (two tabs, a replayed
+        # request) both pass the check above. Look again now that this one is in:
+        # if another shift appeared in the meantime this one backs out, so the
+        # time is never on the timecard twice. (Each may back out for the other;
+        # the message says to look before adding it again.)
+        racer = await _shift_in_the_way(emp["id"], ci, co, skip_id=row["id"])
+        if racer:
+            await db.time_clock_entries.delete_one({"id": row["id"]})
+            raise HTTPException(
+                status_code=409,
+                detail=f"Another shift for {name} was saved at the same moment, so this one was not added. Check the timecard, and add it again only if it isn't there.",
+            )
+        return row
+
 
     # ── Employee-portal helpers (read-only data the staff need to do their job) ──
 
@@ -759,6 +904,17 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
             raise HTTPException(status_code=404, detail="Request not found")
         if req["status"] != "pending":
             raise HTTPException(status_code=409, detail="Already decided")
+        if body.decision == "approved" and not req.get("target_entry_id"):
+            # Approving a whole missed shift adds it to the timecard. If that time is
+            # already there (punched after all, or added by the owner), it would be paid twice.
+            new_in, new_out = _read_time(req.get("requested_clock_in")), _read_time(req.get("requested_clock_out"))
+            if new_in and new_out and new_out > new_in:
+                in_the_way = await _shift_in_the_way(req["user_id"], new_in, new_out)
+                if in_the_way and not in_the_way.get("open"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"{req.get('user_name') or 'This employee'} already has a shift on the timecard that overlaps these times. Deny this request, or edit that shift on Timecards.",
+                    )
         update = {
             "status": body.decision,
             "decided_by_id": user.get("id"),
@@ -808,4 +964,4 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
 
     # ──────────── Staff trivia (no scoring, just learning) ────────────
 
-    return {"TimeOffIn": TimeOffIn, "TimeOffReview": TimeOffReview, "employee_list_time_off": employee_list_time_off, "employee_submit_time_off": employee_submit_time_off, "employee_cancel_time_off": employee_cancel_time_off, "admin_list_time_off": admin_list_time_off, "admin_review_time_off": admin_review_time_off, "ShiftTemplateIn": ShiftTemplateIn, "ShiftIn": ShiftIn, "list_shift_templates": list_shift_templates, "create_shift_template": create_shift_template, "update_shift_template": update_shift_template, "delete_shift_template": delete_shift_template, "list_shifts": list_shifts, "create_shift": create_shift, "update_shift": update_shift, "delete_shift": delete_shift, "generate_shifts_from_templates": generate_shifts_from_templates, "shifts_scheduled_vs_actual": shifts_scheduled_vs_actual, "employee_my_shifts": employee_my_shifts, "PunchCorrectionIn": PunchCorrectionIn, "employee_list_punch_corrections": employee_list_punch_corrections, "employee_create_punch_correction": employee_create_punch_correction, "PunchCorrectionDecisionIn": PunchCorrectionDecisionIn, "employee_decide_punch_correction": employee_decide_punch_correction, "time_clock_current": time_clock_current, "time_clock_in": time_clock_in, "time_clock_out": time_clock_out, "time_clock_me": time_clock_me, "time_clock_me_csv": time_clock_me_csv, "admin_time_clock_list": admin_time_clock_list, "admin_edit_time_clock": admin_edit_time_clock, "admin_delete_time_clock": admin_delete_time_clock}
+    return {"TimeOffIn": TimeOffIn, "TimeOffReview": TimeOffReview, "employee_list_time_off": employee_list_time_off, "employee_submit_time_off": employee_submit_time_off, "employee_cancel_time_off": employee_cancel_time_off, "admin_list_time_off": admin_list_time_off, "admin_review_time_off": admin_review_time_off, "ShiftTemplateIn": ShiftTemplateIn, "ShiftIn": ShiftIn, "list_shift_templates": list_shift_templates, "create_shift_template": create_shift_template, "update_shift_template": update_shift_template, "delete_shift_template": delete_shift_template, "list_shifts": list_shifts, "create_shift": create_shift, "update_shift": update_shift, "delete_shift": delete_shift, "generate_shifts_from_templates": generate_shifts_from_templates, "shifts_scheduled_vs_actual": shifts_scheduled_vs_actual, "employee_my_shifts": employee_my_shifts, "PunchCorrectionIn": PunchCorrectionIn, "employee_list_punch_corrections": employee_list_punch_corrections, "employee_create_punch_correction": employee_create_punch_correction, "PunchCorrectionDecisionIn": PunchCorrectionDecisionIn, "employee_decide_punch_correction": employee_decide_punch_correction, "time_clock_current": time_clock_current, "time_clock_in": time_clock_in, "time_clock_out": time_clock_out, "time_clock_me": time_clock_me, "time_clock_me_csv": time_clock_me_csv, "admin_time_clock_list": admin_time_clock_list, "admin_edit_time_clock": admin_edit_time_clock, "admin_delete_time_clock": admin_delete_time_clock, "TimeClockAddIn": TimeClockAddIn, "admin_add_time_clock": admin_add_time_clock}

@@ -57731,8 +57731,9 @@ _AUDIT_ACTION_RULES: List[Tuple[str, str, str]] = [
     ("PUT",    "/settings",   "settings_changed"),
     ("PATCH",  "/settings",   "settings_changed"),
     ("POST",   "/settings",   "settings_changed"),
-    ("PUT",    "/timeclock",  "timeclock_edited"),
-    ("POST",   "/timeclock",  "timeclock_edited"),
+    ("PUT",    "/admin/time-clock",  "timeclock_edited"),
+    ("POST",   "/admin/time-clock",  "timeclock_edited"),   # the owner adding a missed shift
+    ("DELETE", "/admin/time-clock",  "timeclock_edited"),
 ]
 
 

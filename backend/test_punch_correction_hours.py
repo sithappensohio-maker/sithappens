@@ -59,7 +59,8 @@ def test_a_corrected_clock_in_replaces_the_old_hours():
 
 
 def test_a_whole_missed_shift_added_by_approval_counts_its_hours():
-    c = _correction(clock_in="2026-09-28T14:00:00Z", clock_out="2026-09-28T18:15:00Z")
+    # Its own day: a missed shift that overlaps one already on the timecard is refused (it would pay twice).
+    c = _correction(clock_in="2026-09-30T14:00:00Z", clock_out="2026-09-30T18:15:00Z")
     _decide(c)
     row = run(server.db.time_clock_entries.find_one({"corrected_via_request_id": c["id"]}, {"_id": 0}))
     assert row["hours"] == 4.25 and row["break_minutes"] == 0
