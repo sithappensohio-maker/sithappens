@@ -798,6 +798,12 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [saleResult, setSaleResult] = useState(null);
   const [saleIdemKey, setSaleIdemKey] = useState(() => crypto.randomUUID());
   const [hwBusy, setHwBusy] = useState({});
+  // After a sale the receipt waits for a Yes or No, so a customer who
+  // doesn't want one costs no paper (owner, 2026-11-10). Holds the print
+  // token while the question is on screen.
+  const [receiptAsk, setReceiptAsk] = useState(null);
+  const [receiptPrinted, setReceiptPrinted] = useState(false);
+  const answeringPrint = useRef(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [receiptViewOpen, setReceiptViewOpen] = useState(null); // receipt payload JSON, or null
 
@@ -995,10 +1001,9 @@ export default function Pos({ onOpenShopManager } = {}) {
       setTenderOpen(false);
       emitRegisterChanged(); // sale committed — refresh register displays
       // Post-commit, best-effort hardware — never affects the sale that already succeeded.
-      if (data.pos_print_receipt_token) {
-        const r = await posPrintReceipt(data.pos_print_receipt_token);
-        if (!r.ok) toast.error(r.error || "Receipt printing failed");
-      }
+      // The receipt is not printed here: the Sale Complete screen asks first.
+      setReceiptPrinted(false);
+      setReceiptAsk(data.pos_print_receipt_token || null);
       if (data.pos_open_drawer_token) {
         const r = await posOpenDrawer(data.pos_open_drawer_token);
         if (!r.ok) toast.error(r.error || "Cash drawer failed to open");
@@ -1025,6 +1030,22 @@ export default function Pos({ onOpenShopManager } = {}) {
     completeSale(merged);
   };
 
+  // The answer to "Print a receipt?". No prints nothing — the Print row
+  // stays on the screen in case the customer changes their mind.
+  const answerPrint = async (yes) => {
+    const token = receiptAsk;
+    if (!token || answeringPrint.current) return;
+    if (!yes) { setReceiptAsk(null); return; }
+    answeringPrint.current = true;
+    setHwBusy((b) => ({ ...b, print_receipt: true }));
+    const r = await posPrintReceipt(token);
+    if (r?.ok) setReceiptPrinted(true);
+    else toast.error(r?.error || "Receipt printing failed");
+    setReceiptAsk(null);
+    setHwBusy((b) => ({ ...b, print_receipt: false }));
+    answeringPrint.current = false;
+  };
+
   const retryHardware = async (action) => {
     if (!saleResult?.pos_sale_id) return;
     const payload = { actions: [action] };
@@ -1039,8 +1060,10 @@ export default function Pos({ onOpenShopManager } = {}) {
       const { data } = await api.post(`/pos/sales/${saleResult.pos_sale_id}/pos-tokens`, payload);
       const token = action === "print_receipt" ? data.print_receipt_token : data.open_drawer_token;
       const result = action === "print_receipt" ? await posPrintReceipt(token) : await posOpenDrawer(token);
-      if (result.ok) toast.success(action === "print_receipt" ? "Receipt sent" : "Drawer opened");
-      else toast.error(result.error || "Hardware action failed");
+      if (result.ok) {
+        toast.success(action === "print_receipt" ? "Receipt sent" : "Drawer opened");
+        if (action === "print_receipt") setReceiptPrinted(true);
+      } else toast.error(result.error || "Hardware action failed");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not retry");
     }
@@ -1070,6 +1093,8 @@ export default function Pos({ onOpenShopManager } = {}) {
 
   const newSale = () => {
     setSaleResult(null);
+    setReceiptAsk(null);
+    setReceiptPrinted(false);
     resetCart();
     clearClient();
     setSaleIdemKey(crypto.randomUUID());
@@ -1317,14 +1342,31 @@ export default function Pos({ onOpenShopManager } = {}) {
             ))}
           </div>
         )}
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-shTextMuted text-sm">Print receipt</span>
-            <button onClick={() => retryHardware("print_receipt")} disabled={hwBusy.print_receipt}
-                    className="text-shPrimary text-sm font-black uppercase tracking-widest disabled:opacity-50">
-              {hwBusy.print_receipt ? "Sending…" : "Reprint"}
-            </button>
+        {receiptAsk && (
+          <div className="bg-[var(--sh-card-base)] border-2 border-shPrimary/60 rounded-2xl p-4" data-testid="pos-print-ask">
+            <p className="text-shText text-base font-black text-center mb-3"><i className="fas fa-print mr-2"/>Print a receipt?</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => answerPrint(true)} disabled={hwBusy.print_receipt} data-testid="pos-print-yes"
+                      className="min-h-[48px] rounded-xl bg-shPrimary text-bgHeader text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                {hwBusy.print_receipt ? "Printing…" : "Yes, print"}
+              </button>
+              <button onClick={() => answerPrint(false)} disabled={hwBusy.print_receipt} data-testid="pos-print-no"
+                      className="min-h-[48px] rounded-xl border border-shBorder text-shText text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                No receipt
+              </button>
+            </div>
           </div>
+        )}
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
+          {!receiptAsk && (
+            <div className="flex items-center justify-between">
+              <span className="text-shTextMuted text-sm">Print receipt</span>
+              <button onClick={() => retryHardware("print_receipt")} disabled={hwBusy.print_receipt} data-testid="pos-print-receipt"
+                      className="text-shPrimary text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                {hwBusy.print_receipt ? "Sending…" : receiptPrinted ? "Reprint" : "Print"}
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <span className="text-shTextMuted text-sm">View receipt</span>
             <button onClick={() => viewReceipt(saleResult.pos_sale_id)} data-testid="pos-view-receipt"

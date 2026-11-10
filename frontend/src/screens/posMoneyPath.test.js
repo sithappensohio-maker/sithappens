@@ -375,6 +375,54 @@ test("a cash sale posts the right money and shows the change", async () => {
   expect(sale.body.idempotency_key).toBeTruthy();
 });
 
+// The receipt waits for a Yes or No — nothing prints until staff answer.
+const sellWithReceiptToken = async () => {
+  await openTender();
+  api.post.mockImplementation((path, body) => {
+    posted.push({ path, body });
+    if (String(path) === "/pos/checkout") {
+      return Promise.resolve({ data: { ok: true, pos_sale_id: "sale-1", sale: { id: "sale-1" },
+        pos_print_receipt_token: "tok-print", pos_open_drawer_token: "tok-drawer" } });
+    }
+    if (String(path).includes("/pos-tokens")) return Promise.resolve({ data: { print_receipt_token: "tok-fresh" } });
+    return Promise.resolve({ data: {} });
+  });
+  posAgent.printReceipt.mockClear();
+  posAgent.openDrawer.mockClear();
+  await click("pos-tender-method-cash");
+  await type("pos-tender-amount", "13.87");
+  await type("pos-tender-cash-received", "20");
+  await click("pos-tender-add");
+  await click("pos-complete-sale");
+};
+
+test("after a sale the receipt is asked about, not printed — the drawer still opens", async () => {
+  await sellWithReceiptToken();
+  expect(q("pos-print-ask")).toBeTruthy();
+  expect(posAgent.printReceipt).not.toHaveBeenCalled();
+  expect(posAgent.openDrawer).toHaveBeenCalledWith("tok-drawer");
+});
+
+test("No receipt prints nothing and leaves a Print button behind", async () => {
+  await sellWithReceiptToken();
+  await click("pos-print-no");
+  expect(posAgent.printReceipt).not.toHaveBeenCalled();
+  expect(q("pos-print-ask")).toBeFalsy();
+  expect(q("pos-print-receipt").textContent).toBe("Print");
+  await click("pos-print-receipt");                     // changed their mind
+  expect(posAgent.printReceipt).toHaveBeenCalledWith("tok-fresh");
+  expect(q("pos-print-receipt").textContent).toBe("Reprint");
+});
+
+test("Yes prints the receipt once", async () => {
+  await sellWithReceiptToken();
+  await click("pos-print-yes");
+  expect(posAgent.printReceipt).toHaveBeenCalledTimes(1);
+  expect(posAgent.printReceipt).toHaveBeenCalledWith("tok-print");
+  expect(q("pos-print-ask")).toBeFalsy();
+  expect(q("pos-print-receipt").textContent).toBe("Reprint");
+});
+
 test("a split tender adds up to the total and both parts are sent", async () => {
   await openTender();
   await click("pos-tender-method-card");

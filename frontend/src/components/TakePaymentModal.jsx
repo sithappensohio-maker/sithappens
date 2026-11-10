@@ -16,7 +16,7 @@
  * pattern) so a double-click or network retry of the same attempt can
  * never double-collect — never regenerated inside the submit handler.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { useOptionalPromptDialog } from "../lib/promptCtx";
@@ -85,9 +85,29 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
     setHwBusy(true);
     const next = { printToken, drawerToken, print: null, drawer: null };
     if (drawerToken) next.drawer = await posOpenDrawer(drawerToken);
-    if (printToken) next.print = await posPrintReceipt(printToken);
+    // The drawer opens right away; the receipt waits for a Yes or No so a
+    // customer who doesn't want one costs no paper (owner, 2026-11-10).
+    if (printToken) {
+      next.printToken = null;
+      next.ask = { printToken };
+    }
     setHwResult(next);
     setHwBusy(false);
+  };
+
+  // The answer to "Print a receipt?". No prints nothing — the Print Receipt
+  // button stays on the screen in case the customer changes their mind.
+  const answeringPrint = useRef(false);
+  const answerPrint = async (yes) => {
+    const ask = hwResult?.ask;
+    if (!ask || answeringPrint.current) return;
+    if (!yes) { setHwResult(prev => ({ ...prev, ask: null })); return; }
+    answeringPrint.current = true;
+    setHwBusy(true);
+    const print = await posPrintReceipt(ask.printToken);
+    setHwResult(prev => ({ ...prev, ask: null, printToken: ask.printToken, print }));
+    setHwBusy(false);
+    answeringPrint.current = false;
   };
 
   const retryHardware = async (action) => {
@@ -250,13 +270,24 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
             </div>
             <div>
               <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Payment recorded successfully</h4>
-              <p className="text-[13px] text-shTextMuted">Checking front-desk hardware…</p>
+              <p className="text-[13px] text-shTextMuted">{hwBusy ? "Checking front-desk hardware…" : hwResult?.ask ? "Does the customer want a receipt?" : "All done."}</p>
             </div>
           </div>
           {hwBusy ? (
             <p className="text-[14px] text-shTextMuted" data-testid="hw-status-busy">Talking to the front-desk printer…</p>
           ) : (
             <div className="space-y-2">
+              {hwResult.ask && (
+                <div className="rounded-xl p-3 bg-shSecondary/10 border border-shSecondary/30" data-testid="hw-print-ask">
+                  <p className="text-[15px] font-black text-shText mb-2"><i className="fas fa-print mr-1.5"/>Print a receipt?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => answerPrint(true)} data-testid="hw-print-yes"
+                            className="min-h-[44px] bg-shPrimary text-bgHeader rounded font-black uppercase text-[13px] tracking-widest">Yes, print</button>
+                    <button onClick={() => answerPrint(false)} data-testid="hw-print-no"
+                            className="min-h-[44px] border border-shBorder text-shText rounded font-black uppercase text-[13px] tracking-widest">No receipt</button>
+                  </div>
+                </div>
+              )}
               {hwResult.drawerToken && (
                 <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.drawer?.ok ? "bg-shPrimary/10 text-shPrimary border border-shPrimary/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-drawer-status">
                   <i className={`fas ${hwResult.drawer?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
@@ -278,7 +309,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
                 <i className="fas fa-rotate mr-1"/>Retry Open Drawer
               </button>
             )}
-            {!hwBusy && (hwInvoiceId || hwLedgerId) && (
+            {!hwBusy && (hwInvoiceId || hwLedgerId) && !hwResult?.ask && (
               <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
                       className="text-shSecondary font-black uppercase text-[12px] tracking-widest border border-shSecondary/40 rounded px-3 py-2">
                 <i className="fas fa-print mr-1"/>

@@ -458,13 +458,51 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     setHwBusy(true);
     const next = { printToken, drawerToken, print: null, drawer: null, extraFailed: 0 };
     if (drawerToken) next.drawer = await posOpenDrawer(drawerToken);
-    if (printToken) next.print = await posPrintReceipt(printToken);
-    for (const token of extraPrintTokens) {
-      const r = await posPrintReceipt(token);
-      if (!r?.ok) next.extraFailed += 1;
+    // The drawer opens right away; the receipt waits for a Yes or No so a
+    // customer who doesn't want one costs no paper (owner, 2026-11-10).
+    if (printToken || extraPrintTokens.length) {
+      next.printToken = null;
+      next.ask = { printToken, extraPrintTokens };
     }
     setHwResult(next);
     setHwBusy(false);
+  };
+
+  // The answer to "Print a receipt?". No prints nothing — the Print Receipt
+  // button stays on the screen in case the customer changes their mind.
+  const answeringPrint = useRef(false);
+  const answerPrint = async (yes) => {
+    const ask = hwResult?.ask;
+    if (!ask || answeringPrint.current) return;
+    if (!yes) { setHwResult(prev => ({ ...prev, ask: null })); return; }
+    answeringPrint.current = true;
+    setHwBusy(true);
+    const print = ask.printToken ? await posPrintReceipt(ask.printToken) : null;
+    let extraFailed = 0;
+    for (const token of ask.extraPrintTokens || []) {
+      const r = await posPrintReceipt(token);
+      if (!r?.ok) extraFailed += 1;
+    }
+    setHwResult(prev => ({ ...prev, ask: null, printToken: ask.printToken || null, print, extraFailed }));
+    setHwBusy(false);
+    answeringPrint.current = false;
+  };
+
+  // Friends & family pickups: only goods bought at the pickup have a receipt.
+  const answerFfPrint = async (yes) => {
+    const tokens = ffResult?.printTokens || [];
+    if (!tokens.length || answeringPrint.current) return;
+    setFfResult(prev => ({ ...prev, printTokens: [] }));
+    if (!yes) return;
+    answeringPrint.current = true;
+    let failed = 0;
+    for (const token of tokens) {
+      const r = await posPrintReceipt(token);
+      if (!r?.ok) failed += 1;
+    }
+    if (failed) toast.error(`${failed} receipt${failed === 1 ? "" : "s"} didn't print — reprint from Recent Sales.`);
+    else toast.success("Receipt printed");
+    answeringPrint.current = false;
   };
 
   const printExtra = async (id) => {
@@ -1052,20 +1090,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (isFF) {
         setBusy(false);
         const done = data?.friends_family ? (data.bookings || []) : [data];
-        setFfResult({ bill: data?.invoice || data?.group_bill || null, dogs: done.map(b => b?.dog_name).filter(Boolean) });
-        // Goods bought at pickup on this checkout print too. This screen has no
-        // hardware status, so a failed print is said in a toast instead.
-        const goodsTokens = data?.pos_extra_print_receipt_tokens || [];
-        if (goodsTokens.length) {
-          (async () => {
-            let failed = 0;
-            for (const token of goodsTokens) {
-              const r = await posPrintReceipt(token);
-              if (!r?.ok) failed += 1;
-            }
-            if (failed) toast.error(`${failed} receipt${failed === 1 ? "" : "s"} didn't print — reprint from Recent Sales.`);
-          })();
-        }
+        // Goods bought at pickup on this checkout have a receipt too: the
+        // result screen asks whether to print it (answerFfPrint).
+        setFfResult({
+          bill: data?.invoice || data?.group_bill || null,
+          dogs: done.map(b => b?.dog_name).filter(Boolean),
+          printTokens: data?.pos_extra_print_receipt_tokens || [],
+        });
         return;
       }
       const printToken = data?.pos_print_receipt_token;
@@ -1175,6 +1206,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               Dogs still here or still to come won't be on this bill — each gets its own when it leaves. Make the bill now?
             </p>
           )}
+          {(ffResult.printTokens || []).length > 0 && (
+            <div className="mt-3 rounded-xl p-3 bg-shBlue/10 border border-shBlue/30" data-testid="checkout-ff-print-ask">
+              <p className="text-[15px] font-black text-white mb-2"><i className="fas fa-print mr-1.5"/>Print a receipt for the items bought?</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => answerFfPrint(true)} data-testid="checkout-ff-print-yes"
+                        className="min-h-[44px] bg-shGreen text-bgHeader rounded font-black uppercase text-[13px] tracking-widest">Yes, print</button>
+                <button onClick={() => answerFfPrint(false)} data-testid="checkout-ff-print-no"
+                        className="min-h-[44px] border border-gray-500 text-gray-200 rounded font-black uppercase text-[13px] tracking-widest">No receipt</button>
+              </div>
+            </div>
+          )}
           {ffErr && <p className="text-red-400 text-[14px] mt-3" data-testid="checkout-ff-error">{ffErr}</p>}
           <div className="flex flex-wrap gap-2 mt-4">
             {bill && (
@@ -1214,13 +1256,24 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             </div>
             <div>
               <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Payment recorded successfully</h4>
-              <p className="text-[13px] text-gray-400">Checking front-desk hardware…</p>
+              <p className="text-[13px] text-gray-400">{hwBusy ? "Checking front-desk hardware…" : hwResult?.ask ? "Does the customer want a receipt?" : "All done."}</p>
             </div>
           </div>
           {hwBusy ? (
             <p className="text-[14px] text-gray-400" data-testid="hw-status-busy">Talking to the front-desk printer…</p>
           ) : (
             <div className="space-y-2">
+              {hwResult.ask && (
+                <div className="rounded-xl p-3 bg-shBlue/10 border border-shBlue/30" data-testid="hw-print-ask">
+                  <p className="text-[15px] font-black text-white mb-2"><i className="fas fa-print mr-1.5"/>Print a receipt?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => answerPrint(true)} data-testid="hw-print-yes"
+                            className="min-h-[44px] bg-shGreen text-bgHeader rounded font-black uppercase text-[13px] tracking-widest">Yes, print</button>
+                    <button onClick={() => answerPrint(false)} data-testid="hw-print-no"
+                            className="min-h-[44px] border border-gray-500 text-gray-200 rounded font-black uppercase text-[13px] tracking-widest">No receipt</button>
+                  </div>
+                </div>
+              )}
               {hwResult.drawerToken && (
                 <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.drawer?.ok ? "bg-shGreen/10 text-shGreen border border-shGreen/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-drawer-status">
                   <i className={`fas ${hwResult.drawer?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
@@ -1252,7 +1305,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                 <i className="fas fa-rotate mr-1"/>Retry Open Drawer
               </button>
             )}
-            {!hwBusy && hwInvoiceId && !hwWaiting && (
+            {!hwBusy && hwInvoiceId && !hwWaiting && !hwResult?.ask && (
               <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
                       className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
                 <i className="fas fa-print mr-1"/>
