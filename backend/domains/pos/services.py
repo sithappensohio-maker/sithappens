@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 import sales_tax_policy
+from credit_packs_data import pack_credits
 from domains.bookings import friends_family
 from domains.gift_cards import services as gift_cards_services
 from domains.backup import deletion_log
@@ -960,7 +961,7 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
     for pk in packs:
         if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
             continue
-        qty = int(pk.get("qty") or 0)
+        qty = pack_credits(pk.get("qty"))
         list_price = round(float(pk.get("price") or 0), 2)
         pricing = await _resolve_client_price_fn(client_id, "credit_pack", pk["id"], list_price)
         effective_price = round(float(pricing["effective_price"]), 2)

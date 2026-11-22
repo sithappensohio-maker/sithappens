@@ -4,6 +4,23 @@ Sit Happens — Default credit-pack catalog.
 These are placeholders — admin should adjust in Settings → Credit Packs.
 """
 
+def pack_credits(value, default=0):
+    """How many credits a pack (or a lot minted from one) holds.
+
+    A pack may hold a half credit — "2 dogs, 1 day" is 1.5 credits, because a
+    two-dog daycare day costs 1.5. Every sale path reads the pack's count
+    through here so 1.5 is never cut down to 1 on the way to the client's
+    balance. Whole counts come back as a plain int so existing packs, lots
+    and receipts read exactly as they always have ("10", not "10.0")."""
+    try:
+        n = round(float(value), 2)
+    except (TypeError, ValueError):
+        n = 0.0
+    if not n:
+        n = float(default)
+    return int(n) if float(n).is_integer() else n
+
+
 SEED_CREDIT_PACKS = [
     # Daycare packs
     {"slug": "single_day",      "name": "Single Day Drop-In",     "qty": 1,  "price": 35.0,  "service_type": "daycare",  "icon": "fa-sun"},

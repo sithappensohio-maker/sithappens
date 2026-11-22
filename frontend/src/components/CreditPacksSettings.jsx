@@ -65,7 +65,8 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
         </div>
         <div>
           <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Credits per pack</label>
-          <input type="number" min="1" value={form.qty} onChange={(e)=>setForm({...form, qty: parseInt(e.target.value) || 1})}
+          {/* Half credits are allowed — "2 dogs, 1 day" is 1.5 credits. */}
+          <input type="number" min="1" step="0.5" value={form.qty} onChange={(e)=>setForm({...form, qty: e.target.value === "" ? "" : parseFloat(e.target.value)})}
                  data-testid="pack-qty-input"
                  className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
         </div>
@@ -337,6 +338,7 @@ export default function CreditPacksSettings() {
     // 422 from FastAPI (whose `detail` is an array of objects React can't render).
     if (!form.name?.trim()) { setErr("Pack name is required."); return; }
     if (!Number.isFinite(form.qty) || form.qty < 1) { setErr("Credits per pack must be at least 1."); return; }
+    if (!Number.isInteger(form.qty * 2)) { setErr("Credits per pack must be a whole number or end in .5 (like 1.5)."); return; }
     if (!Number.isFinite(form.price) || form.price < 0) { setErr("Price must be 0 or higher."); return; }
     try {
       if (editing) await api.put(`/credit-packs/${editing.id}`, form);

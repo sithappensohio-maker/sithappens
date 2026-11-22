@@ -44078,7 +44078,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     for pk in packs:
         if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
             continue
-        qty = int(pk.get("qty") or 0)
+        qty = pack_credits(pk.get("qty"))
         list_price = round(float(pk.get("price") or 0), 2)
         # Reuse the exact same resolver every other credit-pack purchase path
         # (front-desk sell-pack, booking checkout) already trusts — a
@@ -45517,7 +45517,7 @@ async def _fulfill_shop_credit_pack_line(order: dict, line: dict) -> None:
     pack = await db.credit_packs.find_one({"id": line["ref_id"]}, {"_id": 0})
     if not pack:
         raise HTTPException(status_code=500, detail="Credit pack missing during shop fulfillment")
-    qty_per_unit = int(pack["qty"])
+    qty_per_unit = pack_credits(pack["qty"])
     unit_price = round(float(line["unit_price"]), 2)
     value_each = round(unit_price / max(qty_per_unit, 1), 2)
     svc_type = pack.get("service_type") or "daycare"
@@ -48572,7 +48572,7 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
         for li in priced["line_items"]:
             if li["kind"] == "credit_pack":
                 pack = catalog_caches["packs"][li["pack_id"]]
-                pack_qty = int(pack["qty"])
+                pack_qty = pack_credits(pack["qty"])
                 svc_type = pack.get("service_type") or "daycare"
                 balance_field = _credit_balance_field(svc_type) or "credits"
                 unit_price_net = round(li["unit_price"] * (1 - (li["allocated_discount"] / li["amount"] if li["amount"] else 0)), 2)
@@ -49032,7 +49032,7 @@ async def _void_pos_sale_held(sale_id: str, body: PosSaleVoidIn, user: dict):
                 continue  # fully redeemed already — nothing left to claw back
             svc_type = lot.get("service_type") or "daycare"
             balance_field = "training_credits" if lot.get("pack_kind") == "training_program" else (_credit_balance_field(svc_type) or "credits")
-            balance_clawback[balance_field] = balance_clawback.get(balance_field, 0) - int(remaining)
+            balance_clawback[balance_field] = balance_clawback.get(balance_field, 0) - pack_credits(remaining)
             await db.credit_lots.update_one(
                 {"id": lot["id"]},
                 {"$set": {"qty_remaining": 0, "voided_at": ts, "void_reason": body.reason.strip(), "voided_by": user.get("name") or user.get("email")}},
@@ -53284,19 +53284,28 @@ async def remove_pricing_tier_price(tier_id: str, price_id: str, user: dict = De
 
 
 # ────────────────────────── Credit Packs + FIFO Lots ──────────────────────────
-from credit_packs_data import SEED_CREDIT_PACKS
+from credit_packs_data import SEED_CREDIT_PACKS, pack_credits
 
 
 class CreditPackIn(BaseModel):
     slug: Optional[str] = ""
     name: str = Field(min_length=1)
-    qty: int = Field(ge=1)
+    # Half credits are allowed ("2 dogs, 1 day" = 1.5, since a two-dog
+    # daycare day costs 1.5 credits) — but only whole or half, never 1.25,
+    # so a pack can always be spent down to exactly zero.
+    qty: float = Field(ge=1)
     price: float = Field(ge=0)
     service_type: Optional[str] = "daycare"
     icon: Optional[str] = ""
     color: Optional[str] = ""
     active: bool = True
-    active: bool = True
+
+    @field_validator("qty")
+    @classmethod
+    def _qty_whole_or_half(cls, v):
+        if not float(v * 2).is_integer():
+            raise ValueError("Credits per pack must be a whole number or end in .5 (like 1.5).")
+        return pack_credits(v)
     # Sprint 110di-62 — Auto-fire email template slug on pack sale.
     welcome_email_template_slug: Optional[str] = None
     # Client Shop Phase 1 — additive online-visibility fields. qty/price/
@@ -53388,7 +53397,7 @@ async def list_credit_packs(user: dict = Depends(get_current_user), include_inac
         await _apply_client_overrides(packs, user["client_id"], "credit_pack", "price")
     # Compute value_each AFTER override so it reflects what the client actually pays
     for p in packs:
-        qty = int(p.get("qty") or 1)
+        qty = pack_credits(p.get("qty"), 1)
         price = float(p.get("price") or 0)
         p["value_each"] = round(price / max(qty, 1), 2)
         p.update(_credit_pack_display_fields(p, qty, price))
@@ -53429,7 +53438,7 @@ async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends
                                   self_kind="credit_pack", self_id=pack_id)
     await db.credit_packs.update_one({"id": pack_id}, {"$set": update})
     merged = {**existing, **update}
-    merged["value_each"] = round(float(merged.get("price") or 0) / max(int(merged.get("qty") or 1), 1), 2)
+    merged["value_each"] = round(float(merged.get("price") or 0) / max(pack_credits(merged.get("qty"), 1), 1), 2)
     return merged
 
 
@@ -53455,7 +53464,7 @@ async def duplicate_credit_pack(pack_id: str, user: dict = Depends(require_admin
     doc["slug"] = _shop_org_slugify(doc["name"])[:40]
     await db.credit_packs.insert_one(doc)
     doc.pop("_id", None)
-    doc["value_each"] = round(float(doc.get("price") or 0) / max(int(doc.get("qty") or 1), 1), 2)
+    doc["value_each"] = round(float(doc.get("price") or 0) / max(pack_credits(doc.get("qty"), 1), 1), 2)
     return doc
 
 
@@ -54620,7 +54629,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     pack = await db.credit_packs.find_one({"id": body.pack_id}, {"_id": 0})
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
-    qty = int(pack["qty"])
+    qty = pack_credits(pack["qty"])
     # Sprint 110am — honour a legacy-pricing override if one is active for this
     # client + pack. Falls back to the catalog price when no override exists.
     pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack["price"]))
@@ -54747,7 +54756,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     now = now_iso()
     for item in body.items:
         pack = packs[item.pack_id]
-        qty = int(pack["qty"])
+        qty = pack_credits(pack["qty"])
         # Sprint 110am — same legacy-pricing resolution as the single-sell path
         pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack["price"]))
         effective_price = pricing["effective_price"]
@@ -54870,7 +54879,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             "unit_price": unit_price,
             "line_total": round(unit_price * item.quantity, 2),
             "service_type": pack.get("service_type") or "daycare",
-            "pack_qty": int(pack["qty"]),
+            "pack_qty": pack_credits(pack["qty"]),
         })
 
     receipt = {
@@ -55067,7 +55076,7 @@ async def list_client_receipts(client_id: str, _: dict = Depends(require_admin_a
             "totals": {"daycare": {"qty": 0, "price": 0.0}, "training": {"qty": 0, "price": 0.0}},
         })
         pack_id = lot.get("pack_id", "")
-        pack_qty = int(lot.get("qty_total") or 0)
+        pack_qty = pack_credits(lot.get("qty_total"))
         unit_price = float(lot.get("price_paid") or 0)
         svc = lot.get("service_type") or "daycare"
         line = bucket["_lines_by_pack"].setdefault(pack_id, {
