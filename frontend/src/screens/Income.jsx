@@ -1507,6 +1507,11 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
     client_id: sale?.client_id || "",
   });
   const [busy, setBusy] = useState(false);
+  // Service income with no sales tax in it (daycare, boarding, training) —
+  // e.g. a month's takings from before the app was in use. Without this the
+  // form treats every amount as merchandise and carves sales tax out of it.
+  // An existing sale opens the way it was saved.
+  const [noTax, setNoTax] = useState(isEdit ? !Number(sale?.tax_amount) : false);
   const [clientQuery, setClientQuery] = useState("");
   // Sprint 110di-61 — Partial-pay toggle (cash-basis, option 1c).
   // Only meaningful when a client is selected (no tab without a client).
@@ -1533,6 +1538,7 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
         notes: (form.notes || "").trim(),
         payment_method: form.payment_method,
         client_id: form.client_id || null,
+        apply_tax: !noTax,
       };
       // Sprint 110di-61 — Partial pay (requires a linked client).
       if (form.client_id && payMode === "partial" && amountPaid !== "") {
@@ -1642,6 +1648,17 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm resize-none" data-testid="retail-notes" />
         </div>
+
+        <label className="flex items-start gap-2 text-[14px] text-shText" data-testid="retail-no-tax-label">
+          <input type="checkbox" className="mt-1" checked={noTax} onChange={(e)=>setNoTax(e.target.checked)} data-testid="retail-no-tax" />
+          <span>
+            No sales tax — this is service income
+            <span className="block text-[12px] text-shTextMuted mt-0.5">
+              Tick for daycare, boarding or training money (for example a month's income from before you used the app).
+              Leave unticked for merchandise: the amount is then treated as including sales tax.
+            </span>
+          </span>
+        </label>
 
         {/* Sprint 110di-61 — Partial-pay toggle. Only available when a
             client is selected (tab requires a client to attach to). */}
