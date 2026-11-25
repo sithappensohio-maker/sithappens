@@ -23,9 +23,12 @@ function packSize(p) {
   return credits(p.qty);
 }
 
-export default function BookingPayNow({ options, selectedId, onSelect, disabled = false }) {
-  if (!options?.offer || !(options.packs || []).length) return null;
+export default function BookingPayNow({ options, selectedId, onSelect, payAddons = true, onToggleAddons, disabled = false }) {
+  const packs = options?.packs || [];
+  const addons = options?.addons || null;
+  if (!options?.offer || (!packs.length && !addons)) return null;
   const have = Number(options.credits_available || 0);
+  const addonNames = (addons?.lines || []).map(l => (l.count > 1 ? `${l.name} ×${l.count}` : l.name)).join(", ");
   return (
     <div className="rounded-lg border border-shSecondary/40 p-4 space-y-3" style={{ background: "var(--sh-card-base)" }}
          data-testid="wiz-pay-now">
@@ -35,6 +38,7 @@ export default function BookingPayNow({ options, selectedId, onSelect, disabled 
         </p>
         <span className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">Optional</span>
       </div>
+      {packs.length > 0 && (<>
       <p className="text-[14px] text-shTextMuted leading-snug" data-testid="wiz-pay-now-why">
         {Number(options.credits_promised || 0) > 0
           ? <>This booking needs {credits(options.credits_needed, options.pool_label)}. You have {credits(options.credits_on_account)}, but {Math.min(options.credits_promised, options.credits_on_account)} {Math.min(options.credits_promised, options.credits_on_account) === 1 ? "is" : "are"} already set aside for your other upcoming bookings.</>
@@ -42,7 +46,7 @@ export default function BookingPayNow({ options, selectedId, onSelect, disabled 
         {" "}Buy a pack now by card and it's taken care of — or book and pay at your visit.
       </p>
       <div className="space-y-2" role="radiogroup" aria-label="Credit pack to buy">
-        {options.packs.map((p) => {
+        {packs.map((p) => {
           const on = p.id === selectedId;
           return (
             <button key={p.id} type="button" role="radio" aria-checked={on} disabled={disabled}
@@ -67,6 +71,33 @@ export default function BookingPayNow({ options, selectedId, onSelect, disabled 
           );
         })}
       </div>
+      </>)}
+
+      {/* Add-ons cost dollars, not credits. Paid ahead, the money sits on the
+          client's account and comes off the bill at pickup. */}
+      {addons && (
+        <div className="space-y-2" data-testid="wiz-pay-addons">
+          {packs.length === 0 && (
+            <p className="text-[14px] text-shTextMuted leading-snug" data-testid="wiz-pay-addons-why">
+              Your add-ons for this booking come to ${Number(addons.total).toFixed(2)}. Pay for them now by card — or book and pay at your visit.
+            </p>
+          )}
+          <button type="button" role="checkbox" aria-checked={!!payAddons} disabled={disabled}
+                  onClick={() => onToggleAddons && onToggleAddons(!payAddons)} data-testid="wiz-pay-addons-toggle"
+                  className={`w-full min-h-[44px] flex items-center gap-3 p-3 rounded-lg border text-left transition disabled:opacity-60 ${
+                    payAddons ? "border-shSecondary bg-shSecondary/10" : "border-shBorder hover:border-shSecondary/50"}`}>
+            <i className={`${payAddons ? "fas fa-square-check text-shSecondary" : "far fa-square text-shTextMuted"} shrink-0`}/>
+            <span className="flex-1 min-w-0">
+              <span className="block text-[14px] font-black text-shText break-words">Pay for add-ons now too</span>
+              <span className="block text-[12px] text-shTextMuted break-words">{addonNames}</span>
+            </span>
+            <span className="text-[15px] font-black text-shPrimary whitespace-nowrap">${Number(addons.total).toFixed(2)}</span>
+          </button>
+          <p className="text-[12px] text-shTextMuted leading-snug">
+            Add-on money goes on your account and comes off your bill when you pick up.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

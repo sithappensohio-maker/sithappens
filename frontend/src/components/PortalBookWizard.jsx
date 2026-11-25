@@ -412,7 +412,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // already cover the booking.
   const [payOptions, setPayOptions] = useState(null);
   const [payPackId, setPayPackId] = useState("");
-  const [payPack, setPayPack] = useState(null);   // the pack "Book & pay now" was pressed with
+  const [payAddons, setPayAddons] = useState(true); // pay the add-on dollars ahead too (when there are any)
+  const [payCart, setPayCart] = useState(null);   // what "Book & pay now" was pressed with: Shop checkout items
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState("");
   const payKeyRef = useRef(null);    // one idempotency key per pack choice: a retry resumes, never re-charges
@@ -420,6 +421,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   const payBusyRef = useRef(false);  // a double tap is one checkout
   const bookBusyRef = useRef(false); // …and one booking
   const multiDatesKey = multiDates.join(",");
+  // Every add-on picked, once per dog that picked it — the server prices them.
+  const allAddonIds = [...selectedAddonIds, ...extraDogs.flatMap(e => e.addon_service_ids || [])];
+  const allAddonIdsKey = allAddonIds.join(",");
   useEffect(() => {
     if (step !== 3) return;
     if (!serviceType || !date || willWaitlist) { setPayOptions(null); return; }
@@ -431,11 +435,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
       dates: isMultiDate && serviceType === "daycare" ? multiDates : [],
       dog_count: 1 + extraDogs.length,
       pickup_time: serviceType === "boarding" ? pickupTime : null,
+      addon_service_ids: allAddonIds,
     })
       .then(({ data }) => {
         if (cancelled) return;
         const packs = data?.offer ? (data.packs || []) : [];
-        setPayOptions(packs.length ? data : null);
+        setPayOptions(data?.offer && (packs.length || data.addons) ? data : null);
         // Pre-select the pack that matches the booking (the server lists it
         // first). When the booking itself changes what it needs — a second
         // dog added on this step, say — the match is picked again, so a
@@ -450,13 +455,22 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
       .catch(() => { if (!cancelled) setPayOptions(null); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, serviceType, date, endDate, isMultiDate, multiDatesKey, extraDogs.length, pickupTime, willWaitlist]);
-  // A different pack is a different purchase, so it gets its own key.
-  useEffect(() => { payKeyRef.current = null; }, [payPackId]);
+  }, [step, serviceType, date, endDate, isMultiDate, multiDatesKey, extraDogs.length, pickupTime, willWaitlist, allAddonIdsKey]);
   const selectedPayPack = (payOptions?.packs || []).find(p => p.id === payPackId) || null;
+  // Add-on dollars are paid ahead as money on the account
+  // (backend domains/shop/account_credit.py) — in the SAME card payment as the pack.
+  const payAddonsLine = payAddons && payOptions?.addons ? payOptions.addons : null;
+  const payItems = [
+    ...(selectedPayPack ? [{ kind: "credit_pack", ref_id: selectedPayPack.id, quantity: 1 }] : []),
+    ...(payAddonsLine ? [{ kind: "account_credit", ref_id: payAddonsLine.ref_id, quantity: 1 }] : []),
+  ];
+  const payTotal = Number(selectedPayPack?.price || 0) + Number(payAddonsLine?.total || 0);
+  const payItemsKey = payItems.map(i => `${i.kind}:${i.ref_id}`).join("|");
+  // A different basket is a different purchase, so it gets its own key.
+  useEffect(() => { payKeyRef.current = null; }, [payItemsKey]);
 
-  const startPayment = async (pack) => {
-    if (!pack || payBusyRef.current) return;
+  const startPayment = async (items) => {
+    if (!items?.length || payBusyRef.current) return;
     payBusyRef.current = true;
     setPaying(true); setPayError("");
     if (!payKeyRef.current) {
@@ -465,7 +479,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     }
     try {
       const { data } = await api.post("/shop/checkout", {
-        items: [{ kind: "credit_pack", ref_id: pack.id, quantity: 1 }],
+        items,
         idempotency_key: payKeyRef.current,
       });
       leaveTo(data.url); // the Stripe card page; stay "busy" while the browser leaves
@@ -497,15 +511,15 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     return rows.map(r => r.data);
   };
 
-  // Confirm. With `pack`, the booking is saved first and only then is the
+  // Confirm. With `items` to pay for, the booking is saved first and only then is the
   // card page opened — so a client who backs out of paying still has the
   // booking, exactly as if they had pressed "Confirm booking".
-  const book = async (pack = null) => {
+  const book = async (items = null) => {
     if (bookBusyRef.current) return;
     bookBusyRef.current = true;
     let booked = false;
     try { booked = await saveBooking(); } finally { bookBusyRef.current = false; }
-    if (booked && pack) { setPayPack(pack); await startPayment(pack); }
+    if (booked && items?.length) { setPayCart(items); await startPayment(items); }
   };
 
   // Returns true only when a real booking was made (not a waitlist entry, not a refusal).
@@ -1285,7 +1299,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
             <PaymentOptionsCard compact />
 
             {/* Pay while booking: only when credits don't cover this booking. */}
-            <BookingPayNow options={payOptions} selectedId={payPackId} onSelect={setPayPackId} disabled={submitting || paying} />
+            <BookingPayNow options={payOptions} selectedId={payPackId} onSelect={setPayPackId}
+                           payAddons={payAddons} onToggleAddons={setPayAddons} disabled={submitting || paying} />
 
             <BookingBlockNotice
               testid="wiz-error"
@@ -1304,18 +1319,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 <i className="fas fa-arrow-left"/>Back
               </PremiumButton>
               <div className="flex flex-wrap justify-end gap-2">
-                <PremiumButton variant={selectedPayPack ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
+                <PremiumButton variant={payItems.length ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
                   {submitting ? "Booking…"
                     : (isMultiDate && serviceType==="daycare"
                         ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
                         : extraDogs.length > 0
                           ? `Confirm booking · ${1 + extraDogs.length} dogs`
                           : "Confirm booking")}
-                  {selectedPayPack && !submitting ? " · pay later" : ""}
+                  {payItems.length && !submitting ? " · pay later" : ""}
                 </PremiumButton>
-                {selectedPayPack && (
-                  <PremiumButton variant="primary" onClick={() => book(selectedPayPack)} disabled={submitting || paying} data-testid="wiz-confirm-pay">
-                    <i className="fas fa-credit-card"/>Book & pay ${Number(selectedPayPack.price).toFixed(2)} now
+                {payItems.length > 0 && (
+                  <PremiumButton variant="primary" onClick={() => book(payItems)} disabled={submitting || paying} data-testid="wiz-confirm-pay">
+                    <i className="fas fa-credit-card"/>Book & pay ${payTotal.toFixed(2)} now
                   </PremiumButton>
                 )}
               </div>
@@ -1361,18 +1376,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               </p>
             )}
 
-            {payPack && paying && (
+            {payCart && paying && (
               <p className="text-[14px] text-shText text-center font-bold" data-testid="wiz-pay-opening">
-                <i className="fas fa-spinner fa-spin mr-1.5"/>Your booking is saved. Opening the secure card page for {payPack.name}…
+                <i className="fas fa-spinner fa-spin mr-1.5"/>Your booking is saved. Opening the secure card page…
               </p>
             )}
-            {payPack && !paying && payError && (
+            {payCart && !paying && payError && (
               <div className="rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 space-y-2 text-center" data-testid="wiz-pay-failed">
                 <p className="text-[14px] text-shText leading-snug">
                   <span className="font-black">Your booking is saved and nothing was charged.</span> {payError}
                   {" "}You can try the card page again, or simply pay at your visit.
                 </p>
-                <button type="button" onClick={() => startPayment(payPack)} data-testid="wiz-pay-retry"
+                <button type="button" onClick={() => startPayment(payCart)} data-testid="wiz-pay-retry"
                         className="min-h-[44px] px-4 py-2 rounded bg-shOrange/20 border border-shOrange/50 text-shOrange font-black uppercase tracking-widest text-[12px]">
                   <i className="fas fa-credit-card mr-1.5"/>Try the card page again
                 </button>

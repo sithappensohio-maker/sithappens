@@ -271,3 +271,73 @@ def test_the_pack_that_matches_the_booking_comes_first():
         assert offered[0].get("best_match") is True
         assert not any(p.get("best_match") for p in offered[1:])
         assert offered[-1]["covers"] is False
+
+
+# ---------------------------------------------------------------------------
+# Add-ons: dollars paid ahead as money on the account
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _addon(price=15.0, addon_for=("daycare",), **kw):
+    doc = {"id": str(uuid.uuid4()), "name": f"{TAG} Bath {uuid.uuid4().hex[:4]}", "service_type": "grooming",
+           "is_addon": True, "addon_for": list(addon_for), "base_price": price, "active": True, **kw}
+    run(server.db.services.insert_one(dict(doc)))
+    try:
+        yield doc
+    finally:
+        run(server.db.services.delete_one({"id": doc["id"]}))
+
+
+def test_addons_can_be_paid_ahead_even_when_credits_cover_the_visit():
+    with _stripe(), _client(credits=5) as c, _addon(15.0) as bath:
+        out = _options(c, addon_service_ids=[bath["id"]])
+        assert out["offer"] is True and out["packs"] == []
+        assert out["addons"]["total"] == 15.0 and out["addons"]["ref_id"] == "ac-1500"
+        assert out["addons"]["lines"] == [{"name": bath["name"], "count": 1, "amount": 15.0}]
+    with _stripe(), _client(credits=5) as c:
+        assert _options(c) == {"offer": False, "packs": []}, "no add-ons and covered: still nothing new"
+
+
+def test_addons_are_counted_per_dog_and_per_day_alongside_the_packs():
+    with _stripe(), _client(credits=0) as c, _pack(qty=1.5, price=37.5) as pack, _addon(15.0) as bath, _addon(8.0) as nails:
+        out = _options(c, dog_count=2, addon_service_ids=[bath["id"], bath["id"], nails["id"]])
+        assert _mine(out, pack)[0]["best_match"] is True
+        assert out["addons"]["total"] == 38.0, "two baths and one nail trim"
+        out = _options(c, addon_service_ids=[bath["id"]], dates=["2027-03-10", "2027-03-11", "2027-03-12"])
+        assert out["addons"]["total"] == 45.0 and out["addons"]["lines"][0]["count"] == 3
+
+
+def test_addon_money_is_the_customers_own_price_and_goes_through_the_one_checkout():
+    with _stripe() as calls, _client(credits=0) as c, _pack(qty=1, price=40.0) as pack, _addon(15.0) as bath:
+        real = server.pricing_domain_services.resolve_client_price
+
+        async def _locked(client_id, kind, ref_id, list_price, **kw):
+            if ref_id == bath["id"]:
+                return {"effective_price": 12.0, "override_id": "ovr-1"}
+            return await real(client_id, kind, ref_id, list_price, **kw)
+        server.pricing_domain_services.resolve_client_price = _locked
+        try:
+            out = _options(c, addon_service_ids=[bath["id"]])
+        finally:
+            server.pricing_domain_services.resolve_client_price = real
+        assert out["addons"]["total"] == 12.0
+        order = run(server.create_shop_checkout(server.ShopCheckoutIn(
+            items=[server.ShopCartItemIn(kind="credit_pack", ref_id=pack["id"], quantity=1),
+                   server.ShopCartItemIn(kind="account_credit", ref_id=out["addons"]["ref_id"], quantity=1)],
+            idempotency_key=f"book-pay-{uuid.uuid4().hex}"), _user(c)))
+        saved = run(server.db.shop_orders.find_one({"id": order["order_id"]}, {"_id": 0}))
+        assert saved["total"] == 52.0 and len(calls) == 1, "one card page for the pack and the add-on together"
+
+
+def test_no_addon_offer_for_a_bad_addon_or_with_card_payments_off():
+    with _stripe(), _client(credits=5) as c, _addon(15.0, addon_for=("boarding",)) as wrong:
+        assert _options(c, addon_service_ids=[wrong["id"]])["offer"] is False
+        assert _options(c, addon_service_ids=["no-such-addon"])["offer"] is False
+    with _stripe(enabled=False), _client(credits=5) as c, _addon(15.0) as bath:
+        assert _options(c, addon_service_ids=[bath["id"]])["offer"] is False
+
+
+def test_grooming_with_an_addon_offers_only_the_addon_money():
+    with _stripe(), _client(credits=0) as c, _pack(qty=5), _addon(10.0, addon_for=("grooming",)) as extra:
+        out = _options(c, service_type="grooming", addon_service_ids=[extra["id"]])
+        assert out["offer"] is True and out["packs"] == [] and out["addons"]["total"] == 10.0

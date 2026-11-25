@@ -48,15 +48,67 @@ class BookingPayOptionsIn(BaseModel):
     dates: List[str] = Field(default_factory=list, max_length=120)
     dog_count: int = Field(default=1, ge=1, le=12)
     pickup_time: Optional[str] = None
+    # Every add-on picked, once PER DOG that picked it (two dogs with a bath
+    # each = the bath's id twice). Priced here, never taken from the screen.
+    addon_service_ids: List[str] = Field(default_factory=list, max_length=120)
 
 
 async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
-    """What to offer this client for the booking described by `body`."""
+    """What to offer this client for the booking described by `body`:
+    the credit packs that cover it (when credits fall short) and/or the
+    add-on dollars to pay ahead. Either part alone is an offer."""
     if not (g["STRIPE_ONLINE_ENABLED"] and g["STRIPE_SECRET_KEY"]):
         return dict(NO_OFFER)  # no card page to send them to
+    credit = await _credit_part(g, client, body)
+    addons = await _addon_part(g, client, body)
+    if not credit["packs"] and not addons:
+        return dict(NO_OFFER)
+    return {"offer": True, "service_type": body.service_type, **credit, "addons": addons}
+
+
+def _days(body: BookingPayOptionsIn) -> int:
+    return len(set(body.dates)) if (body.service_type == "daycare" and body.dates) else 1
+
+
+async def _addon_part(g: dict, client: dict, body: BookingPayOptionsIn) -> Optional[dict]:
+    """The add-on dollars for this booking, payable ahead as money on the
+    account (domains/shop/account_credit.py). Add-ons are dollars, never
+    credits, so this is offered whether or not credits cover the visit.
+    Priced by the same resolver the booking and the estimate use, so the
+    client's own add-on prices apply."""
+    counts: dict = {}
+    for sid in body.addon_service_ids:
+        if sid:
+            counts[sid] = counts.get(sid, 0) + 1
+    if not counts:
+        return None
+    try:
+        snaps = await g["resolve_addon_snapshots"](client["id"], list(counts), body.service_type)
+    except HTTPException:
+        return None  # an add-on that can't be booked: the booking itself will say so
+    days = _days(body)
+    lines, total = [], 0.0
+    for a in snaps:
+        sid = a.get("service_id") or a.get("id")
+        each = round(float(a.get("price") or 0) * int(a.get("qty") or 1), 2)
+        times = counts.get(sid, 1) * days
+        amount = round(each * times, 2)
+        if amount <= 0:
+            continue
+        lines.append({"name": a.get("name") or a.get("service_name") or "Add-on", "count": times, "amount": amount})
+        total = round(total + amount, 2)
+    account_credit = g["shop_account_credit"]
+    if not (account_credit.MIN_AMOUNT <= total <= account_credit.MAX_AMOUNT):
+        return None  # nothing to pay, or more than can be paid ahead online
+    return {"total": total, "ref_id": account_credit.ref_id_for(total), "lines": lines}
+
+
+async def _credit_part(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
+    """Whether credits fall short for this booking, and the packs that fix it."""
+    nothing = {"packs": []}
     pool_field = g["_credit_balance_field"](body.service_type)
     if not pool_field:
-        return dict(NO_OFFER)  # a dollars-only service
+        return nothing  # a dollars-only service
 
     settings = await g["get_settings"]()
     cutoff = g["_boarding_full_day_cutoff_from_rules"](settings.get("booking_rules") or {})
@@ -67,12 +119,12 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
             dog_count=body.dog_count, pickup_time=pickup, pickup_cutoff_time=cutoff,
         ) or 0)
     except (TypeError, ValueError):
-        return dict(NO_OFFER)  # half-picked dates: nothing to offer yet
-    days = len(set(body.dates)) if (body.service_type == "daycare" and body.dates) else 1
+        return nothing  # half-picked dates: nothing to offer yet
+    days = _days(body)
     needed = round(per_booking * days, 2)
     on_account = round(float(client.get(pool_field) or 0), 2)
     if needed <= 0:
-        return dict(NO_OFFER)
+        return nothing
     # Credits the client's other upcoming visits will use are not free for
     # this one (same rule as the price estimate — domains/bookings/credits_promised).
     promised = 0.0
@@ -83,7 +135,7 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
     available = credits_promised.free_after(on_account, promised)
     short = round(max(0.0, needed - available), 2)
     if short <= 0.0001:
-        return dict(NO_OFFER)  # credits already cover it: nothing new is shown
+        return nothing  # credits already cover it: nothing new is shown
 
     catalog = await g["_build_shop_catalog"](client["id"])
     db = g["db"]
@@ -116,8 +168,6 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
     if packs and packs[0]["covers"]:
         packs[0]["best_match"] = True
     return {
-        "offer": bool(packs),
-        "service_type": body.service_type,
         "pool_label": POOL_LABEL.get(body.service_type, body.service_type),
         "credits_needed": needed,
         "credits_available": available,

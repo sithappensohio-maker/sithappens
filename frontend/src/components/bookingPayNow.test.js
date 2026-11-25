@@ -277,3 +277,72 @@ describe("the pack that matches the booking is the one selected", () => {
     await v.cleanup();
   });
 });
+
+describe("add-ons can be paid for while booking", () => {
+  const BATH = { id: "ad-bath", name: "Bath", base_price: 15, is_addon: true, active: true };
+  const ADDONS = { total: 15, ref_id: "ac-1500", lines: [{ name: "Bath", count: 1, amount: 15 }] };
+
+  async function reviewWithBath(options) {
+    api.get.mockImplementation((url) => {
+      if (url === "/services") return Promise.resolve({ data: [DAYCARE] });
+      if (url === "/services/addons") return Promise.resolve({ data: [BATH] });
+      if (url === "/bookings/availability") return Promise.resolve({ data: OPEN });
+      return Promise.resolve({ data: {} });
+    });
+    api.post.mockImplementation((url, body) => {
+      if (url === "/portal/booking-pay-options") return Promise.resolve({ data: body.addon_service_ids.length ? options : { offer: false, packs: [] } });
+      if (url === "/bookings") return booking();
+      if (url === "/shop/checkout") return checkout();
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={[ROSIE]} seed={{ dog_id: ROSIE.id, service_id: DAYCARE.id }}
+                                    onClose={() => {}} onBooked={() => {}} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const click = async (id) => { await act(async () => { q(id).click(); }); await flush(); };
+    await click("wiz-step1-next");
+    await click("portal-addon-ad-bath");
+    await click("wiz-step2-next");
+    return { q, click, cleanup: () => act(() => root.unmount()) };
+  }
+
+  test("credits cover the visit: the add-on alone can be paid now", async () => {
+    const v = await reviewWithBath({ offer: true, service_type: "daycare", packs: [], addons: ADDONS });
+    expect(posts("/portal/booking-pay-options").pop()[1].addon_service_ids).toEqual(["ad-bath"]);
+    expect(v.q("wiz-pay-addons-why").textContent).toMatch(/add-ons for this booking come to \$15\.00/);
+    expect(v.q("wiz-pay-addons-toggle").getAttribute("aria-checked")).toBe("true");
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/Book & pay \$15\.00 now/);
+    await v.click("wiz-confirm-pay");
+    expect(posts("/bookings")).toHaveLength(1);
+    expect(posts("/shop/checkout")[0][1].items).toEqual([{ kind: "account_credit", ref_id: "ac-1500", quantity: 1 }]);
+    await v.cleanup();
+  });
+
+  test("a pack and the add-on are one card payment; unticking add-ons pays the pack only", async () => {
+    const v = await reviewWithBath({ ...SHORT, packs: [{ ...ONE, best_match: true }, FIVE], addons: ADDONS });
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/\$55\.00/);
+    await v.click("wiz-pay-addons-toggle");
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/\$40\.00/);
+    await v.click("wiz-pay-addons-toggle");
+    await v.click("wiz-confirm-pay");
+    expect(posts("/shop/checkout")).toHaveLength(1);
+    expect(posts("/shop/checkout")[0][1].items).toEqual([
+      { kind: "credit_pack", ref_id: "pk-1", quantity: 1 },
+      { kind: "account_credit", ref_id: "ac-1500", quantity: 1 },
+    ]);
+    await v.cleanup();
+  });
+
+  test("nothing ticked and no pack picked: only the plain Confirm is left", async () => {
+    const v = await reviewWithBath({ offer: true, service_type: "daycare", packs: [], addons: ADDONS });
+    await v.click("wiz-pay-addons-toggle");
+    expect(v.q("wiz-confirm-pay")).toBeNull();
+    expect(v.q("wiz-confirm").textContent).toBe("Confirm booking");
+    await v.cleanup();
+  });
+});
