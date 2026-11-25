@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { bookingFailure, groupSkips, shortDate } from "../lib/bookingBlocks";
 import BookingBlockNotice from "./BookingBlockNotice";
@@ -9,6 +9,9 @@ import { todayISO } from "../lib/date";
 import BookingPriceEstimate from "./BookingPriceEstimate";
 import StayPolicyNote from "./StayPolicyNote";
 import PaymentOptionsCard from "./PaymentOptionsCard";
+import BookingPayNow from "./BookingPayNow";
+import { isCheckoutRestart } from "../lib/shopPolish";
+import { leaveTo } from "../lib/leavePage";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import { categorizeService, groupServicesByCategory, summarizeDescription } from "../lib/serviceCategories";
@@ -401,6 +404,75 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // summary so step 4 can render payment options without re-fetching.
   const [acknowledgement, setAcknowledgement] = useState(null);
 
+  // ── Pay while booking (owner request) ──────────────────────────────────
+  // When this booking needs more credits than the client holds, the server
+  // lists the packs that cover it (domains/bookings/pay_now.py) and Review
+  // offers "Book & pay now". Optional: the booking is saved either way, and
+  // the card page is the Shop's own checkout. Nothing here when credits
+  // already cover the booking.
+  const [payOptions, setPayOptions] = useState(null);
+  const [payPackId, setPayPackId] = useState("");
+  const [payPack, setPayPack] = useState(null);   // the pack "Book & pay now" was pressed with
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState("");
+  const payKeyRef = useRef(null);    // one idempotency key per pack choice: a retry resumes, never re-charges
+  const payBusyRef = useRef(false);  // a double tap is one checkout
+  const bookBusyRef = useRef(false); // …and one booking
+  const multiDatesKey = multiDates.join(",");
+  useEffect(() => {
+    if (step !== 3) return;
+    if (!serviceType || !date || willWaitlist) { setPayOptions(null); return; }
+    let cancelled = false;
+    api.post("/portal/booking-pay-options", {
+      service_type: serviceType,
+      date,
+      end_date: serviceType === "boarding" ? endDate : null,
+      dates: isMultiDate && serviceType === "daycare" ? multiDates : [],
+      dog_count: 1 + extraDogs.length,
+      pickup_time: serviceType === "boarding" ? pickupTime : null,
+    })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const packs = data?.offer ? (data.packs || []) : [];
+        setPayOptions(packs.length ? data : null);
+        // Start on the cheapest pack that covers the booking (the server
+        // lists it first); keep the client's own pick while it is still offered.
+        setPayPackId(prev => (packs.some(p => p.id === prev) ? prev : (packs[0]?.id || "")));
+      })
+      // No offer is not an error: the booking itself is unaffected.
+      .catch(() => { if (!cancelled) setPayOptions(null); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, serviceType, date, endDate, isMultiDate, multiDatesKey, extraDogs.length, pickupTime, willWaitlist]);
+  // A different pack is a different purchase, so it gets its own key.
+  useEffect(() => { payKeyRef.current = null; }, [payPackId]);
+  const selectedPayPack = (payOptions?.packs || []).find(p => p.id === payPackId) || null;
+
+  const startPayment = async (pack) => {
+    if (!pack || payBusyRef.current) return;
+    payBusyRef.current = true;
+    setPaying(true); setPayError("");
+    if (!payKeyRef.current) {
+      payKeyRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID() : `bookpay-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    try {
+      const { data } = await api.post("/shop/checkout", {
+        items: [{ kind: "credit_pack", ref_id: pack.id, quantity: 1 }],
+        idempotency_key: payKeyRef.current,
+      });
+      leaveTo(data.url); // the Stripe card page; stay "busy" while the browser leaves
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      setPayError(typeof d === "string" && d ? d : "We couldn't open the card page.");
+      // The same key resumes the same checkout — unless the server says that
+      // one is finished for good, when the next press starts a fresh one.
+      if (isCheckoutRestart(e)) payKeyRef.current = null;
+      payBusyRef.current = false;
+      setPaying(false);
+    }
+  };
+
   const submitWaitlist = async (dogIds) => {
     const uniqueDogIds = [...new Set((dogIds || []).filter(Boolean))];
     const rows = await Promise.all(uniqueDogIds.map(id => api.post("/waitlist", {
@@ -418,7 +490,19 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     return rows.map(r => r.data);
   };
 
-  const book = async () => {
+  // Confirm. With `pack`, the booking is saved first and only then is the
+  // card page opened — so a client who backs out of paying still has the
+  // booking, exactly as if they had pressed "Confirm booking".
+  const book = async (pack = null) => {
+    if (bookBusyRef.current) return;
+    bookBusyRef.current = true;
+    let booked = false;
+    try { booked = await saveBooking(); } finally { bookBusyRef.current = false; }
+    if (booked && pack) { setPayPack(pack); await startPayment(pack); }
+  };
+
+  // Returns true only when a real booking was made (not a waitlist entry, not a refusal).
+  const saveBooking = async () => {
     setFailure(null); setCapacityOffer(false); setSubmitting(true);
     try {
       if (isMultiDate && serviceType === "daycare") {
@@ -444,7 +528,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
             block: groups[0]?.block || null,
           });
           setSubmitting(false);
-          return;
+          return false;
         }
         // Refresh parent in background but keep wizard open on step 4.
         onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped, keepOpen: true });
@@ -457,7 +541,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         });
         setStep(4);
         setSubmitting(false);
-        return;
+        return c > 0;
       }
       const body = {
         dog_id: dogId,
@@ -481,7 +565,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         onBooked && onBooked({ keepOpen: true });
         setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
         setStep(4);
-        return;
+        return false;
       }
 
       // Sprint 110di-38 — Multi-dog branch. When the user has added one or
@@ -521,7 +605,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
           waitlisted: !!willWaitlist,
         });
         setStep(4);
-        return;
+        return true;
       }
 
       const { data: created } = await api.post("/bookings", body);
@@ -532,11 +616,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         waitlisted: !!willWaitlist,
       });
       setStep(4);
+      return true;
     } catch (e) {
       const f = bookingFailure(e);
       setFailure(f);
       // Full at Confirm: ASK before putting them on the waitlist.
       setCapacityOffer(f.block?.code === "capacity_full" && !!f.block?.waitlist_allowed && waitlistEnabled);
+      return false;
     } finally { setSubmitting(false); }
   };
 
@@ -1191,6 +1277,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 none are configured, so no payment policy is invented here. */}
             <PaymentOptionsCard compact />
 
+            {/* Pay while booking: only when credits don't cover this booking. */}
+            <BookingPayNow options={payOptions} selectedId={payPackId} onSelect={setPayPackId} disabled={submitting || paying} />
+
             <BookingBlockNotice
               testid="wiz-error"
               failure={failure}
@@ -1207,14 +1296,22 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               <PremiumButton variant="secondary" onClick={()=>setStep(2)}>
                 <i className="fas fa-arrow-left"/>Back
               </PremiumButton>
-              <PremiumButton variant="primary" onClick={book} disabled={submitting} data-testid="wiz-confirm">
-                {submitting ? "Booking…"
-                  : (isMultiDate && serviceType==="daycare"
-                      ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
-                      : extraDogs.length > 0
-                        ? `Confirm booking · ${1 + extraDogs.length} dogs`
-                        : "Confirm booking")}
-              </PremiumButton>
+              <div className="flex flex-wrap justify-end gap-2">
+                <PremiumButton variant={selectedPayPack ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
+                  {submitting ? "Booking…"
+                    : (isMultiDate && serviceType==="daycare"
+                        ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
+                        : extraDogs.length > 0
+                          ? `Confirm booking · ${1 + extraDogs.length} dogs`
+                          : "Confirm booking")}
+                  {selectedPayPack && !submitting ? " · pay later" : ""}
+                </PremiumButton>
+                {selectedPayPack && (
+                  <PremiumButton variant="primary" onClick={() => book(selectedPayPack)} disabled={submitting || paying} data-testid="wiz-confirm-pay">
+                    <i className="fas fa-credit-card"/>Book & pay ${Number(selectedPayPack.price).toFixed(2)} now
+                  </PremiumButton>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1255,6 +1352,24 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               <p className="text-[13px] text-gray-400 text-center" data-testid="wiz-ack-payment-timing">
                 <i className="fas fa-wallet text-shPrimary mr-1.5"/>{selectedCatalogService.payment.detail}
               </p>
+            )}
+
+            {payPack && paying && (
+              <p className="text-[14px] text-shText text-center font-bold" data-testid="wiz-pay-opening">
+                <i className="fas fa-spinner fa-spin mr-1.5"/>Your booking is saved. Opening the secure card page for {payPack.name}…
+              </p>
+            )}
+            {payPack && !paying && payError && (
+              <div className="rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 space-y-2 text-center" data-testid="wiz-pay-failed">
+                <p className="text-[14px] text-shText leading-snug">
+                  <span className="font-black">Your booking is saved and nothing was charged.</span> {payError}
+                  {" "}You can try the card page again, or simply pay at your visit.
+                </p>
+                <button type="button" onClick={() => startPayment(payPack)} data-testid="wiz-pay-retry"
+                        className="min-h-[44px] px-4 py-2 rounded bg-shOrange/20 border border-shOrange/50 text-shOrange font-black uppercase tracking-widest text-[12px]">
+                  <i className="fas fa-credit-card mr-1.5"/>Try the card page again
+                </button>
+              </div>
             )}
 
             <PaymentOptionsCard compact />

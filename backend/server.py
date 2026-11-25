@@ -61241,6 +61241,12 @@ events_domain.register_events_routes(
     pos_sale_model=PosSaleIn, pos_line_model=PosSaleLineIn, pos_tender_model=PosSaleTenderIn,
 )
 
+# Pay while booking — a read-only "is this booking short on credits, and which
+# packs would cover it?" for the portal booking screen. Paying is the Shop's
+# own checkout; see domains/bookings/pay_now.py.
+from domains.bookings.pay_now import BookingPayOptionsIn, register_pay_now_routes  # noqa: E402,F401
+globals().update(register_pay_now_routes(api=api, server_globals=globals()))
+
 app.include_router(api)
 _cors = _cors_origins()
 if _cors:
