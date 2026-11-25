@@ -3397,6 +3397,7 @@ from domains.bookings.checkout_quotes import (  # checkout quotes, moved to doma
     _compute_multi_dog_discount, _refresh_booking_price_for_current_override, _is_early_checkout_price,
 )
 from domains.bookings import checkout_quotes as _checkout_quotes
+from domains.bookings import credits_promised as credits_promised_domain
 from domains.bookings import checkout_previews as _checkout_previews
 from domains.bookings import checkout_group as _checkout_group
 _checkout_quotes.configure(server_globals=globals())   # the moved checkout quotes read these server helpers at call time
@@ -3648,6 +3649,14 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
             credits_available = float((cdoc or {}).get(credit_pool_field) or 0)
         except Exception:
             credits_available = 0.0
+    # A client's other upcoming visits will use credits too: set those aside
+    # first, so "covered by credits" is true at pickup (domains/bookings/credits_promised).
+    credits_on_account, credits_promised = round(credits_available, 2), 0.0
+    if user.get("role") == "client" and client_id and credit_pool_field and credits_available > 0:
+        credits_promised = await credits_promised_domain.promised(
+            db, client_id, body.service_type, today=business_today().isoformat(),
+            units_for=pricing_domain_services.service_base_credit_units_for_booking)
+        credits_available = credits_promised_domain.free_after(credits_available, credits_promised)
     credits_applied = min(credits_available, float(credit_units or 0)) if credit_pool_field else 0.0
     credits_remaining_after = round(max(0.0, credits_available - credits_applied), 2)
     credit_shortfall = round(max(0.0, float(credit_units or 0) - credits_applied), 2)
@@ -3709,6 +3718,8 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "credit_pool_field": credit_pool_field,
         "credit_unit_value": credit_unit_value,
         "credits_available": round(credits_available, 2),
+        "credits_on_account": credits_on_account,
+        "credits_promised": credits_promised,
         "credits_applied": round(credits_applied, 2),
         "credits_remaining_after": credits_remaining_after,
         "credit_shortfall": credit_shortfall,

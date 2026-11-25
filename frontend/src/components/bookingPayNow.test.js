@@ -176,3 +176,57 @@ test("the offer failing to load never blocks booking", async () => {
   expect(v.q("wiz-step4-ack")).toBeTruthy();
   await v.cleanup();
 });
+
+test("credits set aside for other bookings are explained in the offer", async () => {
+  payOptions = () => Promise.resolve({ data: { ...SHORT, credits_available: 0, credits_on_account: 2, credits_promised: 2 } });
+  const v = await atReview();
+  expect(v.q("wiz-pay-now-why").textContent).toMatch(/needs 1 daycare credit\. You have 2 credits, but 2 are already set aside for your other upcoming bookings/);
+  await v.cleanup();
+});
+
+describe("the price estimate sets aside credits other bookings will use", () => {
+  const BookingPriceEstimate = require("./BookingPriceEstimate").default;
+  const QUOTE = {
+    service_type: "daycare", service_name: "Daycare (per day)", billable_units: 1, unit_label: "day", unit_price: 40,
+    estimated_price: 40, first_dog_base_price: 40, add_ons: [], add_on_total: 0, credit_units_required: 1,
+  };
+  async function estimate(props, quote) {
+    api.get.mockImplementation((url) => {
+      if (url === "/services") return Promise.resolve({ data: [DAYCARE] });
+      if (url === "/portal/me") return Promise.resolve({ data: { client: { credits: 2 } } });
+      return Promise.resolve({ data: {} });
+    });
+    api.post.mockImplementation(() => Promise.resolve({ data: quote }));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => { root.render(<BookingPriceEstimate serviceType="daycare" serviceId={DAYCARE.id} date="2027-03-10" {...props} />); });
+    await flush();
+    return { q: (id) => host.querySelector(`[data-testid="${id}"]`), cleanup: () => act(() => root.unmount()) };
+  }
+
+  test("2 credits, both promised: not 'covered', the full price shows, and it says why", async () => {
+    const v = await estimate({}, { ...QUOTE, credits_available: 0, credits_on_account: 2, credits_promised: 2,
+                                   credits_applied: 0, credit_shortfall: 1, cash_due: 40, covered_by_credits: false });
+    expect(v.q("booking-estimate-credit-covered")).toBeNull();
+    expect(v.q("booking-estimate-total").textContent).toBe("$40.00");
+    expect(v.q("booking-estimate-credits-promised").textContent).toMatch(/2 of your daycare credits are set aside for your other upcoming bookings/);
+    await v.cleanup();
+  });
+
+  test("no promised credits: no note", async () => {
+    const v = await estimate({}, { ...QUOTE, credits_available: 2, credits_on_account: 2, credits_promised: 0,
+                                   credits_applied: 1, credits_remaining_after: 1, credit_shortfall: 0, cash_due: 0, covered_by_credits: true });
+    expect(v.q("booking-estimate-credit-covered")).toBeTruthy();
+    expect(v.q("booking-estimate-credits-promised")).toBeNull();
+    await v.cleanup();
+  });
+
+  test("several days at once (worked out on the screen) also sets them aside", async () => {
+    const v = await estimate({ isMultiDate: true, multiDates: ["2027-03-10", "2027-03-11"] }, { credits_promised: 2 });
+    expect(v.q("booking-estimate-credit-covered")).toBeNull();
+    expect(v.q("booking-estimate-total").textContent).toBe("$80.00");
+    expect(v.q("booking-estimate-credits-promised")).toBeTruthy();
+    await v.cleanup();
+  });
+});

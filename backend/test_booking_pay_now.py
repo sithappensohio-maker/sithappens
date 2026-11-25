@@ -176,3 +176,85 @@ def test_offered_pack_pays_through_the_shop_checkout_once():
         assert order["total"] == pack["price"], "the price shown in the booking screen is the price charged"
         fresh = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "credits": 1}))
         assert fresh["credits"] == 0, "nothing is granted until the card is actually paid"
+
+
+# ---------------------------------------------------------------------------
+# Credits already promised to other upcoming bookings (credits_promised.py)
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _visits(c, *rows):
+    """Bookings for this test's customer; each row overrides the defaults."""
+    ids = []
+    for r in rows:
+        doc = {"id": str(uuid.uuid4()), "client_id": c["id"], "dog_id": "d-" + TAG, "dog_name": "Rex",
+               "service_type": "daycare", "date": "2027-03-08", "end_date": None, "status": "approved",
+               "credit_units_required": 1, **r}
+        ids.append(doc["id"])
+        run(server.db.bookings.insert_one(doc))
+    try:
+        yield
+    finally:
+        run(server.db.bookings.delete_many({"id": {"$in": ids}}))
+
+
+def _quote(c, **kw):
+    body = server.PricingQuoteIn(**{"service_type": "daycare", "date": DAY, **kw})
+    return run(server.pricing_quote(body, _user(c)))
+
+
+def test_credits_other_bookings_will_use_are_set_aside():
+    # 2 credits, 2 days already booked: the third day is NOT covered.
+    with _stripe(), _client(credits=2) as c, _pack(qty=1, price=40.0) as p, \
+            _visits(c, {"date": "2027-03-08"}, {"date": "2027-03-09"}):
+        out = _options(c)
+        assert out["offer"] is True and out["credits_short"] == 1
+        assert out["credits_on_account"] == 2 and out["credits_promised"] == 2 and out["credits_available"] == 0
+        assert [x["id"] for x in _mine(out, p)] == [p["id"]]
+        q = _quote(c)
+        assert q["covered_by_credits"] is False and q["credits_available"] == 0
+        assert q["credits_on_account"] == 2 and q["credits_promised"] == 2 and q["credit_shortfall"] == 1
+
+
+def test_a_free_credit_beyond_the_promised_ones_still_covers():
+    with _stripe(), _client(credits=3) as c, _pack(qty=1), _visits(c, {"date": "2027-03-08"}, {"date": "2027-03-09"}):
+        assert _options(c)["offer"] is False
+        q = _quote(c)
+        assert q["covered_by_credits"] is True and q["credits_available"] == 1 and q["credits_remaining_after"] == 0
+
+
+def test_only_visits_that_will_still_use_a_credit_count():
+    today = server.business_today().isoformat()
+    with _stripe(), _client(credits=1, boarding_credits=5) as c, _pack(qty=1), _visits(
+            c,
+            {"status": "cancelled"}, {"status": "rejected"}, {"status": "completed"},
+            {"checked_out_at": "2027-03-08T22:00:00Z"},                       # already checked out
+            {"no_show": True},
+            {"date": "2020-01-06"},                                           # long past, never came
+            {"service_type": "boarding", "end_date": "2027-03-12", "credit_units_required": 4},  # another pool
+            {"service_type": "grooming", "credit_units_required": 0}):
+        assert _options(c)["offer"] is False, "none of these will use a daycare credit"
+        assert _quote(c)["credits_promised"] == 0
+    # A dog that is here right now counts, even if its day has passed; so does a pending request.
+    with _stripe(), _client(credits=2) as c, _pack(qty=1), _visits(
+            c, {"date": "2020-01-06", "checked_in_at": "2020-01-06T13:00:00Z"}, {"status": "pending", "date": today}):
+        out = _options(c)
+        assert out["credits_promised"] == 2 and out["credits_short"] == 1
+
+
+def test_an_extra_dogs_half_credit_and_boarding_nights_count_as_they_are_spent():
+    with _stripe(), _client(credits=2) as c, _pack(qty=1), \
+            _visits(c, {"credit_units_required": 1}, {"credit_units_required": 0.5}):
+        out = _options(c)  # 1.5 promised, 0.5 free, needs 1
+        assert out["credits_promised"] == 1.5 and out["credits_short"] == 0.5
+    with _stripe(), _client(boarding_credits=4) as c, _pack(service_type="boarding", qty=3), \
+            _visits(c, {"service_type": "boarding", "date": "2027-04-01", "end_date": "2027-04-04", "pickup_time": "10:00"}):
+        out = _options(c, service_type="boarding", date="2027-03-10", end_date="2027-03-12", pickup_time="10:00")
+        assert out["credits_promised"] == 3 and out["credits_needed"] == 2 and out["credits_short"] == 1
+
+
+def test_staff_quote_still_shows_the_whole_balance():
+    with _client(credits=2) as c, _visits(c, {"date": "2027-03-08"}, {"date": "2027-03-09"}):
+        body = server.PricingQuoteIn(service_type="daycare", date=DAY, client_id=c["id"])
+        q = run(server.pricing_quote(body, {"id": "a", "role": "admin"}))
+        assert q["credits_available"] == 2 and q["credits_promised"] == 0

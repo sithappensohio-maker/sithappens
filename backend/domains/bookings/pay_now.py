@@ -33,6 +33,8 @@ from typing import List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from domains.bookings import credits_promised
+
 POOL_LABEL = {"daycare": "daycare", "boarding": "boarding", "training": "training"}
 
 NO_OFFER = {"offer": False, "packs": []}
@@ -68,9 +70,19 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
         return dict(NO_OFFER)  # half-picked dates: nothing to offer yet
     days = len(set(body.dates)) if (body.service_type == "daycare" and body.dates) else 1
     needed = round(per_booking * days, 2)
-    available = round(float(client.get(pool_field) or 0), 2)
+    on_account = round(float(client.get(pool_field) or 0), 2)
+    if needed <= 0:
+        return dict(NO_OFFER)
+    # Credits the client's other upcoming visits will use are not free for
+    # this one (same rule as the price estimate — domains/bookings/credits_promised).
+    promised = 0.0
+    if on_account > 0:
+        promised = await credits_promised.promised(
+            g["db"], client["id"], body.service_type, today=g["business_today"]().isoformat(),
+            units_for=g["pricing_domain_services"].service_base_credit_units_for_booking)
+    available = credits_promised.free_after(on_account, promised)
     short = round(max(0.0, needed - available), 2)
-    if needed <= 0 or short <= 0.0001:
+    if short <= 0.0001:
         return dict(NO_OFFER)  # credits already cover it: nothing new is shown
 
     catalog = await g["_build_shop_catalog"](client["id"])
@@ -104,6 +116,8 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
         "pool_label": POOL_LABEL.get(body.service_type, body.service_type),
         "credits_needed": needed,
         "credits_available": available,
+        "credits_on_account": on_account,
+        "credits_promised": promised,
         "credits_short": short,
         "packs": packs,
     }

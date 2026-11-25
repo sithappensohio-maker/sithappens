@@ -152,6 +152,27 @@ export default function BookingPriceEstimate({
     return () => { cancelled = true; };
   }, [serviceType, serviceId, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, stableAddonIds]);
 
+  // Credits this client's OTHER upcoming bookings will use (the server counts
+  // them — domains/bookings/credits_promised). /pricing/quote already sets them
+  // aside; the multi-date / multi-dog fallback below reads the raw balance, so
+  // it asks the server for just that number rather than calling a booking
+  // "covered" with credits that are already spoken for.
+  const [promisedCredits, setPromisedCredits] = useState(0);
+  const firstDate = isMultiDate ? (multiDates[0] || date) : date;
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = !!serviceType && !!firstDate && (isMultiDate || addonsPerDog);
+    const pooled = serviceType === "daycare" || serviceType === "boarding" || serviceType === "training";
+    if (!fallback || !pooled || (serviceType === "boarding" && !(endDate > firstDate))) {
+      setPromisedCredits(0);
+      return () => { cancelled = true; };
+    }
+    api.post("/pricing/quote", { service_type: serviceType, service_id: serviceId || undefined, date: firstDate, end_date: endDate || null, dog_count: 1 })
+      .then(({ data }) => { if (!cancelled) setPromisedCredits(Number(data?.credits_promised || 0)); })
+      .catch(() => { if (!cancelled) setPromisedCredits(0); });
+    return () => { cancelled = true; };
+  }, [serviceType, serviceId, firstDate, endDate, isMultiDate, addonsPerDog]);
+
   // Use the configured default service matching this service_type. If there is
   // no explicit default, fall back to the first active service. We intentionally
   // do NOT pick the cheapest option because that made estimates too low.
@@ -291,7 +312,8 @@ export default function BookingPriceEstimate({
       boarding: "boarding",
       training: "training",
     })[serviceType];
-    const creditsAvailable = poolKey ? credits[poolKey] : 0;
+    const creditsOnAccount = poolKey ? credits[poolKey] : 0;
+    const creditsAvailable = Math.max(0, creditsOnAccount - (poolKey ? promisedCredits : 0));
     // Credits mirror the cash rule for daycare/boarding: first dog = 1
     // credit per unit; additional dogs = 0.5 credit per unit. Training stays
     // one full credit per dog/session.
@@ -320,6 +342,7 @@ export default function BookingPriceEstimate({
       late_pickup_fee: latePickupFeeUnit,
       total,
       credits_available: creditsAvailable,
+      credits_promised: poolKey ? Math.min(promisedCredits, creditsOnAccount) : 0,
       credit_units_required: creditUnitsRequired,
       credits_applied: creditUnits,
       credits_remaining_after: Math.max(0, creditsAvailable - creditUnits),
@@ -333,7 +356,7 @@ export default function BookingPriceEstimate({
       md_discount_label: mdSvc?.label || mdDiscount?.label || "Additional dog discount",
       md_discount_applied: applyMd,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, pickupTime, rules, mdDiscount]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, promisedCredits, addons, addonsPerDog, pickupTime, rules, mdDiscount]);
 
   const calc = useMemo(() => {
     if (!serverQuote || !legacyCalc) return legacyCalc;
@@ -371,6 +394,7 @@ export default function BookingPriceEstimate({
       price_label: serverQuote.price_label || (serverQuote.preferred_rate_applied ? "Preferred client rate" : "Standard rate"),
       credit_units_required: Number(serverQuote.credit_units_required || 0),
       credits_available: Number(serverQuote.credits_available ?? legacyCalc.credits_available ?? 0),
+      credits_promised: Math.min(Number(serverQuote.credits_promised || 0), Number(serverQuote.credits_on_account ?? serverQuote.credits_promised ?? 0)),
       credits_applied: creditUnits,
       credits_remaining_after: Number(serverQuote.credits_remaining_after ?? Math.max(0, Number(legacyCalc.credits_available || 0) - creditUnits)),
       credit_shortfall: Number(serverQuote.credit_shortfall || 0),
@@ -567,6 +591,14 @@ export default function BookingPriceEstimate({
           </span>
         </div>
       </div>
+      )}
+
+      {/* Credits on the account that other upcoming bookings will use are not
+          counted above — say so, or the balance looks wrong to the client. */}
+      {Number(calc.credits_promised || 0) > 0 && (
+        <p className="text-[12px] text-shBlue" data-testid="booking-estimate-credits-promised">
+          <i className="fas fa-circle-info mr-1.5"/>{fmtCredits(calc.credits_promised)} of your {creditUnitLabel} {Number(calc.credits_promised) === 1 ? "is" : "are"} set aside for your other upcoming bookings, so {Number(calc.credits_promised) === 1 ? "it isn't" : "they aren't"} counted here.
+        </p>
       )}
 
       {/* Waitlist note — only shows when this booking will land on a waitlist */}

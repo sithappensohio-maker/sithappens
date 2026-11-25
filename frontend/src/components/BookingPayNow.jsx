@@ -36,7 +36,9 @@ export default function BookingPayNow({ options, selectedId, onSelect, disabled 
         <span className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">Optional</span>
       </div>
       <p className="text-[14px] text-shTextMuted leading-snug" data-testid="wiz-pay-now-why">
-        This booking needs {credits(options.credits_needed, options.pool_label)} and you have {have > 0 ? credits(have) : "none"}.
+        {Number(options.credits_promised || 0) > 0
+          ? <>This booking needs {credits(options.credits_needed, options.pool_label)}. You have {credits(options.credits_on_account)}, but {Math.min(options.credits_promised, options.credits_on_account)} {Math.min(options.credits_promised, options.credits_on_account) === 1 ? "is" : "are"} already set aside for your other upcoming bookings.</>
+          : <>This booking needs {credits(options.credits_needed, options.pool_label)} and you have {have > 0 ? credits(have) : "none"}.</>}
         {" "}Buy a pack now by card and it's taken care of — or book and pay at your visit.
       </p>
       <div className="space-y-2" role="radiogroup" aria-label="Credit pack to buy">
