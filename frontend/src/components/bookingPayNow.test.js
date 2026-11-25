@@ -586,3 +586,54 @@ describe("stale state the dog tiles must not leave behind", () => {
     await v.cleanup();
   });
 });
+
+describe("the service card shows the price for the dogs picked", () => {
+  const { priceForDogs } = require("../lib/multiDogPrice");
+  const MOLLY = { id: "d-molly", name: "Molly", breed: "Lab" };
+  const TESS = { id: "d-tess", name: "Tess", breed: "Pug" };
+  const DAY25 = { ...DAYCARE, base_price: 25 };
+
+  test("the rule: first dog full price, each additional dog the Settings discount (50% unless changed)", () => {
+    expect(priceForDogs(DAY25, 1, {}).total).toBe(25);
+    expect(priceForDogs(DAY25, 2, {}).total).toBe(37.5);
+    expect(priceForDogs(DAY25, 3, {}).total).toBe(50);
+    expect(priceForDogs({ ...DAY25, service_type: "boarding", base_price: 60 }, 2, {}).total).toBe(90);
+    // Settings: discount switched off, a different percent, or a flat amount per extra dog.
+    expect(priceForDogs(DAY25, 2, { multi_dog_discount_enabled: false }).total).toBe(50);
+    expect(priceForDogs(DAY25, 2, { multi_dog_discount_core: { daycare: { enabled: false } } }).total).toBe(50);
+    expect(priceForDogs(DAY25, 2, { multi_dog_discount_core: { daycare: { mode: "percent", value: 20 } } }).total).toBe(45);
+    expect(priceForDogs(DAY25, 3, { multi_dog_discount_core: { daycare: { mode: "flat", value: 5 } } }).total).toBe(65);
+    // Other services: no discount; each extra dog pays the additional-dog rate, or the full rate.
+    expect(priceForDogs({ service_type: "grooming", base_price: 30 }, 2, {}).total).toBe(60);
+    expect(priceForDogs({ service_type: "training", base_price: 80, additional_dog_rate: 40 }, 2, {}).total).toBe(120);
+  });
+
+  test("ticking a second and third dog changes the card price, and says how many dogs it is for", async () => {
+    api.get.mockImplementation((url) => {
+      if (url === "/services") return Promise.resolve({ data: [DAY25] });
+      if (url === "/services/addons") return Promise.resolve({ data: [] });
+      if (url === "/settings/public") return Promise.resolve({ data: { closed_dates: [] } });
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={[ROSIE, MOLLY, TESS]} seed={{ service_id: DAY25.id }} onClose={() => {}} onBooked={() => {}} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const tap = async (id) => { await act(async () => { q(id).click(); }); await flush(); };
+    const price = () => q("wiz-svc-svc-day-price").textContent;
+    expect(price()).toBe("$25.00");
+    await tap("wiz-dog-tile-d-rosie");
+    expect(price()).toBe("$25.00");
+    await tap("wiz-dog-tile-d-molly");
+    expect(price()).toBe("$37.50for 2 dogs");
+    await tap("wiz-dog-tile-d-tess");
+    expect(price()).toBe("$50.00for 3 dogs");
+    await tap("wiz-dog-tile-d-molly");
+    expect(price()).toBe("$37.50for 2 dogs");
+    await act(() => root.unmount());
+  });
+});

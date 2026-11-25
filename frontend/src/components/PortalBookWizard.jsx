@@ -12,6 +12,7 @@ import PaymentOptionsCard from "./PaymentOptionsCard";
 import BookingPayNow from "./BookingPayNow";
 import { isCheckoutRestart } from "../lib/shopPolish";
 import { leaveTo } from "../lib/leavePage";
+import { priceForDogs } from "../lib/multiDogPrice";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import { categorizeService, groupServicesByCategory, summarizeDescription } from "../lib/serviceCategories";
@@ -48,7 +49,7 @@ const TIME_SLOTTED = new Set(["training", "grooming", "photography"]);
 // Shows only a one-line summary by default; the full description (which for
 // training services especially can run long) is opt-in via "View details" so
 // it never turns the list into a wall of text.
-function ServiceCard({ testId, selected, icon, label, summary, fullDesc, price, onSelect, accentR }) {
+function ServiceCard({ testId, selected, icon, label, summary, fullDesc, price, priceNote, onSelect, accentR }) {
   const [expanded, setExpanded] = useState(false);
   const hasMore = fullDesc && fullDesc !== summary;
   return (
@@ -64,7 +65,13 @@ function ServiceCard({ testId, selected, icon, label, summary, fullDesc, price, 
         <p className="font-bold text-[15px] break-words text-shText min-w-0">
           <i className={`fas ${icon} mr-2`} style={{ color: `rgb(${accentR})` }}/>{label}
         </p>
-        {price != null && <span className="text-[13px] font-black text-shPrimary whitespace-nowrap shrink-0">${price.toFixed(2)}</span>}
+        {price != null && (
+          <span className="text-right shrink-0" data-testid={`${testId}-price`}>
+            <span className="block text-[13px] font-black text-shPrimary whitespace-nowrap">${price.toFixed(2)}</span>
+            {/* With several dogs picked, the price is for all of them — say so. */}
+            {priceNote && <span className="block text-[11px] font-bold text-shTextMuted whitespace-nowrap">{priceNote}</span>}
+          </span>
+        )}
       </div>
       {summary && <p className="text-[13px] mt-1.5 break-words text-shTextMuted">{summary}</p>}
       <div className="flex items-center justify-between mt-3 gap-2">
@@ -150,6 +157,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // leaving Review disabled with nothing on screen to say why.
   const [availState, setAvailState] = useState("idle");
   const [closedDates, setClosedDates] = useState([]);
+  const [publicSettings, setPublicSettings] = useState({});
   const [availRetry, setAvailRetry] = useState(0);
   // Confirm found the opening full: offer the waitlist instead of silently
   // joining it.
@@ -274,6 +282,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     api.get("/settings/public")
        .then(r => {
          setClosedDates(Array.isArray(r.data?.closed_dates) ? r.data.closed_dates : []);
+         setPublicSettings(r.data || {});   // the multi-dog discount, for the service cards' prices
          const cutoff = r.data?.booking_rules?.boarding_free_pickup_cutoff;
          if (/^\d{2}:\d{2}$/.test(cutoff || "")) setPickupTime(cutoff);
        })
@@ -867,7 +876,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                       return (
                         <ServiceCard key={isCatalog ? s.id : s.key} testId={testId} selected={selected}
                                      icon={icon} label={label} summary={summary} fullDesc={fullDesc}
-                                     price={isCatalog ? Number(s.base_price || 0) : null} onSelect={pick}
+                                     price={isCatalog ? priceForDogs(s, pickedDogs.length, publicSettings).total : null}
+                                     priceNote={isCatalog && pickedDogs.length > 1 ? `for ${pickedDogs.length} dogs` : ""}
+                                     onSelect={pick}
                                      accentR={accentR} />
                       );
                     })}
