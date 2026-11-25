@@ -277,6 +277,34 @@ def test_the_pack_that_matches_the_booking_comes_first():
 # Add-ons: dollars paid ahead as money on the account
 # ---------------------------------------------------------------------------
 
+from domains.bookings import pay_now as _pay_now
+
+
+@contextlib.contextmanager
+def _addons_switch(on):
+    saved = _pay_now.ADDONS_PAY_AHEAD_READY
+    _pay_now.ADDONS_PAY_AHEAD_READY = on
+    try:
+        yield
+    finally:
+        _pay_now.ADDONS_PAY_AHEAD_READY = saved
+
+
+def setup_function(fn):
+    """The add-on tests below run with the switch ON (it ships OFF until pickup uses the money by itself)."""
+    _pay_now.ADDONS_PAY_AHEAD_READY = "addon" in fn.__name__
+
+
+def teardown_function(fn):
+    _pay_now.ADDONS_PAY_AHEAD_READY = False
+
+
+def test_paying_extras_ahead_is_off_until_pickup_can_use_the_money():
+    assert _pay_now.ADDONS_PAY_AHEAD_READY is False, "ships OFF: turn on together with step 3"
+    with _addons_switch(False), _stripe(), _client(credits=5) as c, _addon(15.0) as bath:
+        assert _options(c, addon_service_ids=[bath["id"]]) == {"offer": False, "packs": []}
+
+
 @contextlib.contextmanager
 def _addon(price=15.0, addon_for=("daycare",), **kw):
     doc = {"id": str(uuid.uuid4()), "name": f"{TAG} Bath {uuid.uuid4().hex[:4]}", "service_type": "grooming",

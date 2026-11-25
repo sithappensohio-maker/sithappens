@@ -39,6 +39,14 @@ POOL_LABEL = {"daycare": "daycare", "boarding": "boarding", "training": "trainin
 
 NO_OFFER = {"offer": False, "packs": []}
 
+# OFF until pickup uses money on account by itself (step 3). Today staff
+# checkout only does that by hand, and only for a one-dog visit not paid by
+# credits ("Partial / on tab") — so a client who paid for add-ons ahead could
+# be asked for the same money again at the desk. While this is False the
+# add-on part of the offer is never returned and nothing on screen changes;
+# the pack offer is unaffected. Turn it on together with step 3.
+ADDONS_PAY_AHEAD_READY = False
+
 
 class BookingPayOptionsIn(BaseModel):
     service_type: str
@@ -76,6 +84,8 @@ async def _addon_part(g: dict, client: dict, body: BookingPayOptionsIn) -> Optio
     credits, so this is offered whether or not credits cover the visit.
     Priced by the same resolver the booking and the estimate use, so the
     client's own add-on prices apply."""
+    if not ADDONS_PAY_AHEAD_READY:
+        return None
     counts: dict = {}
     for sid in body.addon_service_ids:
         if sid:
