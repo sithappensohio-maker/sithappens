@@ -553,7 +553,7 @@ async def _check_every_line(buyer: Buyer, lines) -> None:
             if reason:
                 raise HTTPException(status_code=403, detail=reason)
 
-        if kind == "gift_card":
+        if kind in ("gift_card", "account_credit"):
             continue  # no catalog row, no stock, no eligibility to check
         # Passing {} for the client is safe ONLY because the guest gate
         # above has already refused every kind and every flag whose check

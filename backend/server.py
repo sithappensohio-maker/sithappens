@@ -113,6 +113,7 @@ from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
+from domains.shop import account_credit as shop_account_credit
 from domains.shop import income as shop_income
 from domains.printify import client as printify_client
 from domains.shop import discount_codes as shop_discount_codes
@@ -41419,6 +41420,9 @@ async def _validate_shop_refund_entitlements(order: dict, line_refunds: list[dic
         if kind == "gift_card":  # every card it bought must still be unspent
             await gift_card_shop.assert_refundable(order, line)
             continue
+        if kind == shop_account_credit.KIND:  # the money must still be unused on the account
+            await shop_account_credit.assert_refundable(order, line)
+            continue
         for n in range(int(line.get("quantity") or 0)):
             ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
             lot = await db.credit_lots.find_one({"fulfillment_ref": ref}, {"_id": 0})
@@ -41570,6 +41574,8 @@ async def _apply_shop_refund_fulfillment(attempt: dict) -> None:
             await _revoke_shop_credit_line(order, line, attempt_id)
         elif kind == "gift_card":
             await gift_card_shop.revoke_line(order, line, attempt_id)
+        elif kind == shop_account_credit.KIND:
+            await shop_account_credit.revoke_line(order, line, attempt_id)
 
         await db.shop_orders.update_one(
             {"id": order["id"], "lines": {"$elemMatch": {"item_id": item_id, "refund_attempts_applied": {"$ne": attempt_id}}}},
@@ -45041,6 +45047,16 @@ async def _price_shop_cart(
             unit_price = priced["unit_price"]
             name = priced["name"]
             org_source = {}
+        elif cart_item.kind == shop_account_credit.KIND:
+            # Money paid ahead onto the account: pays $X, gets $X. Never
+            # discounted or taxed (both are product-only below). Account
+            # holders only — domains/shop/account_credit.py.
+            if is_guest or not client_id:
+                raise HTTPException(status_code=403, detail="Please sign in to pay ahead.")
+            priced = shop_account_credit.price_line(cart_item.ref_id, qty)
+            unit_price = priced["unit_price"]
+            name = priced["name"]
+            org_source = {}
         elif cart_item.kind == "credit_pack":
             pack = await db.credit_packs.find_one(
                 {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
@@ -45954,6 +45970,8 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 await gift_card_shop.fulfill_line(
                     order, line, mint=gift_card_services.mint_card,
                     email=gift_card_services.send_card_email)
+            elif line["kind"] == shop_account_credit.KIND:
+                await shop_account_credit.fulfill_line(order, line)
             elif line["kind"] == "credit_pack":
                 await _fulfill_shop_credit_pack_line(order, line)
             elif line["kind"] == "training_program" and line.get("fulfillment_kind") == "online_school":

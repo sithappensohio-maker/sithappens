@@ -38,6 +38,11 @@ _logger = logging.getLogger(__name__)
 
 REPAIR_JOB = "shop_income_split"   # scheduler job + its once-a-day marker; a restore clears it
 ENTITLEMENT_KINDS = ("credit_pack", "training_program")
+# Money paid ahead onto the account (domains/shop/account_credit.py) is not
+# merchandise either: it gets its own row, filed as a Tab Payment — exactly
+# what the same payment taken at the desk is filed as.
+PAID_AHEAD_KIND = "account_credit"
+OWN_ROW_KINDS = ENTITLEMENT_KINDS + (PAID_AHEAD_KIND,)
 SETTLE_MINUTES = 10                # leave orders being paid right now to their own webhook
 INCOME_REF_INDEX = ("shop_income_ref", {"unique": True, "partialFilterExpression": {"shop_income_ref": {"$type": "string"}}})
 
@@ -56,7 +61,7 @@ def _unit_rows(order: dict, base: dict) -> List[dict]:
     tag = f"Online Shop order #{order['id'][:8].upper()}"
     rows = []
     for line in order.get("lines") or []:
-        if line.get("kind") not in ENTITLEMENT_KINDS:
+        if line.get("kind") not in OWN_ROW_KINDS:
             continue
         qty = int(line.get("quantity") or 0)
         total, unit, taken = _money(line.get("line_total")), _money(line.get("unit_price")), 0.0
@@ -65,7 +70,10 @@ def _unit_rows(order: dict, base: dict) -> List[dict]:
             taken = _money(taken + amount)
             row = {**base, "amount": amount, "pre_tax_amount": amount, "tax_amount": 0.0, "tax_rate_pct": 0.0,
                    "shop_income_ref": unit_ref(order["id"], line["item_id"], n)}
-            if line["kind"] == "credit_pack":
+            if line["kind"] == PAID_AHEAD_KIND:
+                row.update(source_kind="tab_payment", category="Tab Payment",
+                           description=f"Paid ahead online · {tag}", notes=tag)
+            elif line["kind"] == "credit_pack":
                 row.update(source_kind="credit_pack_sale", pack_id=line.get("ref_id"), pack_name=line.get("name"),
                            description=f"Credit Pack · {line.get('name')}", note=tag)
             else:
@@ -93,7 +101,7 @@ def plan_rows(order: dict, payment: dict, *, date: str, created_at: Optional[str
         rows = [whole]
     else:
         split = _money(sum(u["amount"] for u in units))
-        has_goods = any(l.get("kind") not in ENTITLEMENT_KINDS for l in order.get("lines") or [])
+        has_goods = any(l.get("kind") not in OWN_ROW_KINDS for l in order.get("lines") or [])
         if has_goods:
             rest = {**whole, "amount": _money(amount - split),
                     "pre_tax_amount": _money(_money(order.get("subtotal")) - split)}
