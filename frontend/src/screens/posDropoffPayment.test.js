@@ -39,6 +39,8 @@ const TODAY = todayISO();
 const ROSTER = [
   { booking_id: "bk-rex", dog_id: "d-rex", dog_name: "Rex", breed: "Lab", client_id: "c-1", client_name: "Chris",
     service_type: "daycare", date: TODAY, status: "approved", checked_in_at: `${TODAY}T12:00:00Z` },
+  { booking_id: "bk-old", dog_id: "d-old", dog_name: "Otis", breed: "Pug", client_id: "c-3", client_name: "Eli",
+    service_type: "daycare", date: "2020-01-06", status: "approved", checked_in_at: "2020-01-06T13:00:00Z", is_missed_checkout: true },
   { booking_id: "bk-due", dog_id: "d-due", dog_name: "Juno", breed: "Poodle", client_id: "c-2", client_name: "Dana",
     service_type: "daycare", date: TODAY, status: "approved" },
 ];
@@ -211,5 +213,70 @@ describe("right after Check In, staff are asked whether to take payment", () => 
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(all("pos-cart-line")).toHaveLength(0);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("Undo check-in on a dog that is here", () => {
+  const undoPosts = () => api.post.mock.calls.filter(c => c[0] === "/bookings/bk-rex/undo-check-in");
+
+  test("asks first, then undoes it and reloads today's visits", async () => {
+    await mount();
+    const rosterLoads = () => api.get.mock.calls.filter(c => c[0] === "/employee/roster-today").length;
+    const before = rosterLoads();
+    await click("pos-visit-undo-checkin-bk-rex");
+    await settle();
+    const asked = mockConfirm.mock.calls[0][0];
+    expect(asked.title).toBe("Undo Rex's check-in?");
+    expect(asked.body).toMatch(/goes back to Expected/);
+    expect(asked.body).toMatch(/use Check Out instead/);
+    expect(asked).toMatchObject({ confirmText: "Undo check-in", cancelText: "Keep checked in" });
+    expect(undoPosts()).toHaveLength(1);
+    expect(toast.success.mock.calls.pop()[0]).toMatch(/Rex's check-in was undone/);
+    expect(rosterLoads()).toBeGreaterThan(before);
+  });
+
+  test("Keep checked in does nothing", async () => {
+    mockConfirm.mockImplementation(async () => false);
+    await mount();
+    await click("pos-visit-undo-checkin-bk-rex");
+    await settle();
+    expect(undoPosts()).toHaveLength(0);
+  });
+
+  test("a refusal from the server is shown, not swallowed", async () => {
+    api.post.mockImplementation((path) => path === "/bookings/bk-rex/undo-check-in"
+      ? Promise.reject({ response: { status: 409, data: { detail: "Money has already been recorded on this visit, so the check-in can't be undone." } } })
+      : Promise.resolve({ data: {} }));
+    await mount();
+    await click("pos-visit-undo-checkin-bk-rex");
+    await settle();
+    expect(toast.error.mock.calls.pop()[0]).toMatch(/Money has already been recorded/);
+  });
+
+  test("a dog that has not arrived has no Undo button", async () => {
+    await mount("expected");
+    expect(q("pos-visit-undo-checkin-bk-due")).toBeNull();
+  });
+});
+
+describe("Undo check-in keeps the Front Desk consistent", () => {
+  test("a missed checkout from an earlier day has Check Out but no Undo", async () => {
+    await mount();
+    expect(q("pos-visit-checkout-bk-old")).toBeTruthy();
+    expect(q("pos-visit-undo-checkin-bk-old")).toBeNull();
+    expect(q("pos-visit-undo-checkin-bk-rex")).toBeTruthy();
+  });
+
+  test("undoing the check-in takes that visit's drop-off pack back out of the cart", async () => {
+    offer = { ...OFFER, booking_ids: ["bk-rex"] };
+    await mount();
+    await click("pos-visit-pay-bk-rex");
+    await settle();
+    expect(all("pos-cart-line")).toHaveLength(1);
+    expect(q("pos-dropoff-notice")).toBeTruthy();
+    await click("pos-visit-undo-checkin-bk-rex");
+    await settle();
+    expect(all("pos-cart-line")).toHaveLength(0);
+    expect(q("pos-dropoff-notice")).toBeNull();
   });
 });

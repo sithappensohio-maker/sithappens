@@ -840,6 +840,8 @@ export default function Pos({ onOpenShopManager } = {}) {
         title: `${qty > 1 ? `${qty} × ` : ""}${item.name} for ${who}`,
         body: "Take the payment below. Pickup will then use these credits for the visit.",
         notes: offer.notes || [],
+        // Which visits this pack is for, so undoing one of those check-ins takes it back out of the cart.
+        booking_ids: offer.booking_ids || [row.booking_id], pack_id: item.id,
       });
       toast.success(`${qty > 1 ? `${qty} × ` : ""}${item.name} is in the cart for ${who}. Take the payment below.`);
       cartPanelRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
@@ -848,6 +850,45 @@ export default function Pos({ onOpenShopManager } = {}) {
     } finally {
       dropoffPayBusyRef.current = false;
       setDropoffPayBusyId(null);
+    }
+  };
+
+  // ── Undo a check-in made by mistake (owner request) ─────────────────────
+  // Puts the dog back to Expected and keeps the booking exactly as it was
+  // (backend domains/bookings/undo_check_in.py). Asked first: it is one wrong
+  // tap away from Check Out on the same row.
+  const [undoCheckInBusyId, setUndoCheckInBusyId] = useState(null);
+  const undoCheckInBusyRef = useRef(false);
+  const undoCheckIn = async (row) => {
+    if (undoCheckInBusyRef.current) return;
+    const ok = await confirm({
+      title: `Undo ${row.dog_name}'s check-in?`,
+      body: `${row.dog_name} goes back to Expected. The booking, its add-ons and anything already paid stay as they are. `
+        + `If ${row.dog_name} is going home, use Check Out instead.`,
+      confirmText: "Undo check-in",
+      cancelText: "Keep checked in",
+      tone: "warning",
+    });
+    if (!ok || undoCheckInBusyRef.current) return;
+    undoCheckInBusyRef.current = true;
+    setUndoCheckInBusyId(row.booking_id);
+    try {
+      await api.post(`/bookings/${row.booking_id}/undo-check-in`);
+      toast.success(`${row.dog_name}'s check-in was undone — back to Expected.`);
+      // A drop-off pack waiting in the cart for this very visit goes with it,
+      // or the next tap would sell credits for a dog that is not here.
+      if (dropoffNotice && (dropoffNotice.booking_ids || []).includes(row.booking_id)) {
+        const packId = dropoffNotice.pack_id;
+        setCartLines((lines) => lines.filter((l) => !(l.kind === "credit_pack" && l.pack_id === packId)));
+        setDropoffNotice(null);
+      }
+      loadRoster();
+      if (selectedClient?.id === row.client_id) refreshClientInvoice(selectedClient.id);
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Could not undo the check-in");
+    } finally {
+      undoCheckInBusyRef.current = false;
+      setUndoCheckInBusyId(null);
     }
   };
 
@@ -2172,7 +2213,7 @@ export default function Pos({ onOpenShopManager } = {}) {
               const timeLabel = bucket === "expected" ? (row.dropoff_time || row.time || "—") : arrivedAt;
               return (
                 <div key={row.booking_id}
-                     className={`rounded-xl border p-2.5 sm:p-3 flex items-center gap-3 transition hover:bg-white/[0.03] ${
+                     className={`rounded-xl border p-2.5 sm:p-3 flex flex-wrap items-center gap-x-3 gap-y-2 transition hover:bg-white/[0.03] ${
                        missed ? "border-shAccent/60 bg-gradient-to-r from-shAccent/[0.12] to-black/15"
                        : bucket === "on_site" ? "border-shSecondary/45 bg-gradient-to-r from-shSecondary/[0.10] to-black/15"
                        : bucket === "checked_out" ? "border-shBorder/60 bg-black/10 opacity-80"
@@ -2185,7 +2226,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                     <span className="block text-[8.5px] font-black uppercase tracking-widest text-shTextMuted mt-0.5">{bucket === "expected" ? "Drop-off" : bucket === "checked_out" ? "Arrived" : "Arrived"}</span>
                   </span>
                   <FrontDeskDogAvatar name={row.dog_name} bucket={bucket} photo={dogPhotos[row.dog_id]}/>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-[9rem] flex-1">{/* never squeezed out by the buttons: they wrap to the next line instead */}
                     <p className="text-shText font-black text-[14px] leading-tight truncate">{row.dog_name}</p>
                     <p className="text-shTextMuted text-[11.5px] truncate">
                       {[row.breed, row.client_name].filter(Boolean).join(" · ")}
@@ -2204,12 +2245,22 @@ export default function Pos({ onOpenShopManager } = {}) {
                     </p>
                   </div>
                   {/* Two buttons on an on-site row now: let them wrap under the chip on a phone, never push the name out. */}
-                  <div className="flex flex-wrap items-center justify-end gap-2 shrink sm:shrink-0 max-w-[55%] sm:max-w-none">
+                  <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     <FrontDeskStatusChip bucket={bucket} missed={missed} label={label}/>
                     {bucket === "expected" && (
                       <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
                               className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest shadow-[0_8px_22px_-10px_rgba(140,198,63,0.8)] hover:brightness-110 transition disabled:opacity-50">
                         {checkInBusyId === row.booking_id ? "Checking In…" : "Check In"}
+                      </button>
+                    )}
+                    {/* Not on a missed checkout from an earlier day: that dog needs checking out, not un-checking-in. */}
+                    {bucket === "on_site" && !missed && (
+                      <button onClick={() => undoCheckIn(row)} disabled={undoCheckInBusyId === row.booking_id}
+                              data-testid={`pos-visit-undo-checkin-${row.booking_id}`}
+                              title="Undo check-in (checked in by mistake)" aria-label={`Undo ${row.dog_name}'s check-in`}
+                              className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-lg px-3 min-h-[42px] inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest hover:text-shText hover:border-shAccent/60 transition disabled:opacity-50">
+                        <i className={`fas ${undoCheckInBusyId === row.booking_id ? "fa-spinner fa-spin" : "fa-rotate-left"}`}/>
+                        <span className="hidden sm:inline">Undo</span>
                       </button>
                     )}
                     {bucket === "on_site" && (

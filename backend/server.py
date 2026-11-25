@@ -57810,6 +57810,7 @@ def _audit_action_for(method: str, path: str) -> str:
                 if "/care/" in path and path.endswith("/complete"): return "care_completed"
                 if "/care/" in path and path.endswith("/skip"): return "care_skipped"
                 if "/care/" in path and path.endswith("/reset"): return "care_reset"
+                if path.endswith("/undo-check-in"): return "booking_check_in_undone"
                 if "/check-in" in path: return "booking_checked_in"
                 if "/check-out" in path: return "booking_checked_out"
                 if "/checkout" in path: return "booking_checked_out"
@@ -57974,7 +57975,7 @@ async def _stash_request_body(request, call_next):
 AUDIT_ACTION_GROUPS = {
     "bookings": ["booking_created", "booking_edited", "booking_deleted", "booking_canceled",
                  "booking_approved", "booking_denied", "booking_completed",
-                 "booking_checked_in", "booking_checked_out", "care_logged",
+                 "booking_checked_in", "booking_check_in_undone", "booking_checked_out", "care_logged",
                  "care_completed", "care_skipped", "care_reset",
                  "booking_financial_adjustment", "booking_checkout_reopened"],
     "dogs": ["dog_created", "dog_edited", "dog_deleted", "safety_flags_changed"],
@@ -61295,6 +61296,9 @@ globals().update(register_pay_now_routes(api=api, server_globals=globals()))
 # checked-in visit (read-only; domains/bookings/dropoff_pay.py).
 from domains.bookings.dropoff_pay import register_dropoff_pay_routes  # noqa: E402
 globals().update(register_dropoff_pay_routes(api=api, server_globals=globals()))
+# Undo a check-in made by mistake and keep the booking (domains/bookings/undo_check_in.py).
+from domains.bookings.undo_check_in import register_undo_check_in_routes  # noqa: E402
+globals().update(register_undo_check_in_routes(api=api, server_globals=globals()))
 
 app.include_router(api)
 _cors = _cors_origins()
