@@ -121,3 +121,72 @@ def test_refunding_the_online_payment_makes_pickup_charge_the_bath_again(visit):
     run(booking_addons.revoke_line(order, line, "refund-1"))
     out = run(server.check_out(visit["bid"], server.CheckoutIn(use_credits=False, payment_method="cash", payment_status="paid"), ADMIN))
     assert out["actual_price"] == DAYCARE + BATH
+
+
+# ---------------------------------------------------------------------------
+# Two dogs checked out together on one bill (server.check_out_group)
+# ---------------------------------------------------------------------------
+
+def _household(paid_online):
+    """Two dogs, one family, one group, daycare today, each booked WITH a $15
+    bath. Checks them out together and returns (rows, total charged)."""
+    parked = run(server.db.services.find({"service_type": "daycare", "is_default": True}, {"_id": 0, "id": 1}).to_list(500))
+    run(server.db.services.update_many({"service_type": "daycare"}, {"$set": {"is_default": False}}))
+    day_svc, bath_svc = f"{TAG}-gday-{uuid.uuid4().hex[:6]}", f"{TAG}-gbath-{uuid.uuid4().hex[:6]}"
+    run(server.db.services.insert_many([
+        {"id": day_svc, "name": f"{TAG} daycare", "service_type": "daycare", "base_price": DAYCARE, "active": True, "is_default": True},
+        {"id": bath_svc, "name": "Bath", "service_type": "grooming", "base_price": BATH, "active": True, "is_addon": True, "addon_for": ["daycare"]},
+    ]))
+    fam, gid = str(uuid.uuid4()), str(uuid.uuid4())
+    today = server.business_today().isoformat()
+    run(server.db.clients.insert_one({"id": fam, "name": f"{TAG} household", "email": f"{fam}@example.com",
+                                      "credits": 0, "boarding_credits": 0, "account_balance": 0.0}))
+    bids = []
+    try:
+        for name in ("Moss", "Pip"):
+            did, bid = str(uuid.uuid4()), str(uuid.uuid4())
+            bids.append(bid)
+            run(server.db.dogs.insert_one({"id": did, "owner_id": fam, "name": name, "vaccines": {"rabies": "2099-01-01"}}))
+            run(server.db.bookings.insert_one({
+                "id": bid, "client_id": fam, "client_name": f"{TAG} household", "dog_id": did, "dog_name": name,
+                "service_type": "daycare", "service_id": day_svc, "date": today, "end_date": today, "status": "approved",
+                "group_id": gid, "estimated_price": DAYCARE + BATH, "unit_price": DAYCARE, "pricing_snapshot": {"unit_price": DAYCARE},
+                "credit_units_required": 1,
+                "checked_in_at": (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat(), "checked_in_by": "test",
+                "checked_out_at": None, "created_at": server.now_iso(),
+                "add_ons": [{"service_id": bath_svc, "name": "Bath", "icon": "fa-bath", "price": BATH, "list_price": BATH,
+                             "price_override_id": None, "qty": 1, "added_at": server.now_iso()}]}))
+        if paid_online:
+            order = {"id": f"order-{uuid.uuid4().hex[:8]}", "client_id": fam}
+            plan = [{"booking_id": b, "service_id": bath_svc, "name": "Bath", "amount": BATH} for b in bids]
+            run(booking_addons.fulfill_line(order, {"item_id": "line-1", "kind": "booking_addons", "addon_plan": plan}))
+        run(server.check_out_group(bids[0], server.CheckoutIn(use_credits=False, payment_method="cash", payment_status="paid"), user=ADMIN))
+        rows = [run(server.db.bookings.find_one({"id": b}, {"_id": 0})) for b in bids]
+        return rows, round(sum(float(r.get("actual_price") or 0) for r in rows), 2)
+    finally:
+        async def tidy():
+            for c in ("bookings", "invoices", "payments", "payment_ledger", "booking_financial_events", "checkout_groups"):
+                await server.db[c].delete_many({"client_id": fam})
+            await server.db.booking_financial_events.delete_many({"booking_id": {"$in": bids}})
+            await server.db.dogs.delete_many({"owner_id": fam})
+            await server.db.clients.delete_many({"id": fam})
+            await server.db.services.delete_many({"id": {"$in": [day_svc, bath_svc]}})
+            for row in parked:
+                await server.db.services.update_one({"id": row["id"]}, {"$set": {"is_default": True}})
+        run(tidy())
+
+
+def test_two_dogs_checked_out_together_are_not_charged_again_for_paid_baths():
+    unpaid_rows, unpaid_total = _household(paid_online=False)
+    paid_rows, paid_total = _household(paid_online=True)
+    assert all(r.get("checked_out_at") for r in unpaid_rows + paid_rows), "both dogs leave together"
+    # The only difference between the two families is the two $15 baths paid online.
+    assert round(unpaid_total - paid_total, 2) == 2 * BATH, (unpaid_total, paid_total)
+    for before, after in zip(unpaid_rows, paid_rows):
+        assert round(float(before["actual_price"]) - float(after["actual_price"]), 2) == BATH, \
+            f"{after['dog_name']}: the visit itself must cost the same; only the paid bath comes off"
+        assert [a["name"] for a in after["add_ons"]] == ["Bath (paid online)"]
+        assert float(after["add_ons"][0]["price"]) == 0.0
+    paid_cash = round(sum(float(r.get("cash_revenue") or 0) for r in paid_rows), 2)
+    unpaid_cash = round(sum(float(r.get("cash_revenue") or 0) for r in unpaid_rows), 2)
+    assert round(unpaid_cash - paid_cash, 2) == 2 * BATH, "and the money collected at the desk drops by exactly the baths"
