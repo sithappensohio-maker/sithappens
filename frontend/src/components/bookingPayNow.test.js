@@ -268,10 +268,16 @@ describe("the pack that matches the booking is the one selected", () => {
     return { q, click, cleanup: () => act(() => root.unmount()) };
   }
 
-  test("adding a second dog on Review re-selects the two-dog pack, not the one-dog pack", async () => {
+  test("going back and adding a second dog re-selects the two-dog pack, not the one-dog pack", async () => {
     const v = await twoDogReview();
     expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("true");
-    await v.click("wiz-add-dog");
+    // Dogs are chosen on the first step now; Review links back to it.
+    expect(v.q("wiz-review-dogs").textContent).toMatch(/Rosie/);
+    await v.click("wiz-change-dogs");
+    await v.click("wiz-dog-tile-d-molly");
+    await v.click("wiz-step1-next");
+    await v.click("wiz-step2-next");
+    expect(v.q("wiz-review-dogs").textContent).toMatch(/Rosie & Molly/);
     expect(v.q("wiz-pay-pack-pk-2d").getAttribute("aria-checked")).toBe("true");
     expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("false");
     expect(v.q("wiz-pay-best-pk-2d").textContent).toMatch(/matches this booking/i);
@@ -384,6 +390,7 @@ describe("several of one pack, and several dogs on several days", () => {
       await act(async () => { q(id).click(); });
       await flush();
     };
+    if (dogs.length > 1) await click(`wiz-dog-tile-${dogs[1].id}`);   // every dog coming is picked on the first step
     await click("wiz-step1-next");
     await click("wiz-multidate-toggle");
     await click("pick-days");
@@ -405,8 +412,7 @@ describe("several of one pack, and several dogs on several days", () => {
 
   test("a second dog can be added when booking several days; each day is booked for both, a full day is skipped", async () => {
     const v = await threeDays([ROSIE, MOLLY]);
-    expect(v.q("wiz-multidog")).toBeTruthy();
-    await v.click("wiz-add-dog");
+    expect(v.q("wiz-review-dogs").textContent).toMatch(/Rosie & Molly/);
     expect(posts("/portal/booking-pay-options").pop()[1]).toMatchObject({ dog_count: 2 });
     expect(v.q("wiz-confirm").textContent).toMatch(/Submit 3 days · 2 dogs/);
     await v.click("wiz-confirm");
@@ -428,4 +434,155 @@ test("only the pack that covers the booking is shown, with nothing else to choos
   expect(v.q("wiz-pay-best-pk-1")).toBeNull();
   expect(v.q("wiz-confirm-pay").textContent).toMatch(/Book & pay \$40\.00 now/);
   await v.cleanup();
+});
+
+describe("every dog is picked on the first step, and each picks its own add-ons on the next", () => {
+  const MOLLY = { id: "d-molly", name: "Molly", breed: "Lab" };
+  const BATH = { id: "ad-bath", name: "Bath", base_price: 15, is_addon: true, active: true };
+
+  async function wizard() {
+    api.get.mockImplementation((url) => {
+      if (url === "/services") return Promise.resolve({ data: [DAYCARE] });
+      if (url === "/services/addons") return Promise.resolve({ data: [BATH] });
+      if (url === "/bookings/availability") return Promise.resolve({ data: OPEN });
+      return Promise.resolve({ data: {} });
+    });
+    api.post.mockImplementation((url, body) => {
+      if (url === "/portal/booking-pay-options") return Promise.resolve({ data: { offer: false, packs: [] } });
+      if (url === "/bookings/group") return Promise.resolve({ data: { group_id: "g-1", bookings: body.dogs.map((d, i) => ({ id: `b-${i}` })) } });
+      if (url === "/bookings") return booking();
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={[ROSIE, MOLLY]} seed={{ service_id: DAYCARE.id }} onClose={() => {}} onBooked={() => {}} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const click = async (id) => {
+      if (!q(id)) throw new Error(`no [data-testid="${id}"]`);
+      await act(async () => { q(id).click(); });
+      await flush();
+    };
+    return { q, click, cleanup: () => act(() => root.unmount()) };
+  }
+
+  test("two dogs: both named from step two on, each with its own add-on list, booked as one group", async () => {
+    const v = await wizard();
+    await v.click("wiz-dog-tile-d-rosie");
+    await v.click("wiz-dog-tile-d-molly");
+    expect(v.q("wiz-dog-count").textContent).toMatch(/2 dogs: Rosie & Molly/);
+    await v.click("wiz-step1-next");
+    expect(v.q("portal-addons-picker").textContent).toMatch(/Add-ons for Rosie/);
+    expect(v.q("wiz-extra-dog-0").textContent).toMatch(/Add-ons for Molly/);
+    await v.click("wiz-extra-addon-0-ad-bath");          // a bath for Molly only
+    await v.click("wiz-step2-next");
+    expect(v.q("wiz-review-dogs").textContent).toMatch(/Rosie & Molly/);
+    expect(v.q("wiz-confirm").textContent).toMatch(/2 dogs/);
+    // The old "More dogs on this booking?" box on Review is gone.
+    expect(v.q("wiz-multidog")).toBeNull();
+    expect(v.q("wiz-add-dog")).toBeNull();
+    await v.click("wiz-confirm");
+    const sent = posts("/bookings/group")[0][1];
+    expect(sent.dogs.map(d => [d.dog_id, d.addon_service_ids])).toEqual([["d-rosie", []], ["d-molly", ["ad-bath"]]]);
+    expect(posts("/bookings")).toHaveLength(0);
+    await v.cleanup();
+  });
+
+  test("taking the first dog off keeps the other dog and its add-ons", async () => {
+    const v = await wizard();
+    await v.click("wiz-dog-tile-d-rosie");
+    await v.click("wiz-dog-tile-d-molly");
+    await v.click("wiz-step1-next");
+    await v.click("wiz-extra-addon-0-ad-bath");
+    await v.click("wiz-step2-next");
+    await v.click("wiz-change-dogs");
+    await v.click("wiz-dog-tile-d-rosie");                // Rosie is not coming after all
+    expect(v.q("wiz-dog-count").textContent).toMatch(/Booking for Molly/);
+    await v.click("wiz-step1-next");
+    expect(v.q("wiz-extra-dog-0")).toBeNull();
+    await v.click("wiz-step2-next");
+    await v.click("wiz-confirm");
+    expect(posts("/bookings/group")).toHaveLength(0);
+    expect(posts("/bookings")[0][1]).toMatchObject({ dog_id: "d-molly", addon_service_ids: ["ad-bath"] });
+    await v.cleanup();
+  });
+});
+
+describe("stale state the dog tiles must not leave behind", () => {
+  const MOLLY = { id: "d-molly", name: "Molly", breed: "Lab" };
+  const BATH = { id: "ad-bath", name: "Bath", base_price: 15, is_addon: true, active: true };
+  const BOARDING = {
+    id: "svc-board", name: "Boarding (per night)", service_type: "boarding", base_price: 60, active: true,
+    booking_flow: { instant_book: true, require_approval: false, client_booking_enabled: true },
+  };
+
+  async function open(props) {
+    api.get.mockImplementation((url, opts) => {
+      if (url === "/services") return Promise.resolve({ data: [DAYCARE, BOARDING] });
+      // The bath is a daycare add-on only.
+      if (url === "/services/addons") return Promise.resolve({ data: opts?.params?.for === "daycare" ? [BATH] : [] });
+      if (url === "/bookings/availability") return Promise.resolve({ data: OPEN });
+      return Promise.resolve({ data: {} });
+    });
+    api.post.mockImplementation((url) => {
+      if (url === "/portal/booking-pay-options") return Promise.resolve({ data: { offer: false, packs: [] } });
+      if (url === "/bookings") return booking();
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={[ROSIE, MOLLY]} onClose={() => {}} onBooked={() => {}} {...props} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const click = async (id) => {
+      if (!q(id)) throw new Error(`no [data-testid="${id}"]`);
+      await act(async () => { q(id).click(); });
+      await flush();
+    };
+    return { q, click, cleanup: () => act(() => root.unmount()) };
+  }
+  const ticked = (el) => !!el.querySelector(".fa-check-circle");
+
+  test("changing the service drops the other dog's add-ons that the new service does not offer", async () => {
+    const v = await open({ seed: { service_id: DAYCARE.id } });
+    await v.click("wiz-dog-tile-d-rosie");
+    await v.click("wiz-dog-tile-d-molly");
+    await v.click("wiz-step1-next");
+    await v.click("wiz-extra-addon-0-ad-bath");
+    expect(ticked(v.q("wiz-extra-addon-0-ad-bath"))).toBe(true);
+    // Back, over to Boarding (no bath there), and back to Daycare again.
+    await v.click("wiz-step2-back");
+    await v.click("wiz-back-to-categories");
+    await v.click("wiz-cat-boarding");
+    await v.click("wiz-svc-svc-board-select");
+    await v.click("wiz-back-to-categories");
+    await v.click("wiz-cat-daycare");
+    await v.click("wiz-svc-svc-day-select");
+    await v.click("wiz-step1-next");
+    // Molly's bath did not ride along invisibly: it is simply not picked any more.
+    expect(ticked(v.q("wiz-extra-addon-0-ad-bath"))).toBe(false);
+    await v.cleanup();
+  });
+
+  test("a Book Again dog that is no longer on the account is not left on the booking", async () => {
+    const v = await open({ seed: { dog_id: "d-gone", service_id: DAYCARE.id } });
+    // Nobody is picked, and the screen says so instead of letting Next through.
+    expect(v.q("wiz-dog-tile-d-rosie").getAttribute("aria-pressed")).toBe("false");
+    expect(v.q("wiz-step1-next").disabled).toBe(true);
+    expect(v.q("wiz-step1-hint").textContent).toMatch(/choose a dog to continue/i);
+    await v.click("wiz-dog-tile-d-rosie");
+    expect(v.q("wiz-dog-count").textContent).toMatch(/Booking for Rosie/);
+    await v.click("wiz-step1-next");
+    await v.click("wiz-step2-next");
+    expect(v.q("wiz-confirm").textContent).toBe("Confirm booking");
+    await v.click("wiz-confirm");
+    expect(posts("/bookings")[0][1]).toMatchObject({ dog_id: "d-rosie" });
+    await v.cleanup();
+  });
 });

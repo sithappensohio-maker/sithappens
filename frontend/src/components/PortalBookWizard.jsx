@@ -119,7 +119,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // nothing. `dogs[0]` was whichever dog sorted first alphabetically, which
   // is a guess dressed up as an answer — and the customer who skims lands on
   // the review screen having booked for a dog they never picked.
-  const [dogId, setDogId] = useState(seed?.dog_id || (dogs?.length === 1 ? dogs[0].id : ""));
+  // A seeded dog ("Book again", a deep link) only counts if it is still one
+  // of this client's dogs. A removed dog's old booking would otherwise leave
+  // a dog on the booking that has no tile to un-pick.
+  const [dogId, setDogId] = useState(
+    (dogs || []).some(d => d.id === seed?.dog_id) ? seed.dog_id : (dogs?.length === 1 ? dogs[0].id : ""));
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
   const [serviceId, setServiceId] = useState(seed?.service_id || "");
   const [catalogServices, setCatalogServices] = useState([]);
@@ -165,14 +169,27 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // (per product decision), but each dog can pick its own add-ons.
   // Shape: [{ dog_id: string, addon_service_ids: string[], notes?: string }]
   const [extraDogs, setExtraDogs] = useState([]);
-  const addExtraDog = () => {
-    const used = new Set([dogId, ...extraDogs.map(e => e.dog_id)]);
-    const next = (dogs || []).find(d => !used.has(d.id));
-    if (!next) return;  // No more dogs available
-    setExtraDogs([...extraDogs, { dog_id: next.id, addon_service_ids: [], notes: "" }]);
-  };
-  const removeExtraDog = (idx) => {
-    setExtraDogs(extraDogs.filter((_, i) => i !== idx));
+  // Every dog coming, picked on the FIRST step (owner: "it should let them
+  // pick both dogs in the beginning and make it very clear how to add more
+  // than one dog"). The first dog picked is the primary; the rest are
+  // extraDogs. Tapping a picked dog takes it off again; if that was the
+  // primary, the next dog takes its place and keeps its own add-ons.
+  const pickedDogIds = [dogId, ...extraDogs.map(e => e.dog_id)].filter(Boolean);
+  const pickedDogs = pickedDogIds.map(id => (dogs || []).find(d => d.id === id)).filter(Boolean);
+  const dogNames = pickedDogs.map(d => d.name).join(" & ");
+  const toggleDog = (id) => {
+    if (id === dogId) {
+      const [next, ...rest] = extraDogs;
+      setDogId(next ? next.dog_id : "");
+      setSelectedAddonIds(next ? (next.addon_service_ids || []) : []);
+      setExtraDogs(rest);
+    } else if (extraDogs.some(e => e.dog_id === id)) {
+      setExtraDogs(extraDogs.filter(e => e.dog_id !== id));
+    } else if (!dogId || !(dogs || []).some(d => d.id === dogId)) {
+      setDogId(id);   // nobody yet (or a dog that is no longer on the account): this one leads
+    } else {
+      setExtraDogs([...extraDogs, { dog_id: id, addon_service_ids: [], notes: "" }]);
+    }
   };
   const updateExtraDog = (idx, patch) => {
     setExtraDogs(extraDogs.map((e, i) => i === idx ? { ...e, ...patch } : e));
@@ -286,16 +303,25 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
 
   // Sprint 110an — load add-ons whenever a service type is picked.
   useEffect(() => {
-    if (!serviceType) { setEligibleAddons([]); setSelectedAddonIds([]); return; }
+    // EVERY dog's picks are kept to what the chosen service offers — the
+    // other dogs' too. A daycare-only add-on left on dog #2 after switching
+    // to boarding has no button to take it off, yet would still be sent and
+    // make every Confirm fail.
+    const keepOnly = (list) => {
+      const ok = (id) => list.some(a => a.id === id);
+      setSelectedAddonIds(prev => prev.filter(ok));
+      setExtraDogs(prev => prev.map(e => ({ ...e, addon_service_ids: (e.addon_service_ids || []).filter(ok) })));
+    };
+    if (!serviceType) { setEligibleAddons([]); keepOnly([]); return; }
     let cancelled = false;
     api.get("/services/addons", { params: { for: serviceType } })
        .then(r => {
          if (cancelled) return;
          const list = r.data || [];
          setEligibleAddons(list);
-         setSelectedAddonIds(prev => prev.filter(id => list.some(a => a.id === id)));
+         keepOnly(list);
        })
-       .catch(() => { if (!cancelled) setEligibleAddons([]); });
+       .catch(() => { if (!cancelled) { setEligibleAddons([]); keepOnly([]); } });
     return () => { cancelled = true; };
   }, [serviceType]);
 
@@ -747,13 +773,31 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
             {dogs.length > 1 && (
               <div data-testid="wiz-dog-picker">
                 <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Who is this booking for?</label>
-                <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="wiz-dog"
-                        style={{ background: "var(--sh-card-base)" }}
-                        className={`w-full mt-1 min-h-[44px] border rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60 ${
-                          dogId ? "border-shBorder" : "border-shAccent/70"}`}>
-                  <option value="">Choose a dog…</option>
-                  {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
-                </select>
+                <p className="text-[14px] text-shText mt-1" data-testid="wiz-dog-help">
+                  <i className="fas fa-hand-pointer text-shSecondary mr-1.5"/>Tap <span className="font-black">every dog</span> that is coming. You can pick more than one.
+                </p>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2" role="group" aria-label="Dogs on this booking">
+                  {dogs.map(d => {
+                    const on = pickedDogIds.includes(d.id);
+                    return (
+                      <button key={d.id} type="button" aria-pressed={on} onClick={() => toggleDog(d.id)}
+                              data-testid={`wiz-dog-tile-${d.id}`}
+                              className={`min-h-[52px] flex items-center gap-3 p-3 rounded-lg border-2 text-left transition ${
+                                on ? "border-shSecondary bg-shSecondary/10" : (dogId ? "border-shBorder" : "border-shAccent/60") + " hover:border-shSecondary/60"}`}>
+                        <i className={`${on ? "fas fa-square-check text-shSecondary" : "far fa-square text-shTextMuted"} text-lg shrink-0`}/>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] font-black text-shText break-words">{d.name}</span>
+                          <span className="block text-[12px] text-shTextMuted truncate">{d.breed || "—"}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {pickedDogs.length > 0 && (
+                  <p className="text-[13px] font-black text-shSecondary mt-2" data-testid="wiz-dog-count">
+                    <i className="fas fa-paw mr-1.5"/>{pickedDogs.length === 1 ? `Booking for ${dogNames}` : `Booking for ${pickedDogs.length} dogs: ${dogNames}`}
+                  </p>
+                )}
               </div>
             )}
             {dogs.length === 1 && (
@@ -857,7 +901,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         {step === 2 && (
           <div className="space-y-4">
             <div className={`rounded p-3 border text-[14px] font-black uppercase tracking-widest ${svcMeta?.color}`}>
-              <i className={`fas ${svcMeta?.icon} mr-2`}/>{svcMeta?.label} · {selectedDog?.name}
+              <i className={`fas ${svcMeta?.icon} mr-2`}/>{svcMeta?.label} · {dogNames || selectedDog?.name}
             </div>
 
             {/* Multi-date toggle — daycare only (time-slotted services have per-date slots) */}
@@ -1122,6 +1166,40 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               </div>
             )}
 
+            {/* Each other dog picks its own add-ons, right here with the first dog's. */}
+            {eligibleAddons.length > 0 && extraDogs.map((extra, idx) => {
+              const xDog = (dogs || []).find(d => d.id === extra.dog_id);
+              return (
+                <div key={extra.dog_id} data-testid={`wiz-extra-dog-${idx}`}>
+                  <label className="text-[13px] uppercase tracking-widest text-amber-400 font-black">
+                    <i className="fas fa-plus-circle mr-1"/>Add-ons for {xDog?.name || "this dog"} (optional)
+                  </label>
+                  <div className="mt-2 space-y-2">
+                    {eligibleAddons.map(a => {
+                      const on = (extra.addon_service_ids || []).includes(a.id);
+                      return (
+                        <button key={a.id} type="button" onClick={()=>toggleExtraAddon(idx, a.id)}
+                                data-testid={`wiz-extra-addon-${idx}-${a.id}`}
+                                className={`w-full flex items-center gap-3 p-3 rounded-lg border transition text-left ${
+                                  on ? "bg-amber-500/15 border-amber-500/60" : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"}`}>
+                          <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                               style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+                            <i className={`fas ${a.icon || "fa-plus"}`}/>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                            {a.description && <div className="text-[12px] text-gray-400 line-clamp-2">{a.description}</div>}
+                          </div>
+                          <div className="text-shGreen font-black text-[14px] whitespace-nowrap">+${(a.base_price || 0).toFixed(2)}</div>
+                          {on && <i className="fas fa-check-circle text-amber-400"/>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
             <div>
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
               <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2}
@@ -1136,7 +1214,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               </p>
             )}
             <div className="flex justify-between gap-2 pt-3">
-              <PremiumButton variant="secondary" onClick={()=>setStep(1)}>
+              <PremiumButton variant="secondary" onClick={()=>setStep(1)} data-testid="wiz-step2-back">
                 <i className="fas fa-arrow-left"/>Back
               </PremiumButton>
               <PremiumButton variant="cyan" onClick={()=>setStep(3)} disabled={!canProceedFromStep2} data-testid="wiz-step2-next">
@@ -1150,7 +1228,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         {step === 3 && (
           <div className="space-y-4">
             <div className="border border-shBorder rounded-lg p-4 space-y-2 text-[15px]" style={{ background: "var(--sh-card-base)" }}>
-              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Dog</span><span className="text-white font-black">{selectedDog?.name}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">{pickedDogs.length > 1 ? "Dogs" : "Dog"}</span>
+                <span className="text-white font-black text-right" data-testid="wiz-review-dogs">
+                  {dogNames || selectedDog?.name}
+                  {(dogs || []).length > 1 && (
+                    <button type="button" onClick={() => setStep(1)} data-testid="wiz-change-dogs"
+                            className="ml-2 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80">Change</button>
+                  )}
+                </span></div>
               <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Service</span><span className="text-white font-black">{svcMeta?.label}</span></div>
               {serviceType === "boarding" ? (
                 <>
@@ -1182,102 +1267,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 <div className="pt-2 border-t border-bgHover"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px] block mb-1">Notes</span><span className="text-gray-300 text-[15px]">{notes}</span></div>
               )}
             </div>
-
-            {/* Sprint 110di-38 — Multi-dog group booking. Same date + same
-                service for every dog; per-dog add-ons. Hidden when the user
-                only has one dog on their profile. Also offered when several
-                days are being booked: each day is then booked for every dog
-                (see saveBooking). */}
-            {(dogs || []).length > 1 && (
-              <div className="border border-shBorder rounded-lg p-4 space-y-3" style={{ background: "var(--sh-card-base)" }} data-testid="wiz-multidog">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
-                    <p className="text-gray-400 text-[15px] mt-0.5">{isMultiDate && serviceType === "daycare"
-                      ? "Add another dog to come on the same days. Each dog can pick their own add-ons."
-                      : "Add another dog to share the same date and service. Each dog can pick their own add-ons."}</p>
-                  </div>
-                  {extraDogs.length + 1 < (dogs || []).length && (
-                    <button onClick={addExtraDog} data-testid="wiz-add-dog"
-                            className="bg-shGreen/20 border border-shGreen/40 text-shGreen px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap">
-                      <i className="fas fa-plus mr-1"/>Add dog
-                    </button>
-                  )}
-                </div>
-
-                {extraDogs.map((extra, idx) => {
-                  const xDog = (dogs || []).find(d => d.id === extra.dog_id);
-                  // Other dogs already in this group (so we don't show duplicates in the dropdown)
-                  const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
-                  const available = (dogs || []).filter(d => !usedIds.has(d.id));
-                  return (
-                    <div key={idx} className="border-t border-bgHover pt-3 space-y-2" data-testid={`wiz-extra-dog-${idx}`}>
-                      <div className="flex gap-2 items-center">
-                        <select value={extra.dog_id}
-                                onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
-                                data-testid={`wiz-extra-dog-select-${idx}`}
-                                className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]">
-                          {available.map(d => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                          ))}
-                        </select>
-                        <button onClick={()=>removeExtraDog(idx)} data-testid={`wiz-remove-dog-${idx}`}
-                                className="bg-red-500/15 border border-red-500/40 text-red-300 px-2 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition"
-                                title="Remove this dog">
-                          <i className="fas fa-times"/>
-                        </button>
-                      </div>
-                      {eligibleAddons.length > 0 && (
-                        <div className="pt-1">
-                          <p className="text-[12px] font-black uppercase tracking-widest text-amber-400 mb-2">
-                            <i className="fas fa-plus-circle mr-1"/>Add-ons for {xDog?.name || "this dog"} (optional)
-                          </p>
-                          <div className="space-y-2">
-                            {eligibleAddons.map(a => {
-                              const on = (extra.addon_service_ids || []).includes(a.id);
-                              return (
-                                <button key={a.id} type="button"
-                                        onClick={()=>toggleExtraAddon(idx, a.id)}
-                                        data-testid={`wiz-extra-addon-${idx}-${a.id}`}
-                                        className={`w-full flex items-center gap-3 p-3 rounded-lg border transition text-left ${
-                                          on
-                                            ? "bg-amber-500/15 border-amber-500/60"
-                                            : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
-                                        }`}>
-                                  <div className="w-10 h-10 rounded grid place-items-center shrink-0"
-                                       style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
-                                    <i className={`fas ${a.icon || "fa-plus"}`}/>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-[14px] font-black text-white truncate">{a.name}</div>
-                                    {a.description && (
-                                      <div className="text-[12px] text-gray-400 line-clamp-2">{a.description}</div>
-                                    )}
-                                  </div>
-                                  <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
-                                    +${(a.base_price || 0).toFixed(2)}
-                                  </div>
-                                  {on && <i className="fas fa-check-circle text-amber-400"/>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {extraDogs.length === 0 && (
-                  <p className="text-gray-500 text-[14px] italic">No additional dogs yet.</p>
-                )}
-                {extraDogs.length > 0 && (
-                  <p className="text-shGreen text-[13px] font-black uppercase tracking-widest pt-1" data-testid="wiz-group-count">
-                    <i className="fas fa-link mr-1"/>This booking will cover {extraDogs.length + 1} dogs.
-                  </p>
-                )}
-              </div>
-            )}
 
             {/* Sprint 110di-26 — Live booking estimate. Gated on the admin
                 toggle in Booking Flow Controls (default ON). Uses the
