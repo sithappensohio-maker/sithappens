@@ -108,8 +108,13 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
             "display_dog_count": item.get("display_dog_count"),
             "covers": qty + 0.0001 >= short,
         })
-    # Packs that cover the booking first, cheapest first within each group.
-    packs.sort(key=lambda p: (not p["covers"], p["price"], p["name"]))
+    # The pack that MATCHES the booking first: of the packs that cover it, the
+    # smallest one (2 dogs for 1 day → the "2 dogs 1 day" pack, not a 10-day
+    # pack), cheapest on a tie. Then the bigger packs, then any that only
+    # cover part of it (biggest first). The screen pre-selects the first one.
+    packs.sort(key=lambda p: (not p["covers"], p["qty"] if p["covers"] else -p["qty"], p["price"], p["name"]))
+    if packs and packs[0]["covers"]:
+        packs[0]["best_match"] = True
     return {
         "offer": bool(packs),
         "service_type": body.service_type,

@@ -230,3 +230,50 @@ describe("the price estimate sets aside credits other bookings will use", () => 
     await v.cleanup();
   });
 });
+
+describe("the pack that matches the booking is the one selected", () => {
+  const MOLLY = { id: "d-molly", name: "Molly", breed: "Lab" };
+  const TWO_DOG = { id: "pk-2d", name: "2 Dogs 1 Day", price: 37.5, qty: 1.5 };
+  const forDogs = (n) => (n >= 2
+    ? { ...SHORT, credits_needed: 1.5, credits_short: 1.5,
+        packs: [{ ...TWO_DOG, covers: true, best_match: true }, { ...FIVE, covers: true }, { ...ONE, covers: false }] }
+    : { ...SHORT, packs: [{ ...ONE, best_match: true }, { ...TWO_DOG, covers: true }, FIVE] });
+
+  async function twoDogReview() {
+    api.post.mockImplementation((url, body) => {
+      if (url === "/portal/booking-pay-options") return Promise.resolve({ data: forDogs(body.dog_count) });
+      if (url === "/bookings/group") return Promise.resolve({ data: { group_id: "g-1", bookings: [{ id: "b-1" }, { id: "b-2" }] } });
+      if (url === "/shop/checkout") return checkout();
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={[ROSIE, MOLLY]} seed={{ dog_id: ROSIE.id, service_id: DAYCARE.id }}
+                                    onClose={() => {}} onBooked={() => {}} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const click = async (id) => { await act(async () => { q(id).click(); }); await flush(); };
+    await click("wiz-step1-next");
+    await click("wiz-step2-next");
+    return { q, click, cleanup: () => act(() => root.unmount()) };
+  }
+
+  test("adding a second dog on Review re-selects the two-dog pack, not the one-dog pack", async () => {
+    const v = await twoDogReview();
+    expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("true");
+    await v.click("wiz-add-dog");
+    expect(v.q("wiz-pay-pack-pk-2d").getAttribute("aria-checked")).toBe("true");
+    expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("false");
+    expect(v.q("wiz-pay-best-pk-2d").textContent).toMatch(/matches this booking/i);
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/\$37\.50/);
+    // The other packs are still there to choose, and the choice sticks.
+    await v.click("wiz-pay-pack-pk-5");
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/\$150\.00/);
+    await v.click("wiz-confirm-pay");
+    expect(posts("/shop/checkout")[0][1].items).toEqual([{ kind: "credit_pack", ref_id: "pk-5", quantity: 1 }]);
+    await v.cleanup();
+  });
+});

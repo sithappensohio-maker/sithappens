@@ -416,6 +416,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState("");
   const payKeyRef = useRef(null);    // one idempotency key per pack choice: a retry resumes, never re-charges
+  const payNeedRef = useRef(null);   // what the last offer was for (service + credits short)
   const payBusyRef = useRef(false);  // a double tap is one checkout
   const bookBusyRef = useRef(false); // …and one booking
   const multiDatesKey = multiDates.join(",");
@@ -435,9 +436,15 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         if (cancelled) return;
         const packs = data?.offer ? (data.packs || []) : [];
         setPayOptions(packs.length ? data : null);
-        // Start on the cheapest pack that covers the booking (the server
-        // lists it first); keep the client's own pick while it is still offered.
-        setPayPackId(prev => (packs.some(p => p.id === prev) ? prev : (packs[0]?.id || "")));
+        // Pre-select the pack that matches the booking (the server lists it
+        // first). When the booking itself changes what it needs — a second
+        // dog added on this step, say — the match is picked again, so a
+        // one-dog pack is never left selected for a two-dog booking. The
+        // client's own pick is kept only while the need is unchanged.
+        const need = `${data?.service_type || ""}:${data?.credits_short ?? ""}`;
+        const sameNeed = payNeedRef.current === need;
+        payNeedRef.current = need;
+        setPayPackId(prev => (sameNeed && (prev === "" || packs.some(p => p.id === prev)) ? prev : (packs[0]?.id || "")));
       })
       // No offer is not an error: the booking itself is unaffected.
       .catch(() => { if (!cancelled) setPayOptions(null); });

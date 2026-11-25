@@ -258,3 +258,16 @@ def test_staff_quote_still_shows_the_whole_balance():
         body = server.PricingQuoteIn(service_type="daycare", date=DAY, client_id=c["id"])
         q = run(server.pricing_quote(body, {"id": "a", "role": "admin"}))
         assert q["credits_available"] == 2 and q["credits_promised"] == 0
+
+
+def test_the_pack_that_matches_the_booking_comes_first():
+    # Two dogs, one day = 1.5 credits. The owner's screenshot: the "2 dogs 1 day"
+    # pack must lead, ahead of bigger packs, and the 1-credit pack (too small) goes last.
+    with _stripe(), _client(credits=0) as c, _pack(qty=1, price=25.0) as single, \
+            _pack(qty=10, price=220.0) as ten, _pack(qty=15, price=375.0) as fifteen, \
+            _pack(qty=1.5, price=37.5) as match:
+        offered = _mine(_options(c, dog_count=2), single, ten, fifteen, match)
+        assert [p["id"] for p in offered] == [match["id"], ten["id"], fifteen["id"], single["id"]]
+        assert offered[0].get("best_match") is True
+        assert not any(p.get("best_match") for p in offered[1:])
+        assert offered[-1]["covers"] is False
