@@ -88,6 +88,7 @@ from domains.bookings import checkout_prices, credit_cover, checkout_discount, t
 from domains.school import ownership as school_ownership, curriculum_moves, structure_gate, mirror_sync as school_mirror
 from domains.school import removal as training_removal
 from domains.bookings import late_day as late_day_checkout
+from domains.bookings import late_stay as late_stay_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
 from domains.staff import pay_rate as pay_rate_domain   # each shift at the rate it was worked at (audit #24)
@@ -1197,6 +1198,7 @@ class BookingOut(BaseModel):
     pickup_sale: Optional[Dict[str, Any]] = None
     late_day_resolution: Optional[str] = None  # a late daycare checkout's answer — domains/bookings/late_day.py
     late_day_checkout: Optional[Dict[str, Any]] = None
+    late_stay_checkout: Optional[Dict[str, Any]] = None  # a late boarding checkout's answer — domains/bookings/late_stay.py
     # Sales tax snapshot on HISTORICAL bookings. Nothing on a booking is
     # sales-taxable any more (services never are — see sales_tax_policy), so
     # these only ever carry what older checkouts already stored.
@@ -1297,6 +1299,7 @@ class CheckoutIn(BaseModel):
     board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
     late_day_resolution: Optional[Literal["forgotten", "stayed_overnight"]] = None  # domains/bookings/late_day.py
     late_day_credit_pool: Optional[Literal["boarding", "daycare"]] = None  # pay a stayed-overnight visit from daycare credits
+    late_stay_resolution: Optional[Literal["stayed", "missed_checkout"]] = None  # domains/bookings/late_stay.py
     # A boarding dog leaving early that is paid from credits: take the credits for
     # the nights it stayed (the early quote), not the booked span. Only read on a
     # credit checkout; the server re-checks the early quote, so a flag on a stay that
@@ -9122,6 +9125,7 @@ async def _check_out_locked(
         db=db, booking=booking, business_day=business_today().isoformat(),
         resolutions=(body.board_train_resolution if body else None), actor=user)
     booking = await late_day_checkout.ensure_checkout_answer(booking, body.late_day_resolution if body else None, user)
+    late_stay_record = late_stay_checkout.ensure_checkout_answer(booking, body, user)  # a boarding dog past its last day
     # Multi-dog booking: the first dog that actually came pays the first-dog price.
     booking, group_rank_fields = await group_rank.settle(db, booking, now=now_iso())
     # Merchandise bought at pickup rings FIRST, through the Register's own
@@ -9576,6 +9580,8 @@ async def _check_out_locked(
     # Update booking.end_date, optionally consume extra boarding credits, and
     # bill the difference. Only meaningful for boarding bookings.
     extra_nights = int(body.extra_nights or 0)
+    if late_stay_record:
+        update["late_stay_checkout"] = late_stay_record
     extra_charge_total = 0.0
     extra_nights_billed = 0
     extra_credits_used = 0

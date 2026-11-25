@@ -98,7 +98,7 @@ _HIDDEN_WORDS = frozenset((
     "price", "pricing", "rate", "override", "paid", "prepaid", "pay", "payment", "balance", "credit", "credits",
     "discount", "revenue", "tax", "taxable", "invoice", "fee", "charge", "charged", "refund", "cost", "amount",
     "total", "financial", "sale", "money", "modifier", "group", "receipt", "cash", "tendered", "lot", "redemptions"))
-_HIDDEN_PREFIXES = ("bill_to", "pos_", "gift_card", "extra_nights", "late_day", "multi_dog", "checkout_group")
+_HIDDEN_PREFIXES = ("bill_to", "pos_", "gift_card", "extra_nights", "late_day", "late_stay", "multi_dog", "checkout_group")
 # Care and visit details the dog's own family always sees.
 _ALWAYS_SHOWN = frozenset(("feeding_log", "medication_log", "bathroom_log", "report_card", "photos", "mood_tags",
                            "crate", "room", "kennel", "yard_group", "training_group", "notes", "note", "status"))
@@ -417,6 +417,14 @@ async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
     rows = await group_pricing.household_checkout_rows(anchor)
     if len(rows) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+    # A boarding dog past its last day is asked about BEFORE any dog leaves:
+    # each dog below is its own committed checkout, so a refusal part-way
+    # would leave the earlier dogs gone (late_stay.py writes nothing here).
+    late_stay = _g("late_stay_checkout")
+    if stay_rows := [r for r in rows if late_stay.needs_answer(r, body)]:
+        raise HTTPException(status_code=409, detail=late_stay.question_detail(stay_rows, _g("business_today")().isoformat()))
+    for r in rows:
+        late_stay.ensure_checkout_answer(r, body, user)
     # (Prices: the household checkout ran checkout_prices.refuse_price_changes before calling this.)
     # Extras, a manual price and an extra charge belong to the dog whose button
     # was clicked — as in every combined checkout — never to each dog.

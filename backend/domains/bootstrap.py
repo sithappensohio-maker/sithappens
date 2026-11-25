@@ -23,6 +23,7 @@ from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
+from domains.bookings import late_stay as late_stay_checkout
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
 from domains.bookings import waitlist_spots
@@ -150,6 +151,7 @@ def register_domains(
     # server.db per test loop.
     shop_checkout_services.configure(server_globals=server_globals)
     late_day_checkout.configure(server_globals=server_globals)
+    late_stay_checkout.configure(server_globals=server_globals)
     booking_group_pricing.configure(server_globals=server_globals)
     friends_family.configure(server_globals=server_globals)
     waitlist_spots.configure(server_globals=server_globals)
@@ -205,6 +207,7 @@ def register_domains(
     # route order within each domain.
     register_bookings_routes(api=api, server_globals=server_globals)
     late_day_checkout.register_late_day_routes(api=api, server_globals=server_globals)
+    late_stay_checkout.register_late_stay_routes(api=api, server_globals=server_globals)
     billing_resolve.register_billing_routes(api=api, server_globals=server_globals)
     friends_family.register_routes(api=api, server_globals=server_globals)
     booking_group_add.register_routes(api=api, server_globals=server_globals)

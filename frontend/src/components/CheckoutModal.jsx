@@ -93,7 +93,8 @@ function TerminalChargeControl({ label, amount, charge, testIdSuffix }) {
   );
 }
 
-function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDay, onLateDayQuestion, onLateDayUndo }) {
+function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDay, onLateDayQuestion, onLateDayUndo,
+                             lateStay, onLateStayQuestion, onLateStayChange }) {
   const promptDialog = useOptionalPromptDialog();
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
@@ -367,7 +368,24 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // Reason for a manual price change — stored on the booking's
   // manual_price_override audit stamp (who/when/from/to/why).
   const [priceReason, setPriceReason] = useState("");
-  const [extraNights, setExtraNights] = useState(0);
+  // A boarding dog past its last day (lateStay): "Stayed" starts the counter
+  // at the nights it is late and never lets it reach 0; "Missed check out"
+  // holds it at 0. Server side: domains/bookings/late_stay.py.
+  const stayedLate = lateStay?.resolution === "stayed";
+  const missedCheckout = lateStay?.resolution === "missed_checkout";
+  const minExtraNights = stayedLate ? 1 : 0;
+  const [extraNights, setExtraNights] = useState(stayedLate ? Math.max(1, Number(lateStay.nights || 1)) : 0);
+  // The answer can change while this form stays open ("Change answer", or
+  // the server asking after a refused checkout): the form is kept — cart,
+  // tip, a card already charged on the reader — and only the nights follow.
+  const lateStayNights = Math.max(1, Number(lateStay?.nights || 1));
+  const stayAnswerSeen = useRef(lateStay?.resolution || "");
+  useEffect(() => {
+    const now = lateStay?.resolution || "";
+    if (!now || now === stayAnswerSeen.current) return;
+    stayAnswerSeen.current = now;
+    setExtraNights(now === "stayed" ? lateStayNights : 0);
+  }, [lateStay?.resolution, lateStayNights]);
   const [extraUseCredits, setExtraUseCredits] = useState(true);
   // (Never on a friends & family visit: every extra night goes on the paying family's account.)
   const extraNightsUseCredits = extraUseCredits && !ffNoCredits;
@@ -991,6 +1009,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           date: s.date, slot: s.slot, outcome: btAnswers[`${s.date}|${s.slot}`],
         })).filter((s) => s.outcome);
       }
+      if (lateStay?.resolution) body.late_stay_resolution = lateStay.resolution;
       if (isBoarding && extraNights > 0) {
         body.extra_nights = Number(extraNights);
         body.extra_nights_use_credits = extraNightsUseCredits;
@@ -1126,6 +1145,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         // Checked out a day late and not answered yet: back to the question.
         setBusy(false);
         onLateDayQuestion(detail);
+        return;
+      } else if (detail?.code === "late_stay_checkout_resolution_required" && onLateStayQuestion) {
+        // A boarding dog past its last day and not answered yet: ask.
+        setBusy(false);
+        onLateStayQuestion(detail);
         return;
       } else {
         setErr(e.response?.data?.detail || "Check-out failed");
@@ -1601,15 +1625,32 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                 The {booking.extra_nights.count} extra night{Number(booking.extra_nights.count) === 1 ? "" : "s"} added at the earlier checkout {Number(booking.extra_nights.count) === 1 ? "is" : "are"} already in this stay{booking.end_date ? ` (it now ends ${booking.end_date})` : ""}. Only add nights beyond that.
               </p>
             )}
+            {lateStay?.resolution && (
+              <div className="mb-3 rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 text-[13px] text-shText" data-testid="checkout-late-stay-banner">
+                <i className="fas fa-moon text-shOrange mr-1.5"/>
+                {stayedLate
+                  ? `Stayed past ${fmtBtDay(lateStay.original_end_date)} — ${Number(extraNights) || 0} extra night${Number(extraNights) === 1 ? "" : "s"} added. Change the number below if that's not right.`
+                  : `Missed check out — went home ${fmtBtDay(lateStay.original_end_date)} as booked. Only the booked nights are charged.`}
+                {onLateStayChange && !busy && (
+                  <button type="button" onClick={onLateStayChange} data-testid="checkout-late-stay-change"
+                          className="ml-2 underline font-black text-shOrange">Change answer</button>
+                )}
+              </div>
+            )}
+            {!missedCheckout && (
             <div className="flex items-center gap-2 mb-3">
-              <button type="button" onClick={()=>setExtraNights(Math.max(0, Number(extraNights)-1))} data-testid="extra-nights-minus"
+              <button type="button" onClick={()=>setExtraNights(Math.max(minExtraNights, Number(extraNights)-1))} data-testid="extra-nights-minus"
                       className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-red-500/30">−</button>
-              <input type="number" min="0" max="60" value={extraNights} onChange={(e)=>setExtraNights(Math.max(0, parseInt(e.target.value)||0))} data-testid="extra-nights-input"
+              {/* Empty while retyping (or "3" could only be typed as "13"); the floor is put back on leaving the box. */}
+              <input type="number" min={minExtraNights} max="60" value={extraNights} data-testid="extra-nights-input"
+                     onChange={(e)=>setExtraNights(e.target.value === "" ? "" : Math.min(60, Math.max(0, parseInt(e.target.value, 10) || 0)))}
+                     onBlur={()=>setExtraNights((n) => Math.min(60, Math.max(minExtraNights, Number(n) || 0)))}
                      className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center font-black"/>
-              <button type="button" onClick={()=>setExtraNights(Number(extraNights)+1)} data-testid="extra-nights-plus"
+              <button type="button" onClick={()=>setExtraNights(Math.min(60, Number(extraNights)+1))} data-testid="extra-nights-plus"
                       className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-shGreen/30">+</button>
               <span className="text-[14px] text-gray-400 ml-2">extra night{extraNights === 1 ? "" : "s"}</span>
             </div>
+            )}
             {extraNights > 0 && (
               <div className="space-y-3 animate-slide-in">
                 {!ffNoCredits && (
@@ -2287,6 +2328,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
  * with an Undo) and the checkout below reloads with the right prices.
  * Server side: domains/bookings/late_day.py, and checkout itself refuses a
  * late visit that hasn't been answered.
+ *
+ * A boarding dog past its last day gets its own question — stayed extra
+ * nights, or a missed check out — see maybeLateStay below.
  */
 export function CheckoutModal(props) {
   useEditLock(true);
@@ -2321,6 +2365,30 @@ export function CheckoutModal(props) {
   }, [booking.id]);
   useEffect(() => { if (maybeLate) loadLate(); }, [maybeLate, loadLate]);
 
+  // A BOARDING dog still checked in after its last day: stayed extra nights,
+  // or a missed check out? Same rule — ask, never assume — but nothing is
+  // saved here: the answer rides on the checkout itself (server side:
+  // domains/bookings/late_stay.py, which refuses an unanswered late stay).
+  const maybeLateStay = !booking?.checked_out_at && !booking?.late_day_resolution
+    && booking?.service_type === "boarding" && !!booking?.checked_in_at
+    && String(booking?.end_date || booking?.date || "").slice(0, 10) < todayISO();
+  const [stay, setStay] = useState(maybeLateStay ? undefined : {});
+  const [stayAnswer, setStayAnswer] = useState("");
+  // Once the checkout form is on screen it stays there: a question asked
+  // later (Change answer, or the server refusing) is laid over it, so the
+  // cart, tip and a card already charged on the reader are not thrown away.
+  const formShown = useRef(false);
+  useEffect(() => {
+    if (!maybeLateStay) return undefined;
+    let gone = false;
+    // If the check fails the checkout opens anyway: the server still refuses
+    // an unanswered late stay and its refusal brings the question back.
+    api.get(`/bookings/${booking.id}/late-stay-checkout`)
+      .then(({ data }) => { if (!gone) setStay(data || {}); })
+      .catch(() => { if (!gone) setStay({}); });
+    return () => { gone = true; };
+  }, [maybeLateStay, booking.id]);
+
   const answer = async (resolution) => {
     setAnswering(resolution); setLateErr("");
     try {
@@ -2333,7 +2401,7 @@ export function CheckoutModal(props) {
     } finally { setAnswering(""); }
   };
 
-  if (late === undefined) {
+  if (late === undefined || stay === undefined) {
     return (
       <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-late-day-loading">
         <p className="text-gray-300 text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Opening checkout…</p>
@@ -2390,7 +2458,50 @@ export function CheckoutModal(props) {
     );
   }
 
+  let stayQuestion = null;
+  if (stay.applies && !stayAnswer) {
+    const nights = Math.max(1, Number(stay.nights || 1));
+    stayQuestion = (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" data-testid="checkout-late-stay">
+        <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
+              <i className="fas fa-moon text-shOrange mr-2"/>Stayed past pick-up day
+            </h4>
+            <button onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close"><i className="fas fa-times"/></button>
+          </div>
+          <p className="text-[15px] text-gray-200 leading-snug" data-testid="checkout-late-stay-message">
+            {stay.message || "This stay ended before today and the dog is still checked in. Did it stay extra nights, or was this a missed check out?"}
+          </p>
+          <p className="text-[13px] text-gray-400">Nothing is charged until you choose. You can change your answer before checking out.</p>
+          <div className="grid gap-3">
+            <button type="button" onClick={() => setStayAnswer("stayed")} data-testid="checkout-late-stay-stayed"
+                    className="text-left rounded-xl border border-shOrange/50 bg-shOrange/10 hover:bg-shOrange/20 p-4">
+              <p className="text-white font-black"><i className="fas fa-bed text-shOrange mr-2"/>Stayed {nights} extra night{nights === 1 ? "" : "s"}</p>
+              <p className="text-[13px] text-gray-300 mt-1">
+                Add {nights === 1 ? "it" : "them"} to the stay. {isFriendsFamily(current)
+                  ? "The extra nights go on the paying family's bill at the stay's nightly rate"
+                  : "Boarding credits are used first, the rest is charged at the stay's nightly rate"} — you'll see the amount on the next screen and can change the number of nights there.
+              </p>
+            </button>
+            <button type="button" onClick={() => setStayAnswer("missed_checkout")} data-testid="checkout-late-stay-missed"
+                    className="text-left rounded-xl border border-shBlue/50 bg-shBlue/10 hover:bg-shBlue/20 p-4">
+              <p className="text-white font-black"><i className="fas fa-clock-rotate-left text-shBlue mr-2"/>Missed check out</p>
+              <p className="text-[13px] text-gray-300 mt-1">They went home on time and weren't checked out — charge only the booked nights, with nothing extra.</p>
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest">Not now</button>
+          </div>
+        </div>
+      </div>
+    );
+    if (!formShown.current) return stayQuestion;   // first time: ask before anything is priced
+  }
+  formShown.current = true;
+
   return (
+    <>
     <CheckoutModalBody
       key={`${current.id}:${rev}`}
       {...props}
@@ -2398,7 +2509,12 @@ export function CheckoutModal(props) {
       lateDay={late.resolved ? late : null}
       onLateDayQuestion={(refusal) => { setLate(undefined); loadLate(refusal); }}
       onLateDayUndo={() => { if (!answering) answer("undo"); }}
+      lateStay={stay.applies && stayAnswer ? { ...stay, resolution: stayAnswer } : null}
+      onLateStayQuestion={(refusal) => { setStay({ ...refusal, applies: true }); setStayAnswer(""); }}
+      onLateStayChange={() => setStayAnswer("")}
     />
+    {stayQuestion}
+    </>
   );
 }
 

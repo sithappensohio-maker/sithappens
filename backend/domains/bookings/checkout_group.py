@@ -64,6 +64,10 @@ def build(server_globals: dict) -> dict:
             raise HTTPException(status_code=409, detail=_g("friends_family").MSG_PAY_ON_BILL)
         if not body.late_day_resolution and (late_rows := [t for t in targets if _g("late_day_checkout").needs_answer(t)]):
             raise HTTPException(status_code=409, detail=_g("late_day_checkout").question_detail(late_rows, _g("business_today")().isoformat()))
+        if stay_rows := [t for t in targets if _g("late_stay_checkout").needs_answer(t, body)]:  # boarding dogs past their last day
+            raise HTTPException(status_code=409, detail=_g("late_stay_checkout").question_detail(stay_rows, _g("business_today")().isoformat()))
+        for t in targets:  # an answer that contradicts the nights is refused before any dog is locked
+            _g("late_stay_checkout").ensure_checkout_answer(t, body, user)
 
         operation_id = str(_g("uuid").uuid4())
         checkout_group_id = str(_g("uuid").uuid4())
