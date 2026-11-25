@@ -1364,11 +1364,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 </button>
               ) : null} />
 
-            <div className="flex justify-between gap-2 pt-3">
+            <div className="flex items-end justify-between gap-2 pt-3">{/* Back keeps its own height beside the stacked buttons on a phone */}
               <PremiumButton variant="secondary" onClick={()=>setStep(2)}>
                 <i className="fas fa-arrow-left"/>Back
               </PremiumButton>
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className="flex flex-1 flex-col sm:flex-none sm:flex-row sm:flex-wrap justify-end gap-2 min-w-0">
                 <PremiumButton variant={wantsToPay ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
                   {submitting ? "Booking…"
                     : (isMultiDate && serviceType==="daycare"
