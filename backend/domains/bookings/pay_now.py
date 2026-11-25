@@ -199,6 +199,11 @@ async def _credit_part(g: dict, client: dict, body: BookingPayOptionsIn) -> dict
             continue  # checkout would refuse it, so it is not offered
         packs.append(option)
     rank_packs(packs)
+    # Owner (2026-11-25): "when a client books let's not show all the extras
+    # … just what covers their booking." So the client is offered ONE thing:
+    # the match. Bigger packs are still in the Shop; a pack that would only
+    # cover part of the booking is not offered here at all.
+    packs = packs[:1] if packs and packs[0]["covers"] else []
     return {
         "pool_label": POOL_LABEL.get(body.service_type, body.service_type),
         "credits_needed": needed,

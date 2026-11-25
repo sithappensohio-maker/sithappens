@@ -57,7 +57,8 @@ export default function BookingPayNow({ options, selectedId, onSelect, payAddons
               <span className="flex-1 min-w-0">
                 <span className="block text-[14px] font-black text-shText break-words">
                   {Number(p.quantity || 1) > 1 ? `${p.quantity} × ` : ""}{p.name}
-                  {p.best_match && (
+                  {/* The server now sends only the pack that covers the booking, so the tag has nothing to tell apart. */}
+                  {p.best_match && packs.length > 1 && (
                     <span className="ml-2 align-middle text-[10px] font-black uppercase tracking-widest text-shSecondary border border-shSecondary/50 rounded px-1.5 py-0.5"
                           data-testid={`wiz-pay-best-${p.id}`}>Matches this booking</span>
                   )}

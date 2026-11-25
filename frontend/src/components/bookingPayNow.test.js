@@ -419,3 +419,13 @@ describe("several of one pack, and several dogs on several days", () => {
     await v.cleanup();
   });
 });
+
+test("only the pack that covers the booking is shown, with nothing else to choose between", async () => {
+  payOptions = () => Promise.resolve({ data: { ...SHORT, packs: [{ ...ONE, quantity: 1, total: 40, best_match: true }] } });
+  const v = await atReview();
+  expect(document.querySelectorAll('[data-testid^="wiz-pay-pack-"]')).toHaveLength(1);
+  expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("true");
+  expect(v.q("wiz-pay-best-pk-1")).toBeNull();
+  expect(v.q("wiz-confirm-pay").textContent).toMatch(/Book & pay \$40\.00 now/);
+  await v.cleanup();
+});
