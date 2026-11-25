@@ -770,12 +770,36 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [dropoffNotice, setDropoffNotice] = useState(null);   // what the cart's drop-off pack is for, and what it does not cover
   const dropoffPayBusyRef = useRef(false);
   const cartPanelRef = useRef(null);
-  const takeDropoffPayment = async (row) => {
+  // Right after Check In (owner: "I clicked check in and it just checked in the
+  // dog and that was it"): if there is something to sell for this visit, ASK
+  // — one tap either way. Nothing is asked when credits already cover the
+  // visit or it can't be paid with credits, so most check-ins stay one tap.
+  // Never blocks or undoes the check-in: any failure here is silent.
+  const offerPaymentAfterCheckIn = async (row) => {
+    try {
+      const { data: offer } = await api.get(`/bookings/${row.booking_id}/dropoff-pay-options`);
+      const pack = offer?.offer ? (offer.packs || [])[0] : null;
+      if (!pack) return;
+      const qty = Math.max(1, Number(pack.quantity || 1));
+      const who = (offer.dogs || []).filter(Boolean).join(" & ") || row.dog_name;
+      const ok = await confirm({
+        title: `Take payment now for ${who}?`,
+        body: `${qty > 1 ? `${qty} × ` : ""}${pack.name} — $${Number(pack.total ?? pack.price).toFixed(2)} covers this visit. `
+          + `${(offer.notes || []).join(" ")} Choose "Not now" to take payment at pickup as usual.`,
+        confirmText: "Take payment",
+        cancelText: "Not now",
+        tone: "info",   // a question, not a warning
+      });
+      if (ok) await takeDropoffPayment(row, offer);
+    } catch (_e) { /* the dog is checked in; payment can still be taken from the On-Site row */ }
+  };
+
+  const takeDropoffPayment = async (row, knownOffer = null) => {
     if (dropoffPayBusyRef.current) return;
     dropoffPayBusyRef.current = true;
     setDropoffPayBusyId(row.booking_id);
     try {
-      const { data: offer } = await api.get(`/bookings/${row.booking_id}/dropoff-pay-options`);
+      const offer = knownOffer || (await api.get(`/bookings/${row.booking_id}/dropoff-pay-options`)).data;
       const pack = offer?.offer ? (offer.packs || [])[0] : null;
       if (!pack) {
         // Covered by credits already, a dollars-only service, and so on: say why.
@@ -835,6 +859,9 @@ export default function Pos({ onOpenShopManager } = {}) {
       toast.success(`${row.dog_name} checked in`);
       loadRoster();
       if (selectedClient?.id === row.client_id) refreshClientInvoice(selectedClient.id);
+      setCheckInBusyId(null);
+      offerPaymentAfterCheckIn(row);   // asks only when there is something to sell; never blocks
+      return;
     } catch (e) {
       const detail = e.response?.data?.detail;
       const warn = vaccineWarningOf(e);

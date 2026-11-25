@@ -14,7 +14,8 @@ import Pos from "./Pos";
 jest.mock("../lib/api", () => ({ api: { get: jest.fn(), post: jest.fn() }, formatErr: (x) => String(x || "") }));
 jest.mock("../lib/auth", () => ({ useAuth: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
-jest.mock("../lib/useConfirm", () => ({ useConfirm: () => async () => true, ConfirmProvider: ({ children }) => children }));
+const mockConfirm = jest.fn(async () => true);
+jest.mock("../lib/useConfirm", () => ({ useConfirm: () => (...a) => mockConfirm(...a), ConfirmProvider: ({ children }) => children }));
 jest.mock("../lib/posAgent", () => ({ checkPosHealth: jest.fn(() => Promise.resolve({ ready: false })), printReceipt: jest.fn(), openDrawer: jest.fn() }));
 jest.mock("../components/PageHero", () => ({ __esModule: true, default: () => null }));
 jest.mock("../components/PendingActionsPanel", () => ({ __esModule: true, default: () => null }));
@@ -47,7 +48,12 @@ const OFFER = {
   packs: [{ id: "pk-1", name: "Single Day of Daycare", price: 25, qty: 1, quantity: 2, total: 50, covers: true, best_match: true }],
 };
 
-let offer, catalogCalls;
+let offer, dueOffer, catalogCalls;
+const DUE_OFFER = {
+  offer: true, reason: "", client_id: "c-2", client_name: "Dana", dogs: ["Juno"], credits_short: 1,
+  notes: ["A credit covers the whole day. A stay of 5 hours or less is only 50% of the day price when it is paid at pickup instead."],
+  packs: [{ id: "pk-1", name: "Single Day of Daycare", price: 25, qty: 1, quantity: 1, total: 25, covers: true, best_match: true }],
+};
 const GET = () => ({
   "/admin/register/status": { date: TODAY, status: "OPEN" },
   "/admin/register/day": { totals: {}, activity: [], register_closed: false, method_labels: {} },
@@ -57,12 +63,16 @@ const GET = () => ({
   "/admin/stripe-online-payments": { payments: [] }, "/clients/options": [],
   "/clients/c-1": { id: "c-1", name: "Chris", email: "chris@example.com" },
   "/bookings/bk-rex/dropoff-pay-options": offer,
+  "/bookings/bk-due/dropoff-pay-options": dueOffer,
+  "/clients/c-2": { id: "c-2", name: "Dana", email: "dana@example.com" },
 });
 
 let container, root;
 beforeEach(() => {
   jest.useFakeTimers();
   offer = OFFER;
+  dueOffer = DUE_OFFER;
+  mockConfirm.mockReset(); mockConfirm.mockImplementation(async () => true);
   catalogCalls = [];
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -163,4 +173,43 @@ test("a dog that has not arrived yet has no Take Payment button", async () => {
   await mount("expected");
   expect(q("pos-visit-checkin-bk-due")).toBeTruthy();
   expect(q("pos-visit-pay-bk-due")).toBeNull();
+});
+
+describe("right after Check In, staff are asked whether to take payment", () => {
+  test("Take payment loads the pack for the dog that just arrived", async () => {
+    await mount("expected");
+    await click("pos-visit-checkin-bk-due");
+    await settle();
+    expect(api.post.mock.calls.some(c => c[0] === "/bookings/bk-due/check-in")).toBe(true);
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    const asked = mockConfirm.mock.calls[0][0];
+    expect(asked.title).toBe("Take payment now for Juno?");
+    expect(asked.body).toMatch(/Single Day of Daycare — \$25\.00 covers this visit/);
+    expect(asked.body).toMatch(/5 hours or less/);
+    expect(asked).toMatchObject({ confirmText: "Take payment", cancelText: "Not now" });
+    expect(q("pos-cart-client").textContent).toMatch(/Dana/);
+    expect(all("pos-cart-line")).toHaveLength(1);
+    expect(q("pos-dropoff-notice").textContent).toMatch(/Single Day of Daycare for Juno/);
+  });
+
+  test("Not now leaves the cart alone; the dog is still checked in", async () => {
+    mockConfirm.mockImplementation(async () => false);
+    await mount("expected");
+    await click("pos-visit-checkin-bk-due");
+    await settle();
+    expect(api.post.mock.calls.some(c => c[0] === "/bookings/bk-due/check-in")).toBe(true);
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    expect(all("pos-cart-line")).toHaveLength(0);
+    expect(q("pos-dropoff-notice")).toBeNull();
+  });
+
+  test("nothing is asked when credits already cover the visit, or the question can't be answered", async () => {
+    dueOffer = { offer: false, covered: true, packs: [], reason: "Juno's visit is already covered by credits on the account." };
+    await mount("expected");
+    await click("pos-visit-checkin-bk-due");
+    await settle();
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(all("pos-cart-line")).toHaveLength(0);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });
