@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import InstallAppButton from "./InstallAppButton";
 
 /* Redesign Phase B — collapses the old row of permanent header buttons
@@ -8,13 +8,30 @@ import InstallAppButton from "./InstallAppButton";
 export default function ClientProfileMenu({ name, showHelp, onHelp, onLogout }) {
   const [open, setOpen] = useState(false);
   const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  const rootRef = useRef(null);
+
+  // A tap anywhere outside the menu (or Escape) closes it. This listens on the
+  // whole page: the old full-screen "close" layer sat inside the header, which
+  // traps fixed-position children, so it only ever covered the header strip.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <button
         onClick={() => setOpen((o) => !o)}
         data-testid="client-profile-menu-button"
         aria-label="Account menu"
+        aria-expanded={open}
         className="flex items-center gap-2 h-9 pl-1 pr-2.5 rounded-full border border-shBorder text-shText hover:border-shPrimary/50 transition"
         style={{ background: "var(--sh-card-base)" }}
       >
@@ -27,11 +44,6 @@ export default function ClientProfileMenu({ name, showHelp, onHelp, onLogout }) 
 
       {open && (
         <>
-          <button
-            className="fixed inset-0 z-40 cursor-default"
-            aria-label="Close menu"
-            onClick={() => setOpen(false)}
-          />
           <div
             className="absolute right-0 mt-2 w-56 z-50 rounded-xl border border-shBorder shadow-sh overflow-hidden"
             style={{ background: "var(--sh-card-base)" }}

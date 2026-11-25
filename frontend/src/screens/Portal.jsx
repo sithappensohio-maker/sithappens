@@ -1393,7 +1393,10 @@ export default function Portal() {
             is hidden); lower-value utility actions (How to Use / Install /
             Logout) moved into ClientProfileMenu instead of permanent
             buttons. Same underlying behaviour for all of them. */}
-        <header className="shrink-0 bg-bgHeader border-b border-shBorder flex items-center justify-between gap-3 px-3 sm:px-6 py-3 sh-theme-hero-client">
+        {/* `relative z-30`: the account menu drops down out of this header, over the
+            page below. Without it the home cards painted on top of the open menu
+            and Logout / Install App could not be seen or tapped on a phone. */}
+        <header className="relative z-30 shrink-0 bg-bgHeader border-b border-shBorder flex items-center justify-between gap-3 px-3 sm:px-6 py-3 sh-theme-hero-client">
           <div className="flex items-center gap-3 min-w-0">
             <img src="/logo.png" alt="Sit Happens" className="h-9 w-auto shrink-0 md:hidden" data-testid="portal-logo" />
             <div className="hidden sm:block min-w-0">
