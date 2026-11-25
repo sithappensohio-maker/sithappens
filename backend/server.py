@@ -61291,6 +61291,10 @@ events_domain.register_events_routes(
 # own checkout; see domains/bookings/pay_now.py.
 from domains.bookings.pay_now import BookingPayOptionsIn, register_pay_now_routes  # noqa: E402,F401
 globals().update(register_pay_now_routes(api=api, server_globals=globals()))
+# Taking payment at drop-off: which pack the Register should sell to cover a
+# checked-in visit (read-only; domains/bookings/dropoff_pay.py).
+from domains.bookings.dropoff_pay import register_dropoff_pay_routes  # noqa: E402
+globals().update(register_dropoff_pay_routes(api=api, server_globals=globals()))
 
 app.include_router(api)
 _cors = _cors_origins()

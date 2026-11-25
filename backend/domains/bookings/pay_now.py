@@ -69,6 +69,48 @@ async def options_for(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:
     return {"offer": True, "service_type": body.service_type, **credit, "addons": addons}
 
 
+def pack_option(item: dict, service_type: str, short: float) -> Optional[dict]:
+    """One catalogue pack as an offer for a visit that is `short` credits, or
+    None when it is not a pack of that kind. Shared by the client booking
+    screen and the Front Desk drop-off payment (dropoff_pay.py), so both
+    offer the same thing for the same shortfall.
+
+    Offered in the quantity that covers the visit: two single days for a
+    two-day booking, like putting two in the basket (owner request). Past
+    MAX_OF_ONE_PACK it is offered as one pack that covers part."""
+    if item.get("kind") != "credit_pack" or (item.get("service_type") or "daycare") != service_type:
+        return None
+    price = round(float(item.get("effective_price") or 0), 2)
+    qty = float(item.get("qty") or 0)
+    if price <= 0.005 or qty <= 0:
+        return None  # checkout refuses a $0 cart
+    count = max(1, math.ceil((short - 0.0001) / qty))
+    covers = count <= MAX_OF_ONE_PACK
+    if not covers:
+        count = 1
+    return {
+        "id": item["id"], "name": item.get("name") or "Credit pack",
+        "price": price, "qty": qty,
+        "quantity": count, "total": round(price * count, 2), "credits": round(qty * count, 2),
+        "display_quantity": item.get("display_quantity"),
+        "display_unit": item.get("display_unit"),
+        "display_dog_count": item.get("display_dog_count"),
+        "covers": covers,
+    }
+
+
+def rank_packs(packs: List[dict]) -> List[dict]:
+    """The option that MATCHES the visit first: the cheapest way to cover it
+    (two single days at $50 for a two-day booking, not a $220 ten-day pack;
+    the "2 dogs 1 day" pack at $37.50 for two dogs, not two singles at $50).
+    On a tie, the one that leaves the fewest spare credits, then the fewest
+    packs. Options that only cover part go last. Sorts in place."""
+    packs.sort(key=lambda p: (not p["covers"], p["total"], p["credits"], p["quantity"], p["name"]))
+    if packs and packs[0]["covers"]:
+        packs[0]["best_match"] = True
+    return packs
+
+
 def _days(body: BookingPayOptionsIn) -> int:
     return len(set(body.dates)) if (body.service_type == "daycare" and body.dates) else 1
 
@@ -147,43 +189,16 @@ async def _credit_part(g: dict, client: dict, body: BookingPayOptionsIn) -> dict
     db = g["db"]
     packs = []
     for item in catalog.get("items") or []:
-        if item.get("kind") != "credit_pack" or (item.get("service_type") or "daycare") != body.service_type:
+        option = pack_option(item, body.service_type, short)
+        if not option:
             continue
-        price = round(float(item.get("effective_price") or 0), 2)
-        if price <= 0.005:
-            continue  # checkout refuses a $0 cart
-        qty = float(item.get("qty") or 0)
-        if qty <= 0:
-            continue
-        # How many of this pack cover the booking: two single days for a
-        # two-day booking, like putting two in the Shop basket (owner request).
-        # Past MAX_OF_ONE_PACK it is offered as one pack that covers part.
-        count = max(1, math.ceil((short - 0.0001) / qty))
-        covers = count <= MAX_OF_ONE_PACK
-        if not covers:
-            count = 1
         doc = await db.credit_packs.find_one({"id": item["id"]}, {"_id": 0})
         try:
-            await g["_validate_shop_item_eligibility"](client, "credit_pack", doc, count)
+            await g["_validate_shop_item_eligibility"](client, "credit_pack", doc, option["quantity"])
         except HTTPException:
             continue  # checkout would refuse it, so it is not offered
-        packs.append({
-            "id": item["id"], "name": item.get("name") or "Credit pack",
-            "price": price, "qty": qty,
-            "quantity": count, "total": round(price * count, 2), "credits": round(qty * count, 2),
-            "display_quantity": item.get("display_quantity"),
-            "display_unit": item.get("display_unit"),
-            "display_dog_count": item.get("display_dog_count"),
-            "covers": covers,
-        })
-    # The option that MATCHES the booking first: the cheapest way to cover it
-    # (two single days at $50 for a two-day booking, not a $220 ten-day pack;
-    # the "2 dogs 1 day" pack at $37.50 for two dogs, not two singles at $50).
-    # On a tie, the one that leaves the fewest spare credits, then the fewest
-    # packs. Options that only cover part go last. The screen pre-selects the first.
-    packs.sort(key=lambda p: (not p["covers"], p["total"], p["credits"], p["quantity"], p["name"]))
-    if packs and packs[0]["covers"]:
-        packs[0]["best_match"] = True
+        packs.append(option)
+    rank_packs(packs)
     return {
         "pool_label": POOL_LABEL.get(body.service_type, body.service_type),
         "credits_needed": needed,

@@ -494,7 +494,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     return copy;
   });
   const removeLine = (i) => setCartLines((lines) => lines.filter((_, idx) => idx !== i));
-  const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); setPrintifyFulfillment(null); setPrintifyStockChoices({}); setPrintifyStockDecision(null); };
+  const resetCart = () => { setDropoffNotice(null); setCartLines([]); setDiscount(null); setPriced(null); setPrintifyFulfillment(null); setPrintifyStockChoices({}); setPrintifyStockDecision(null); };
 
   const [customOpen, setCustomOpen] = useState(false);
   // Step 4C-1 — a custom line must say what it IS: merchandise (taxable
@@ -758,6 +758,73 @@ export default function Pos({ onOpenShopManager } = {}) {
       toast.error(formatErr(e.response?.data?.detail) || "Could not open checkout");
     }
     setCheckoutLoadingId(null);
+  };
+
+  // ── Take payment at drop-off (owner request) ────────────────────────────
+  // For a dog that is here: ask the server which pack covers the visit
+  // (backend domains/bookings/dropoff_pay.py), pick the client and put that
+  // pack in the cart. The sale itself is the ordinary register sale below —
+  // cash with change, or the card reader — and pickup then uses the credits,
+  // so there is nothing to collect. Nothing here takes money by itself.
+  const [dropoffPayBusyId, setDropoffPayBusyId] = useState(null);
+  const [dropoffNotice, setDropoffNotice] = useState(null);   // what the cart's drop-off pack is for, and what it does not cover
+  const dropoffPayBusyRef = useRef(false);
+  const cartPanelRef = useRef(null);
+  const takeDropoffPayment = async (row) => {
+    if (dropoffPayBusyRef.current) return;
+    dropoffPayBusyRef.current = true;
+    setDropoffPayBusyId(row.booking_id);
+    try {
+      const { data: offer } = await api.get(`/bookings/${row.booking_id}/dropoff-pay-options`);
+      const pack = offer?.offer ? (offer.packs || [])[0] : null;
+      if (!pack) {
+        // Covered by credits already, a dollars-only service, and so on: say why.
+        (offer?.covered ? toast.success : toast.error)(offer?.reason || "There is nothing to take payment for on this visit right now.");
+        return;
+      }
+      if (cartLines.length > 0 && selectedClient?.id !== offer.client_id) {
+        toast.error("Finish or clear the sale in the cart first, then take this payment.");
+        return;
+      }
+      const { data: client } = await api.get(`/clients/${offer.client_id}`);
+      setSelectedClient(client); setClientQuery("");
+      refreshClientInvoice(client.id);
+      const items = await loadProducts(client.id);
+      resyncCartPricing(items);
+      const item = items.find((it) => it.kind === "credit_pack" && it.id === pack.id);
+      if (!item) {
+        toast.error(`${pack.name} isn't on the register right now. Take payment at pickup.`);
+        return;
+      }
+      const qty = Math.max(1, Number(pack.quantity || 1));
+      setCartLines((lines) => {
+        const line = {
+          kind: "credit_pack", pack_id: item.id, name: item.name, unit_price: item.effective_price,
+          list_price: item.list_price, has_price_override: item.has_price_override, qty,
+        };
+        const idx = lines.findIndex((l) => l.kind === "credit_pack" && l.pack_id === item.id);
+        // Pressed twice for the same visit: still the quantity that covers it, never double.
+        if (idx >= 0) { const copy = [...lines]; copy[idx] = { ...copy[idx], qty: Math.max(copy[idx].qty, qty) }; return copy; }
+        return [...lines, line];
+      });
+      const who = (offer.dogs || []).filter(Boolean).join(" & ") || row.dog_name;
+      // Credits cover the visit itself. What they do not cover (add-ons, a late
+      // fee, a short daycare day being cheaper at pickup) comes from the server
+      // and stays on screen by the cart until the sale is done — never a
+      // blanket "nothing to collect at pickup".
+      setDropoffNotice({
+        title: `${qty > 1 ? `${qty} × ` : ""}${item.name} for ${who}`,
+        body: "Take the payment below. Pickup will then use these credits for the visit.",
+        notes: offer.notes || [],
+      });
+      toast.success(`${qty > 1 ? `${qty} × ` : ""}${item.name} is in the cart for ${who}. Take the payment below.`);
+      cartPanelRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Could not set up the drop-off payment");
+    } finally {
+      dropoffPayBusyRef.current = false;
+      setDropoffPayBusyId(null);
+    }
   };
 
   const doCheckIn = async (row, vaccineAck = false) => {
@@ -2109,12 +2176,20 @@ export default function Pos({ onOpenShopManager } = {}) {
                       )}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  {/* Two buttons on an on-site row now: let them wrap under the chip on a phone, never push the name out. */}
+                  <div className="flex flex-wrap items-center justify-end gap-2 shrink sm:shrink-0 max-w-[55%] sm:max-w-none">
                     <FrontDeskStatusChip bucket={bucket} missed={missed} label={label}/>
                     {bucket === "expected" && (
                       <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
                               className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest shadow-[0_8px_22px_-10px_rgba(140,198,63,0.8)] hover:brightness-110 transition disabled:opacity-50">
                         {checkInBusyId === row.booking_id ? "Checking In…" : "Check In"}
+                      </button>
+                    )}
+                    {bucket === "on_site" && (
+                      <button onClick={() => takeDropoffPayment(row)} disabled={dropoffPayBusyId === row.booking_id}
+                              data-testid={`pos-visit-pay-${row.booking_id}`} title="Take payment now, at drop-off"
+                              className="bg-[var(--sh-card-base)] border border-shPrimary/60 text-shPrimary rounded-lg px-3 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest hover:bg-shPrimary/10 transition disabled:opacity-50">
+                        {dropoffPayBusyId === row.booking_id ? "Loading…" : "Take Payment"}
                       </button>
                     )}
                     {bucket === "on_site" && (
@@ -2448,7 +2523,19 @@ export default function Pos({ onOpenShopManager } = {}) {
               )}
             </div>
             {/* Who this sale belongs to — mirrors the client panel state. */}
-            <div className={`rounded-xl border px-3 py-2 mb-3 flex items-center gap-2.5 ${selectedClient ? "border-shSecondary/45 bg-shSecondary/[0.07]" : "border-shBorder/60 bg-black/15"}`} data-testid="pos-cart-client">
+            {dropoffNotice && cartLines.length > 0 && (
+              <div className="rounded-xl border border-shPrimary/50 bg-shPrimary/[0.08] px-3 py-2.5 mb-3 text-[13px]" data-testid="pos-dropoff-notice">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-shText font-black"><i className="fas fa-hand-holding-dollar text-shPrimary mr-1.5"/>Drop-off payment · {dropoffNotice.title}</p>
+                  <button type="button" onClick={() => setDropoffNotice(null)} aria-label="Hide this note" className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
+                </div>
+                <p className="text-shTextMuted mt-1">{dropoffNotice.body}</p>
+                {(dropoffNotice.notes || []).map((n, i) => (
+                  <p key={i} className="text-shText mt-1" data-testid="pos-dropoff-note"><i className="fas fa-circle-info text-shPrimary mr-1.5"/>{n}</p>
+                ))}
+              </div>
+            )}
+            <div ref={cartPanelRef} className={`rounded-xl border px-3 py-2 mb-3 flex items-center gap-2.5 ${selectedClient ? "border-shSecondary/45 bg-shSecondary/[0.07]" : "border-shBorder/60 bg-black/15"}`} data-testid="pos-cart-client">
               <span className={`w-8 h-8 rounded-lg grid place-items-center border shrink-0 ${selectedClient ? "border-shSecondary/50 bg-shSecondary/15 text-shSecondary" : "border-shBorder/60 bg-black/20 text-shTextMuted"}`}>
                 <i className={`fas ${selectedClient ? "fa-user" : "fa-person-walking"} text-[13px]`}/>
               </span>
