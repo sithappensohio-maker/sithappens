@@ -463,8 +463,10 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // that line can only be built once the booking exists: see book().
   const payAddonsLine = payAddons && payOptions?.addons ? payOptions.addons : null;
   const wantsToPay = !!selectedPayPack || !!payAddonsLine;
-  const payTotal = Number(selectedPayPack?.price || 0) + Number(payAddonsLine?.total || 0);
-  const payItemsKey = `${selectedPayPack?.id || ""}|${payAddonsLine ? "addons" : ""}`;
+  // A pack may be offered several at a time (two single days for a two-day
+  // booking): `quantity` of them, `total` for the lot.
+  const payTotal = Number(selectedPayPack?.total ?? selectedPayPack?.price ?? 0) + Number(payAddonsLine?.total || 0);
+  const payItemsKey = `${selectedPayPack?.id || ""}x${selectedPayPack?.quantity || 1}|${payAddonsLine ? "addons" : ""}`;
   // A different basket is a different purchase, so it gets its own key.
   useEffect(() => { payKeyRef.current = null; }, [payItemsKey]);
 
@@ -521,7 +523,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     // `booked` is the ids of the bookings just made (null when nothing was booked).
     if (!booked?.length || !pay) return;
     const items = [
-      ...(pay.pack ? [{ kind: "credit_pack", ref_id: pay.pack.id, quantity: 1 }] : []),
+      ...(pay.pack ? [{ kind: "credit_pack", ref_id: pay.pack.id, quantity: Math.max(1, Number(pay.pack.quantity || 1)) }] : []),
       ...(pay.addons ? [{ kind: "booking_addons", ref_id: `ba:${[...booked].sort().join(",")}`, quantity: 1 }] : []),
     ];
     if (items.length) { setPayCart(items); await startPayment(items); }
@@ -531,6 +533,47 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   const saveBooking = async () => {
     setFailure(null); setCapacityOffer(false); setSubmitting(true);
     try {
+      // Several days AND several dogs (owner request): each day is booked as
+      // its own multi-dog group, through the same endpoint a one-day group
+      // booking uses, so every dog/day gets the same checks and the same
+      // multi-dog pricing. A day that can't be booked is skipped with its
+      // reason; the other days still go through.
+      if (isMultiDate && serviceType === "daycare" && extraDogs.length > 0) {
+        const groupDogs = [
+          { dog_id: dogId, addon_service_ids: selectedAddonIds, notes },
+          ...extraDogs.map(e => ({ dog_id: e.dog_id, addon_service_ids: e.addon_service_ids || [], notes: e.notes || "" })),
+        ];
+        const made = [], skippedDays = [];
+        let daysBooked = 0;
+        for (const day of [...multiDates].sort()) {
+          try {
+            const { data } = await api.post("/bookings/group", {
+              dogs: groupDogs, date: day, service_type: "daycare", service_id: serviceId || undefined, notes,
+            });
+            made.push(...(data.bookings || []));
+            daysBooked += 1;
+          } catch (e) {
+            const f = bookingFailure(e);
+            skippedDays.push({ date: day, reason: f.message, block: f.block });
+          }
+        }
+        if (daysBooked === 0) {
+          const groups = groupSkips(skippedDays);
+          const lines = groups.map(g => `${g.dates.map(shortDate).join(", ")}: ${g.reason}`);
+          setFailure({ message: `None of those days could be booked. ${lines.join(" ")}`, block: groups[0]?.block || null });
+          setSubmitting(false);
+          return null;
+        }
+        onBooked && onBooked({ keepOpen: true });
+        setAcknowledgement({
+          kind: "multi", count: daysBooked, dogs: groupDogs.length,
+          skipped: skippedDays.length, waitlist_count: 0, waitlisted: false,
+          skipped_groups: groupSkips(skippedDays), booking: made[0] || null,
+        });
+        setStep(4);
+        setSubmitting(false);
+        return made.map(b => b.id).filter(Boolean);
+      }
       if (isMultiDate && serviceType === "daycare") {
         const { data } = await api.post("/bookings/multi-dates", {
           dog_id: dogId,
@@ -1142,15 +1185,17 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
 
             {/* Sprint 110di-38 — Multi-dog group booking. Same date + same
                 service for every dog; per-dog add-ons. Hidden when the user
-                only has one dog on their profile, or when multi-date daycare
-                mode is active (that branch already books N days × 1 dog and
-                we don't want to combine the two complexities). */}
-            {(dogs || []).length > 1 && !(isMultiDate && serviceType === "daycare") && (
+                only has one dog on their profile. Also offered when several
+                days are being booked: each day is then booked for every dog
+                (see saveBooking). */}
+            {(dogs || []).length > 1 && (
               <div className="border border-shBorder rounded-lg p-4 space-y-3" style={{ background: "var(--sh-card-base)" }} data-testid="wiz-multidog">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
-                    <p className="text-gray-400 text-[15px] mt-0.5">Add another dog to share the same date and service. Each dog can pick their own add-ons.</p>
+                    <p className="text-gray-400 text-[15px] mt-0.5">{isMultiDate && serviceType === "daycare"
+                      ? "Add another dog to come on the same days. Each dog can pick their own add-ons."
+                      : "Add another dog to share the same date and service. Each dog can pick their own add-ons."}</p>
                   </div>
                   {extraDogs.length + 1 < (dogs || []).length && (
                     <button onClick={addExtraDog} data-testid="wiz-add-dog"
@@ -1327,7 +1372,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 <PremiumButton variant={wantsToPay ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
                   {submitting ? "Booking…"
                     : (isMultiDate && serviceType==="daycare"
-                        ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
+                        ? (extraDogs.length > 0
+                            ? `Submit ${multiDates.length} day${multiDates.length===1?"":"s"} · ${1 + extraDogs.length} dogs`
+                            : `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`)
                         : extraDogs.length > 0
                           ? `Confirm booking · ${1 + extraDogs.length} dogs`
                           : "Confirm booking")}
@@ -1357,7 +1404,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
               </h2>
               <p className="text-[13px] text-gray-400 mt-1">
                 {acknowledgement.kind === "multi"
-                  ? `${acknowledgement.count} day${acknowledgement.count===1?"":"s"} booked${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to the waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} not booked`:""}. ${successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}`
+                  ? `${acknowledgement.count} day${acknowledgement.count===1?"":"s"} booked${Number(acknowledgement.dogs || 1) > 1 ? ` for ${acknowledgement.dogs} dogs` : ""}${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to the waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} not booked`:""}. ${successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}`
                   : acknowledgement.kind === "group"
                     ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · ${successDetail(outcomeForBooking(acknowledgement.booking))}`
                     : successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}

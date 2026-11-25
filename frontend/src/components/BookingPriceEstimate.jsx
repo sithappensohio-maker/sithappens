@@ -299,7 +299,10 @@ export default function BookingPriceEstimate({
     // Sprint 110di-38 — `addonsPerDog` flag: when the caller passes the
     // union of per-dog selections, we DO NOT multiply by dog count
     // (each entry already represents a single dog's choice).
-    const addonMultiplier = addonsPerDog ? 1 : Math.max(1, dogs);
+    // Booking several days books the add-ons on EVERY day, so they count once
+    // per day (this showed them once however many days were picked).
+    const addonDays = isMultiDate && serviceType === "daycare" ? Math.max(1, multiDates.length) : 1;
+    const addonMultiplier = (addonsPerDog ? 1 : Math.max(1, dogs)) * addonDays;
     const addonTotal = (addons || []).reduce(
       (sum, a) => sum + Number(a?.base_price || 0) * addonMultiplier,
       0

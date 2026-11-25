@@ -19,6 +19,13 @@ jest.mock("../lib/theme", () => ({
   useFeature: () => true,
 }));
 jest.mock("../lib/leavePage", () => ({ leaveTo: jest.fn() }));
+// The real picker is a calendar; these tests only need "these days were picked".
+jest.mock("./MultiDatePicker", () => ({
+  __esModule: true,
+  default: ({ onChange }) => (
+    <button data-testid="pick-days" onClick={() => onChange(["2031-05-05", "2031-05-06", "2031-05-07"])}>pick</button>
+  ),
+}));
 
 const { api } = require("../lib/api");
 const { leaveTo } = require("../lib/leavePage");
@@ -343,6 +350,72 @@ describe("add-ons can be paid for while booking", () => {
     await v.click("wiz-pay-addons-toggle");
     expect(v.q("wiz-confirm-pay")).toBeNull();
     expect(v.q("wiz-confirm").textContent).toBe("Confirm booking");
+    await v.cleanup();
+  });
+});
+
+describe("several of one pack, and several dogs on several days", () => {
+  const MOLLY = { id: "d-molly", name: "Molly", breed: "Lab" };
+  const THREE_SINGLES = { ...ONE, price: 25, quantity: 3, total: 75, credits: 3, covers: true, best_match: true };
+  const TEN = { id: "pk-10", name: "10 Days of Daycare", price: 220, qty: 10, quantity: 1, total: 220, credits: 10, covers: true };
+
+  async function threeDays(dogs) {
+    api.post.mockImplementation((url, body) => {
+      if (url === "/portal/booking-pay-options") return Promise.resolve({ data: { ...SHORT, credits_needed: 3, credits_short: 3, packs: [THREE_SINGLES, TEN] } });
+      if (url === "/bookings/multi-dates") return Promise.resolve({ data: { created: [{ id: "b-1" }, { id: "b-2" }, { id: "b-3" }], skipped: [] } });
+      if (url === "/bookings/group") {
+        if (body.date === "2031-05-06") return Promise.reject({ response: { status: 409, data: { detail: "That day is full." } } });
+        return Promise.resolve({ data: { group_id: `g-${body.date}`, bookings: body.dogs.map(d => ({ id: `${body.date}_${d.dog_id}` })) } });
+      }
+      if (url === "/shop/checkout") return checkout();
+      return Promise.resolve({ data: {} });
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<PortalBookWizard dogs={dogs} seed={{ dog_id: ROSIE.id, service_id: DAYCARE.id }}
+                                    onClose={() => {}} onBooked={() => {}} />);
+    });
+    await flush();
+    const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+    const click = async (id) => {
+      if (!q(id)) throw new Error(`no [data-testid="${id}"]`);
+      await act(async () => { q(id).click(); });
+      await flush();
+    };
+    await click("wiz-step1-next");
+    await click("wiz-multidate-toggle");
+    await click("pick-days");
+    await click("wiz-step2-next");
+    return { q, click, cleanup: () => act(() => root.unmount()) };
+  }
+
+  test("three single days are offered and bought as quantity 3", async () => {
+    const v = await threeDays([ROSIE]);
+    expect(posts("/portal/booking-pay-options").pop()[1].dates).toHaveLength(3);
+    expect(v.q("wiz-pay-pack-pk-1").textContent).toMatch(/3 × Single Day.*3 credits in all · \$25\.00 each.*\$75\.00/);
+    expect(v.q("wiz-pay-pack-pk-1").getAttribute("aria-checked")).toBe("true");
+    expect(v.q("wiz-confirm-pay").textContent).toMatch(/Book & pay \$75\.00 now/);
+    await v.click("wiz-confirm-pay");
+    expect(posts("/bookings/multi-dates")).toHaveLength(1);
+    expect(posts("/shop/checkout")[0][1].items).toEqual([{ kind: "credit_pack", ref_id: "pk-1", quantity: 3 }]);
+    await v.cleanup();
+  });
+
+  test("a second dog can be added when booking several days; each day is booked for both, a full day is skipped", async () => {
+    const v = await threeDays([ROSIE, MOLLY]);
+    expect(v.q("wiz-multidog")).toBeTruthy();
+    await v.click("wiz-add-dog");
+    expect(posts("/portal/booking-pay-options").pop()[1]).toMatchObject({ dog_count: 2 });
+    expect(v.q("wiz-confirm").textContent).toMatch(/Submit 3 days · 2 dogs/);
+    await v.click("wiz-confirm");
+    const days = posts("/bookings/group");
+    expect(days.map(c => c[1].date)).toEqual(["2031-05-05", "2031-05-06", "2031-05-07"]);
+    expect(days[0][1].dogs.map(d => d.dog_id)).toEqual([ROSIE.id, MOLLY.id]);
+    expect(posts("/bookings/multi-dates")).toHaveLength(0);
+    expect(v.q("wiz-step4-ack").textContent).toMatch(/2 days booked for 2 dogs/);
+    expect(v.q("wiz-ack-skipped").textContent).toMatch(/That day is full/);
     await v.cleanup();
   });
 });

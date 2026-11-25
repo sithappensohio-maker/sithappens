@@ -106,7 +106,8 @@ def test_two_dogs_and_several_days_count_the_real_credits():
         out = _options(c, dog_count=2, dates=["2027-03-10", "2027-03-11", "2027-03-12"])
         assert out["credits_needed"] == 4.5 and out["credits_short"] == 2.5
         offered = _mine(out, small, big)
-        assert [(p["id"], p["covers"]) for p in offered] == [(big["id"], True), (small["id"], False)]
+        # Two of the small pack ($140, 4 credits) cover it for less than one big pack ($150).
+        assert [(p["id"], p["quantity"], p["total"], p["covers"]) for p in offered] ==             [(small["id"], 2, 140.0, True), (big["id"], 1, 150.0, True)]
 
 
 def test_boarding_counts_nights_against_boarding_credits():
@@ -267,10 +268,35 @@ def test_the_pack_that_matches_the_booking_comes_first():
             _pack(qty=10, price=220.0) as ten, _pack(qty=15, price=375.0) as fifteen, \
             _pack(qty=1.5, price=37.5) as match:
         offered = _mine(_options(c, dog_count=2), single, ten, fifteen, match)
-        assert [p["id"] for p in offered] == [match["id"], ten["id"], fifteen["id"], single["id"]]
+        assert [(p["id"], p["quantity"], p["total"]) for p in offered] ==             [(match["id"], 1, 37.5), (single["id"], 2, 50.0), (ten["id"], 1, 220.0), (fifteen["id"], 1, 375.0)]
         assert offered[0].get("best_match") is True
         assert not any(p.get("best_match") for p in offered[1:])
-        assert offered[-1]["covers"] is False
+        assert all(p["covers"] for p in offered)
+
+
+def test_two_days_offers_two_single_days_not_the_ten_day_pack():
+    # The owner's screenshot: one dog, two days, no credits.
+    with _stripe() as calls, _client(credits=0) as c, _pack(qty=1, price=25.0) as single,             _pack(qty=10, price=220.0) as ten, _pack(qty=1.5, price=37.5) as two_dog:
+        out = _options(c, dates=["2027-03-10", "2027-03-11"])
+        offered = _mine(out, single, ten, two_dog)
+        assert [(p["id"], p["quantity"], p["total"], p["credits"]) for p in offered] ==             [(single["id"], 2, 50.0, 2.0), (two_dog["id"], 2, 75.0, 3.0), (ten["id"], 1, 220.0, 10.0)]
+        assert offered[0]["best_match"] is True
+        # Buying it is the Shop checkout with quantity 2: one order, $50.
+        order = run(server.create_shop_checkout(server.ShopCheckoutIn(
+            items=[server.ShopCartItemIn(kind="credit_pack", ref_id=single["id"], quantity=offered[0]["quantity"])],
+            idempotency_key=f"book-pay-{uuid.uuid4().hex}"), _user(c)))
+        saved = run(server.db.shop_orders.find_one({"id": order["order_id"]}, {"_id": 0}))
+        assert saved["total"] == 50.0 and saved["lines"][0]["quantity"] == 2 and len(calls) == 1
+
+
+def test_a_cheaper_bigger_pack_beats_many_small_ones_and_huge_counts_are_not_offered():
+    with _stripe(), _client(credits=0) as c, _pack(qty=1, price=25.0) as single, _pack(qty=10, price=220.0) as ten:
+        nine = [f"2027-03-{d:02d}" for d in range(10, 19)]
+        offered = _mine(_options(c, dates=nine), single, ten)
+        assert [(p["id"], p["quantity"], p["total"]) for p in offered] == [(ten["id"], 1, 220.0), (single["id"], 9, 225.0)]
+        many = [f"2027-04-{d:02d}" for d in range(1, 26)]   # 25 days
+        offered = _mine(_options(c, dates=many), single, ten)
+        assert [(p["id"], p["quantity"], p["covers"]) for p in offered] == [(ten["id"], 3, True), (single["id"], 1, False)]
 
 
 # ---------------------------------------------------------------------------

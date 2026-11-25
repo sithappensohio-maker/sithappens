@@ -56,17 +56,20 @@ export default function BookingPayNow({ options, selectedId, onSelect, payAddons
               <i className={`${on ? "fas fa-circle-dot text-shSecondary" : "far fa-circle text-shTextMuted"} shrink-0`}/>
               <span className="flex-1 min-w-0">
                 <span className="block text-[14px] font-black text-shText break-words">
-                  {p.name}
+                  {Number(p.quantity || 1) > 1 ? `${p.quantity} × ` : ""}{p.name}
                   {p.best_match && (
                     <span className="ml-2 align-middle text-[10px] font-black uppercase tracking-widest text-shSecondary border border-shSecondary/50 rounded px-1.5 py-0.5"
                           data-testid={`wiz-pay-best-${p.id}`}>Matches this booking</span>
                   )}
                 </span>
                 <span className="block text-[12px] text-shTextMuted">
-                  {packSize(p)} · {p.covers ? "covers this booking" : "covers part of this booking"}
+                  {/* Several of one pack (two single days for a two-day booking): say what the lot is. */}
+                  {Number(p.quantity || 1) > 1
+                    ? `${credits(p.credits ?? p.qty * p.quantity)} in all · $${Number(p.price).toFixed(2)} each`
+                    : packSize(p)} · {p.covers ? "covers this booking" : "covers part of this booking"}
                 </span>
               </span>
-              <span className="text-[15px] font-black text-shPrimary whitespace-nowrap">${Number(p.price).toFixed(2)}</span>
+              <span className="text-[15px] font-black text-shPrimary whitespace-nowrap">${Number(p.total ?? p.price).toFixed(2)}</span>
             </button>
           );
         })}

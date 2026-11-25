@@ -47,7 +47,7 @@ from fastapi import HTTPException
 
 KIND = "booking_addons"
 PREFIX = "ba:"
-MAX_BOOKINGS = 40
+MAX_BOOKINGS = 120   # several dogs on several days is one booking per dog per day
 OPEN_STATUSES = ("pending", "approved")
 PAID_SUFFIX = " (paid online)"
 

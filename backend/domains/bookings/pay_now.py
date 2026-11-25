@@ -28,12 +28,15 @@ get no offer: there is no bill to pay against until staff check the dog out.
 """
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from domains.bookings import credits_promised
+
+MAX_OF_ONE_PACK = 20   # the most of one pack offered in a single press
 
 POOL_LABEL = {"daycare": "daycare", "boarding": "boarding", "training": "training"}
 
@@ -149,25 +152,36 @@ async def _credit_part(g: dict, client: dict, body: BookingPayOptionsIn) -> dict
         price = round(float(item.get("effective_price") or 0), 2)
         if price <= 0.005:
             continue  # checkout refuses a $0 cart
+        qty = float(item.get("qty") or 0)
+        if qty <= 0:
+            continue
+        # How many of this pack cover the booking: two single days for a
+        # two-day booking, like putting two in the Shop basket (owner request).
+        # Past MAX_OF_ONE_PACK it is offered as one pack that covers part.
+        count = max(1, math.ceil((short - 0.0001) / qty))
+        covers = count <= MAX_OF_ONE_PACK
+        if not covers:
+            count = 1
         doc = await db.credit_packs.find_one({"id": item["id"]}, {"_id": 0})
         try:
-            await g["_validate_shop_item_eligibility"](client, "credit_pack", doc, 1)
+            await g["_validate_shop_item_eligibility"](client, "credit_pack", doc, count)
         except HTTPException:
             continue  # checkout would refuse it, so it is not offered
-        qty = float(item.get("qty") or 0)
         packs.append({
             "id": item["id"], "name": item.get("name") or "Credit pack",
             "price": price, "qty": qty,
+            "quantity": count, "total": round(price * count, 2), "credits": round(qty * count, 2),
             "display_quantity": item.get("display_quantity"),
             "display_unit": item.get("display_unit"),
             "display_dog_count": item.get("display_dog_count"),
-            "covers": qty + 0.0001 >= short,
+            "covers": covers,
         })
-    # The pack that MATCHES the booking first: of the packs that cover it, the
-    # smallest one (2 dogs for 1 day → the "2 dogs 1 day" pack, not a 10-day
-    # pack), cheapest on a tie. Then the bigger packs, then any that only
-    # cover part of it (biggest first). The screen pre-selects the first one.
-    packs.sort(key=lambda p: (not p["covers"], p["qty"] if p["covers"] else -p["qty"], p["price"], p["name"]))
+    # The option that MATCHES the booking first: the cheapest way to cover it
+    # (two single days at $50 for a two-day booking, not a $220 ten-day pack;
+    # the "2 dogs 1 day" pack at $37.50 for two dogs, not two singles at $50).
+    # On a tie, the one that leaves the fewest spare credits, then the fewest
+    # packs. Options that only cover part go last. The screen pre-selects the first.
+    packs.sort(key=lambda p: (not p["covers"], p["total"], p["credits"], p["quantity"], p["name"]))
     if packs and packs[0]["covers"]:
         packs[0]["best_match"] = True
     return {
