@@ -39,14 +39,6 @@ POOL_LABEL = {"daycare": "daycare", "boarding": "boarding", "training": "trainin
 
 NO_OFFER = {"offer": False, "packs": []}
 
-# OFF until pickup uses money on account by itself (step 3). Today staff
-# checkout only does that by hand, and only for a one-dog visit not paid by
-# credits ("Partial / on tab") — so a client who paid for add-ons ahead could
-# be asked for the same money again at the desk. While this is False the
-# add-on part of the offer is never returned and nothing on screen changes;
-# the pack offer is unaffected. Turn it on together with step 3.
-ADDONS_PAY_AHEAD_READY = False
-
 
 class BookingPayOptionsIn(BaseModel):
     service_type: str
@@ -79,13 +71,15 @@ def _days(body: BookingPayOptionsIn) -> int:
 
 
 async def _addon_part(g: dict, client: dict, body: BookingPayOptionsIn) -> Optional[dict]:
-    """The add-on dollars for this booking, payable ahead as money on the
-    account (domains/shop/account_credit.py). Add-ons are dollars, never
-    credits, so this is offered whether or not credits cover the visit.
-    Priced by the same resolver the booking and the estimate use, so the
-    client's own add-on prices apply."""
-    if not ADDONS_PAY_AHEAD_READY:
-        return None
+    """What this booking's add-ons will cost, to SHOW before the booking is
+    saved. Add-ons are dollars, never credits, so this is offered whether or
+    not credits cover the visit. Priced by the same resolver the booking
+    uses, so the client's own add-on prices apply.
+
+    This number is only shown. What is actually charged is read from the
+    saved bookings themselves when the card payment starts
+    (domains/shop/booking_addons.py), and the paid add-ons are then marked
+    "(paid online)" at $0 on those bookings so pickup charges nothing more."""
     counts: dict = {}
     for sid in body.addon_service_ids:
         if sid:
@@ -107,10 +101,9 @@ async def _addon_part(g: dict, client: dict, body: BookingPayOptionsIn) -> Optio
             continue
         lines.append({"name": a.get("name") or a.get("service_name") or "Add-on", "count": times, "amount": amount})
         total = round(total + amount, 2)
-    account_credit = g["shop_account_credit"]
-    if not (account_credit.MIN_AMOUNT <= total <= account_credit.MAX_AMOUNT):
-        return None  # nothing to pay, or more than can be paid ahead online
-    return {"total": total, "ref_id": account_credit.ref_id_for(total), "lines": lines}
+    if total <= 0.005:
+        return None  # nothing to pay
+    return {"total": total, "lines": lines}
 
 
 async def _credit_part(g: dict, client: dict, body: BookingPayOptionsIn) -> dict:

@@ -22,8 +22,8 @@ from domains.shop.shipping import ShopShippingAddressIn
 
 
 class ShopCartItemIn(BaseModel):
-    # "account_credit" = money paid ahead onto the account (domains/shop/account_credit.py).
-    kind: Literal["product", "credit_pack", "training_program", "gift_card", "account_credit"]
+    # "booking_addons" = a booking's add-ons paid online (domains/shop/booking_addons.py).
+    kind: Literal["product", "credit_pack", "training_program", "gift_card", "booking_addons"]
     ref_id: str = Field(min_length=1)
     quantity: int = Field(ge=1, le=50)
     # product lines only — which size/color/option. Required for a Printify
@@ -165,7 +165,7 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
         variant_id = (it.variant_id or "").strip() or None if kind == "product" else None
         personalization = {k: (v or "").strip() for k, v in (it.personalization or {}).items()} if kind == "product" else None
         personalization = personalization or None
-        if kind not in ("product", "credit_pack", "training_program", "gift_card", "account_credit"):
+        if kind not in ("product", "credit_pack", "training_program", "gift_card", "booking_addons"):
             raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
         if not ref_id:
             raise HTTPException(status_code=422, detail="Invalid item in cart.")

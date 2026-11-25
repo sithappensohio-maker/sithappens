@@ -457,15 +457,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, serviceType, date, endDate, isMultiDate, multiDatesKey, extraDogs.length, pickupTime, willWaitlist, allAddonIdsKey]);
   const selectedPayPack = (payOptions?.packs || []).find(p => p.id === payPackId) || null;
-  // Add-on dollars are paid ahead as money on the account
-  // (backend domains/shop/account_credit.py) — in the SAME card payment as the pack.
+  // Add-ons are paid in the SAME card payment as the pack. They are paid for
+  // the SAVED bookings (the server reads the amount from them and then marks
+  // those add-ons "paid online" — backend domains/shop/booking_addons.py), so
+  // that line can only be built once the booking exists: see book().
   const payAddonsLine = payAddons && payOptions?.addons ? payOptions.addons : null;
-  const payItems = [
-    ...(selectedPayPack ? [{ kind: "credit_pack", ref_id: selectedPayPack.id, quantity: 1 }] : []),
-    ...(payAddonsLine ? [{ kind: "account_credit", ref_id: payAddonsLine.ref_id, quantity: 1 }] : []),
-  ];
+  const wantsToPay = !!selectedPayPack || !!payAddonsLine;
   const payTotal = Number(selectedPayPack?.price || 0) + Number(payAddonsLine?.total || 0);
-  const payItemsKey = payItems.map(i => `${i.kind}:${i.ref_id}`).join("|");
+  const payItemsKey = `${selectedPayPack?.id || ""}|${payAddonsLine ? "addons" : ""}`;
   // A different basket is a different purchase, so it gets its own key.
   useEffect(() => { payKeyRef.current = null; }, [payItemsKey]);
 
@@ -514,15 +513,21 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // Confirm. With `items` to pay for, the booking is saved first and only then is the
   // card page opened — so a client who backs out of paying still has the
   // booking, exactly as if they had pressed "Confirm booking".
-  const book = async (items = null) => {
+  const book = async (pay = null) => {
     if (bookBusyRef.current) return;
     bookBusyRef.current = true;
     let booked = false;
     try { booked = await saveBooking(); } finally { bookBusyRef.current = false; }
-    if (booked && items?.length) { setPayCart(items); await startPayment(items); }
+    // `booked` is the ids of the bookings just made (null when nothing was booked).
+    if (!booked?.length || !pay) return;
+    const items = [
+      ...(pay.pack ? [{ kind: "credit_pack", ref_id: pay.pack.id, quantity: 1 }] : []),
+      ...(pay.addons ? [{ kind: "booking_addons", ref_id: `ba:${[...booked].sort().join(",")}`, quantity: 1 }] : []),
+    ];
+    if (items.length) { setPayCart(items); await startPayment(items); }
   };
 
-  // Returns true only when a real booking was made (not a waitlist entry, not a refusal).
+  // Returns the ids of the bookings made, or null (a waitlist entry or a refusal books nothing).
   const saveBooking = async () => {
     setFailure(null); setCapacityOffer(false); setSubmitting(true);
     try {
@@ -549,7 +554,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
             block: groups[0]?.block || null,
           });
           setSubmitting(false);
-          return false;
+          return null;
         }
         // Refresh parent in background but keep wizard open on step 4.
         onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped, keepOpen: true });
@@ -562,7 +567,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         });
         setStep(4);
         setSubmitting(false);
-        return c > 0;
+        return (data.created || []).map(b => b.id).filter(Boolean);
       }
       const body = {
         dog_id: dogId,
@@ -586,7 +591,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         onBooked && onBooked({ keepOpen: true });
         setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
         setStep(4);
-        return false;
+        return null;
       }
 
       // Sprint 110di-38 — Multi-dog branch. When the user has added one or
@@ -626,7 +631,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
           waitlisted: !!willWaitlist,
         });
         setStep(4);
-        return true;
+        return (groupResp.bookings || []).map(b => b.id).filter(Boolean);
       }
 
       const { data: created } = await api.post("/bookings", body);
@@ -637,13 +642,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
         waitlisted: !!willWaitlist,
       });
       setStep(4);
-      return true;
+      return created?.id ? [created.id] : null;
     } catch (e) {
       const f = bookingFailure(e);
       setFailure(f);
       // Full at Confirm: ASK before putting them on the waitlist.
       setCapacityOffer(f.block?.code === "capacity_full" && !!f.block?.waitlist_allowed && waitlistEnabled);
-      return false;
+      return null;
     } finally { setSubmitting(false); }
   };
 
@@ -1319,17 +1324,17 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 <i className="fas fa-arrow-left"/>Back
               </PremiumButton>
               <div className="flex flex-wrap justify-end gap-2">
-                <PremiumButton variant={payItems.length ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
+                <PremiumButton variant={wantsToPay ? "secondary" : "primary"} onClick={() => book()} disabled={submitting || paying} data-testid="wiz-confirm">
                   {submitting ? "Booking…"
                     : (isMultiDate && serviceType==="daycare"
                         ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
                         : extraDogs.length > 0
                           ? `Confirm booking · ${1 + extraDogs.length} dogs`
                           : "Confirm booking")}
-                  {payItems.length && !submitting ? " · pay later" : ""}
+                  {wantsToPay && !submitting ? " · pay later" : ""}
                 </PremiumButton>
-                {payItems.length > 0 && (
-                  <PremiumButton variant="primary" onClick={() => book(payItems)} disabled={submitting || paying} data-testid="wiz-confirm-pay">
+                {wantsToPay && (
+                  <PremiumButton variant="primary" onClick={() => book({ pack: selectedPayPack, addons: !!payAddonsLine })} disabled={submitting || paying} data-testid="wiz-confirm-pay">
                     <i className="fas fa-credit-card"/>Book & pay ${payTotal.toFixed(2)} now
                   </PremiumButton>
                 )}

@@ -280,7 +280,7 @@ describe("the pack that matches the booking is the one selected", () => {
 
 describe("add-ons can be paid for while booking", () => {
   const BATH = { id: "ad-bath", name: "Bath", base_price: 15, is_addon: true, active: true };
-  const ADDONS = { total: 15, ref_id: "ac-1500", lines: [{ name: "Bath", count: 1, amount: 15 }] };
+  const ADDONS = { total: 15, lines: [{ name: "Bath", count: 1, amount: 15 }] };
 
   async function reviewWithBath(options) {
     api.get.mockImplementation((url) => {
@@ -319,7 +319,7 @@ describe("add-ons can be paid for while booking", () => {
     expect(v.q("wiz-confirm-pay").textContent).toMatch(/Book & pay \$15\.00 now/);
     await v.click("wiz-confirm-pay");
     expect(posts("/bookings")).toHaveLength(1);
-    expect(posts("/shop/checkout")[0][1].items).toEqual([{ kind: "account_credit", ref_id: "ac-1500", quantity: 1 }]);
+    expect(posts("/shop/checkout")[0][1].items).toEqual([{ kind: "booking_addons", ref_id: "ba:b-1", quantity: 1 }]);
     await v.cleanup();
   });
 
@@ -333,7 +333,7 @@ describe("add-ons can be paid for while booking", () => {
     expect(posts("/shop/checkout")).toHaveLength(1);
     expect(posts("/shop/checkout")[0][1].items).toEqual([
       { kind: "credit_pack", ref_id: "pk-1", quantity: 1 },
-      { kind: "account_credit", ref_id: "ac-1500", quantity: 1 },
+      { kind: "booking_addons", ref_id: "ba:b-1", quantity: 1 },
     ]);
     await v.cleanup();
   });

@@ -38,10 +38,11 @@ _logger = logging.getLogger(__name__)
 
 REPAIR_JOB = "shop_income_split"   # scheduler job + its once-a-day marker; a restore clears it
 ENTITLEMENT_KINDS = ("credit_pack", "training_program")
-# Money paid ahead onto the account (domains/shop/account_credit.py) is not
-# merchandise either: it gets its own row, filed as a Tab Payment — exactly
-# what the same payment taken at the desk is filed as.
-PAID_AHEAD_KIND = "account_credit"
+# A booking's add-ons paid online (domains/shop/booking_addons.py) are not
+# merchandise either: they get their own row, filed with payments toward
+# visits (never taxed, never Retail). The visit's checkout then has nothing
+# to add for them, so the money is counted once.
+PAID_AHEAD_KIND = "booking_addons"
 OWN_ROW_KINDS = ENTITLEMENT_KINDS + (PAID_AHEAD_KIND,)
 SETTLE_MINUTES = 10                # leave orders being paid right now to their own webhook
 INCOME_REF_INDEX = ("shop_income_ref", {"unique": True, "partialFilterExpression": {"shop_income_ref": {"$type": "string"}}})
@@ -72,7 +73,7 @@ def _unit_rows(order: dict, base: dict) -> List[dict]:
                    "shop_income_ref": unit_ref(order["id"], line["item_id"], n)}
             if line["kind"] == PAID_AHEAD_KIND:
                 row.update(source_kind="tab_payment", category="Tab Payment",
-                           description=f"Paid ahead online · {tag}", notes=tag)
+                           description=f"Add-ons paid online · {tag}", notes=tag)
             elif line["kind"] == "credit_pack":
                 row.update(source_kind="credit_pack_sale", pack_id=line.get("ref_id"), pack_name=line.get("name"),
                            description=f"Credit Pack · {line.get('name')}", note=tag)

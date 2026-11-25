@@ -274,36 +274,9 @@ def test_the_pack_that_matches_the_booking_comes_first():
 
 
 # ---------------------------------------------------------------------------
-# Add-ons: dollars paid ahead as money on the account
+# Add-ons: what they will cost, shown before the booking is saved. Paying for
+# them is test_shop_booking_addons.py.
 # ---------------------------------------------------------------------------
-
-from domains.bookings import pay_now as _pay_now
-
-
-@contextlib.contextmanager
-def _addons_switch(on):
-    saved = _pay_now.ADDONS_PAY_AHEAD_READY
-    _pay_now.ADDONS_PAY_AHEAD_READY = on
-    try:
-        yield
-    finally:
-        _pay_now.ADDONS_PAY_AHEAD_READY = saved
-
-
-def setup_function(fn):
-    """The add-on tests below run with the switch ON (it ships OFF until pickup uses the money by itself)."""
-    _pay_now.ADDONS_PAY_AHEAD_READY = "addon" in fn.__name__
-
-
-def teardown_function(fn):
-    _pay_now.ADDONS_PAY_AHEAD_READY = False
-
-
-def test_paying_extras_ahead_is_off_until_pickup_can_use_the_money():
-    assert _pay_now.ADDONS_PAY_AHEAD_READY is False, "ships OFF: turn on together with step 3"
-    with _addons_switch(False), _stripe(), _client(credits=5) as c, _addon(15.0) as bath:
-        assert _options(c, addon_service_ids=[bath["id"]]) == {"offer": False, "packs": []}
-
 
 @contextlib.contextmanager
 def _addon(price=15.0, addon_for=("daycare",), **kw):
@@ -320,7 +293,7 @@ def test_addons_can_be_paid_ahead_even_when_credits_cover_the_visit():
     with _stripe(), _client(credits=5) as c, _addon(15.0) as bath:
         out = _options(c, addon_service_ids=[bath["id"]])
         assert out["offer"] is True and out["packs"] == []
-        assert out["addons"]["total"] == 15.0 and out["addons"]["ref_id"] == "ac-1500"
+        assert out["addons"]["total"] == 15.0
         assert out["addons"]["lines"] == [{"name": bath["name"], "count": 1, "amount": 15.0}]
     with _stripe(), _client(credits=5) as c:
         assert _options(c) == {"offer": False, "packs": []}, "no add-ons and covered: still nothing new"
@@ -335,8 +308,8 @@ def test_addons_are_counted_per_dog_and_per_day_alongside_the_packs():
         assert out["addons"]["total"] == 45.0 and out["addons"]["lines"][0]["count"] == 3
 
 
-def test_addon_money_is_the_customers_own_price_and_goes_through_the_one_checkout():
-    with _stripe() as calls, _client(credits=0) as c, _pack(qty=1, price=40.0) as pack, _addon(15.0) as bath:
+def test_addon_amount_shown_is_the_customers_own_price():
+    with _stripe(), _client(credits=0) as c, _pack(qty=1, price=40.0), _addon(15.0) as bath:
         real = server.pricing_domain_services.resolve_client_price
 
         async def _locked(client_id, kind, ref_id, list_price, **kw):
@@ -349,12 +322,6 @@ def test_addon_money_is_the_customers_own_price_and_goes_through_the_one_checkou
         finally:
             server.pricing_domain_services.resolve_client_price = real
         assert out["addons"]["total"] == 12.0
-        order = run(server.create_shop_checkout(server.ShopCheckoutIn(
-            items=[server.ShopCartItemIn(kind="credit_pack", ref_id=pack["id"], quantity=1),
-                   server.ShopCartItemIn(kind="account_credit", ref_id=out["addons"]["ref_id"], quantity=1)],
-            idempotency_key=f"book-pay-{uuid.uuid4().hex}"), _user(c)))
-        saved = run(server.db.shop_orders.find_one({"id": order["order_id"]}, {"_id": 0}))
-        assert saved["total"] == 52.0 and len(calls) == 1, "one card page for the pack and the add-on together"
 
 
 def test_no_addon_offer_for_a_bad_addon_or_with_card_payments_off():

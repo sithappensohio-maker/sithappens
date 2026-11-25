@@ -113,7 +113,7 @@ from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
-from domains.shop import account_credit as shop_account_credit
+from domains.shop import booking_addons as shop_booking_addons
 from domains.shop import income as shop_income
 from domains.printify import client as printify_client
 from domains.shop import discount_codes as shop_discount_codes
@@ -5750,6 +5750,7 @@ async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
     if not res.matched_count:
         raise await booking_guards.changed_refusal(db, booking_id, what="declined")
     booking["status"] = "rejected"
+    await _flag_paid_addons_of_closed_booking(booking_id)
     # Best-effort notification — approve already emails the client, reject
     # never did, leaving a declined request with no explanation.
     try:
@@ -5775,9 +5776,20 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
     # and then update money/credits in conflicting directions.
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
-        return await _cancel_booking_impl(booking_id, forfeit, user, undo_check_in)
+        out = await _cancel_booking_impl(booking_id, forfeit, user, undo_check_in)
     finally:
         await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
+    await _flag_paid_addons_of_closed_booking(booking_id)
+    return out
+
+
+async def _flag_paid_addons_of_closed_booking(booking_id: str) -> None:
+    """Add-ons paid online on a booking that was just cancelled or declined are
+    owed back: the online order goes to "needs attention". Never blocks the cancel."""
+    try:
+        await shop_booking_addons.on_booking_closed(booking_id)
+    except Exception as exc:
+        logger.warning("could not flag paid add-ons for closed booking %s: %s", booking_id, exc)
 
 
 async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_check_in: bool = False):
@@ -7056,6 +7068,7 @@ async def remove_booking_addon(
     addons = list(booking.get("add_ons") or [])
     if addon_index < 0 or addon_index >= len(addons):
         raise HTTPException(status_code=404, detail="Add-on not found at that index")
+    shop_booking_addons.refuse_removal(addons[addon_index])   # paid online: refund that first
     addons.pop(addon_index)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": addons}})
     booking["add_ons"] = addons
@@ -41420,8 +41433,8 @@ async def _validate_shop_refund_entitlements(order: dict, line_refunds: list[dic
         if kind == "gift_card":  # every card it bought must still be unspent
             await gift_card_shop.assert_refundable(order, line)
             continue
-        if kind == shop_account_credit.KIND:  # the money must still be unused on the account
-            await shop_account_credit.assert_refundable(order, line)
+        if kind == shop_booking_addons.KIND:  # not once the visit is checked out
+            await shop_booking_addons.assert_refundable(order, line)
             continue
         for n in range(int(line.get("quantity") or 0)):
             ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
@@ -41574,8 +41587,8 @@ async def _apply_shop_refund_fulfillment(attempt: dict) -> None:
             await _revoke_shop_credit_line(order, line, attempt_id)
         elif kind == "gift_card":
             await gift_card_shop.revoke_line(order, line, attempt_id)
-        elif kind == shop_account_credit.KIND:
-            await shop_account_credit.revoke_line(order, line, attempt_id)
+        elif kind == shop_booking_addons.KIND:
+            await shop_booking_addons.revoke_line(order, line, attempt_id)
 
         await db.shop_orders.update_one(
             {"id": order["id"], "lines": {"$elemMatch": {"item_id": item_id, "refund_attempts_applied": {"$ne": attempt_id}}}},
@@ -45047,13 +45060,14 @@ async def _price_shop_cart(
             unit_price = priced["unit_price"]
             name = priced["name"]
             org_source = {}
-        elif cart_item.kind == shop_account_credit.KIND:
-            # Money paid ahead onto the account: pays $X, gets $X. Never
-            # discounted or taxed (both are product-only below). Account
-            # holders only — domains/shop/account_credit.py.
+        elif cart_item.kind == shop_booking_addons.KIND:
+            # A booking's add-ons, paid online. The amount is read from the
+            # buyer's own open bookings, never from the cart. Never discounted
+            # or taxed (both are product-only below). Account holders only —
+            # domains/shop/booking_addons.py.
             if is_guest or not client_id:
-                raise HTTPException(status_code=403, detail="Please sign in to pay ahead.")
-            priced = shop_account_credit.price_line(cart_item.ref_id, qty)
+                raise HTTPException(status_code=403, detail="Please sign in to pay for add-ons.")
+            priced = await shop_booking_addons.price_line(client_id, cart_item.ref_id, qty)
             unit_price = priced["unit_price"]
             name = priced["name"]
             org_source = {}
@@ -45105,6 +45119,8 @@ async def _price_shop_cart(
             "taxable": bool(org_source.get("taxable", True)) if cart_item.kind == "product" else False,
             **org_snapshot,
         }
+        if cart_item.kind == shop_booking_addons.KIND:
+            line["addon_plan"] = priced["plan"]   # exactly what was priced is what gets marked paid
         if cart_item.kind == "training_program":
             # Phase 5 — frozen at pricing time so _apply_shop_payment never
             # re-reads the (possibly since-edited) program doc to decide
@@ -45970,8 +45986,8 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 await gift_card_shop.fulfill_line(
                     order, line, mint=gift_card_services.mint_card,
                     email=gift_card_services.send_card_email)
-            elif line["kind"] == shop_account_credit.KIND:
-                await shop_account_credit.fulfill_line(order, line)
+            elif line["kind"] == shop_booking_addons.KIND:
+                await shop_booking_addons.fulfill_line(order, line)
             elif line["kind"] == "credit_pack":
                 await _fulfill_shop_credit_pack_line(order, line)
             elif line["kind"] == "training_program" and line.get("fulfillment_kind") == "online_school":

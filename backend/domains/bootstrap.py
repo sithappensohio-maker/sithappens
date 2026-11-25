@@ -290,8 +290,8 @@ def register_domains(
     register_shop_routes(api=api, server_globals=server_globals)
     register_guest_shop_routes(api=api, server_globals=server_globals)
     shop_abandon.configure(server_globals=server_globals)
-    from domains.shop import account_credit as shop_account_credit  # money paid ahead onto the account
-    shop_account_credit.configure(server_globals=server_globals)
+    from domains.shop import booking_addons as shop_booking_addons  # a booking's add-ons paid online
+    shop_booking_addons.configure(server_globals=server_globals)
     shop_abandon.register_abandon_routes(api=api, server_globals=server_globals)
     register_shop_discovery_routes(api=api, server_globals=server_globals)
     register_shop_analytics_routes(api=api, server_globals=server_globals)

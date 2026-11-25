@@ -73,8 +73,8 @@ export default function BookingPayNow({ options, selectedId, onSelect, payAddons
       </div>
       </>)}
 
-      {/* Add-ons cost dollars, not credits. Paid ahead, the money sits on the
-          client's account and comes off the bill at pickup. */}
+      {/* Add-ons cost dollars, not credits. Paid here, they are marked "paid
+          online" at $0 on the booking, so pickup charges nothing more. */}
       {addons && (
         <div className="space-y-2" data-testid="wiz-pay-addons">
           {packs.length === 0 && (
@@ -94,7 +94,7 @@ export default function BookingPayNow({ options, selectedId, onSelect, payAddons
             <span className="text-[15px] font-black text-shPrimary whitespace-nowrap">${Number(addons.total).toFixed(2)}</span>
           </button>
           <p className="text-[12px] text-shTextMuted leading-snug">
-            Add-on money goes on your account and comes off your bill when you pick up.
+            Paid add-ons show as "paid online" on your booking, so there's nothing more to pay for them at pickup.
           </p>
         </div>
       )}
