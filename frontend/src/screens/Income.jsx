@@ -150,12 +150,18 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   // Persistent "This Year" card — always the current calendar year, no
   // range picker needed; it naturally starts comparing against last year
   // the moment the calendar flips.
-  useEffect(() => {
+  // Also re-pulled after a refund, adjustment, retail or expense change:
+  // loaded only once, the monthly Revenue Trend bars and the This Year
+  // totals kept the old number until the page was reopened (owner,
+  // 2026-11-25: "the refund didn't lower the bar graph").
+  const loadYearOverview = useCallback(() => {
     api.get("/transactions/year-overview").then(r => setYearOverview(r.data)).catch(()=>{});
   }, []);
+  useEffect(() => { loadYearOverview(); }, [loadYearOverview]);
 
   const refreshAfterExpenseChange = () => {
     loadExpenses();
+    loadYearOverview();
     // re-pull range summary so the Net tile updates
     if (rangeStart && rangeEnd) {
       api.get("/transactions/summary-range", { params: { start_date: rangeStart, end_date: rangeEnd } })
@@ -166,6 +172,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
   const refreshAfterRetailChange = () => {
     loadRetail();
+    loadYearOverview();
     if (rangeStart && rangeEnd) {
       api.get("/transactions/summary-range", { params: { start_date: rangeStart, end_date: rangeEnd } })
          .then(r => setRangeSummary(r.data))
@@ -279,6 +286,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       setRows(rs => rs.map(x => x.id === r.id ? { ...x, ...data } : x));
       const sum = await api.get("/transactions/weekly-summary", { params: { ref_date: refDate } });
       setSummary(sum.data);
+      loadYearOverview();
     } catch (e) {
       setEditErr(`Update failed: ${e.response?.data?.detail || e.message}`);
       load();  // pull fresh values to revert local optimistic state
@@ -290,6 +298,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
     try {
       await api.delete(`/transactions/${r.id}`);
       load();
+      loadYearOverview();
     } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
   };
 
@@ -1025,7 +1034,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       </div>
       </div>
 
-      {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={load} dogs={dogs} services={services} />}
+      {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={() => { load(); loadYearOverview(); }} dogs={dogs} services={services} />}
       {takePaymentOpen && (
         <TakePaymentModal onClose={()=>setTakePaymentOpen(false)}
                           onSuccess={()=>{ setTakePaymentOpen(false); refreshAfterRetailChange(); }} />
