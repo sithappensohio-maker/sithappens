@@ -41,7 +41,33 @@ function readReturnParams() {
 // each dog), and this page runs in the app's own origin.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Where a bill stands, for the receipt on screen AND the printed one (one rule,
+// so the two cannot drift). A receipt can be opened for a bill that is not paid
+// yet; without this an unpaid bill read like proof of payment.
+//   null            -> not a bill, or the figures are missing: say nothing
+//   state "owed"    -> money is still due
+//   state "refunded" / "part_refunded" -> a refund never changes the bill's
+//                      balance, so balance 0 alone must not say "Paid in full"
+//   state "paid"    -> settled
+// `covered` is the part prepaid visits paid for; it is not money handed over,
+// so it is shown on its own line and never counted as "Paid so far".
+export function billStanding(payload) {
+  if (!payload || payload.kind !== "invoice" || payload.remaining_balance == null || payload.invoice_total == null) return null;
+  const due = Math.max(0, Number(payload.remaining_balance) || 0);
+  const covered = Math.max(0, Number(payload.credits_applied) || 0);
+  const paid = Math.max(0, (Number(payload.invoice_total) || 0) - due - covered);
+  const st = payload.invoice_status;
+  const state = due > 0.005 ? "owed" : st === "REFUNDED" ? "refunded" : st === "PARTIALLY_REFUNDED" ? "part_refunded" : "paid";
+  return { due, covered, paid, state };
+}
+const STANDING_WORDS = { paid: "Paid in full", refunded: "Refunded", part_refunded: "Partly refunded" };
+
 export function receiptPrintHtml(payload, logoSrc) {
+  const st = billStanding(payload);
+  const row = (label, amount, bold) => `<div${bold ? ' class="b"' : ""} style="display:flex;justify-content:space-between;"><span>${esc(label)}</span><span>${esc(money(amount))}</span></div>`;
+  const standing = !st ? "" : st.state === "owed"
+    ? `${st.covered > 0.005 ? row("Prepaid visits used", st.covered) : ""}${row("Paid so far", st.paid)}${row(CLIENT_LABELS.balanceDue, st.due, true)}<p>This bill is not paid in full yet.</p>`
+    : `<p class="b">${esc(STANDING_WORDS[st.state])}</p>`;
   const lines = (payload.line_items || []).map((li) =>
     `<div style="display:flex;justify-content:space-between;gap:8px;"><span>${esc(li.description)}${li.qty > 1 ? ` &times; ${esc(li.qty)}` : ""}</span><span>${esc(money(li.amount))}</span></div>`
   ).join("");
@@ -57,6 +83,7 @@ export function receiptPrintHtml(payload, logoSrc) {
       ${lines}
       <div class="hr"></div>
       <div class="b" style="display:flex;justify-content:space-between;"><span>Total</span><span>${esc(money(payload.total ?? payload.invoice_total ?? payload.payment_amount))}</span></div>
+      ${standing}
       </body></html>`;
 }
 
@@ -142,7 +169,8 @@ export default function PortalInvoices() {
   const viewReceipt = async (invoiceId) => {
     try {
       const { data } = await api.get(`/receipts/invoice/${invoiceId}`);
-      setReceiptViewOpen(data);
+      // The receipt itself carries no status; the bill in the list does.
+      setReceiptViewOpen({ ...data, invoice_status: invoices.find((i) => i.id === invoiceId)?.status });
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load the receipt");
     }
@@ -164,7 +192,7 @@ export default function PortalInvoices() {
     let payload;
     try {
       const { data } = await api.get(`/receipts/invoice/${invoiceId}`);
-      payload = data;
+      payload = { ...data, invoice_status: invoices.find((i) => i.id === invoiceId)?.status };
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load the receipt");
       return;
@@ -298,6 +326,22 @@ export default function PortalInvoices() {
             ))}
             <div className="border-t border-gray-200 my-2" />
             <div className="flex justify-between font-black text-base"><span>Total</span><span>{money(receiptViewOpen.total ?? receiptViewOpen.invoice_total ?? receiptViewOpen.payment_amount)}</span></div>
+            {(() => {
+              const st = billStanding(receiptViewOpen);
+              if (!st) return null;
+              return st.state === "owed" ? (
+                <div className="mt-1" data-testid="portal-receipt-owed">
+                  {st.covered > 0.005 && <div className="flex justify-between text-gray-600"><span>Prepaid visits used</span><span>{money(st.covered)}</span></div>}
+                  <div className="flex justify-between text-gray-600"><span>Paid so far</span><span>{money(st.paid)}</span></div>
+                  <div className="flex justify-between font-black text-red-700"><span>{CLIENT_LABELS.balanceDue}</span><span>{money(st.due)}</span></div>
+                  <p className="text-gray-500 text-[12px] mt-1">This bill is not paid in full yet.</p>
+                </div>
+              ) : st.state === "paid" ? (
+                <p className="mt-1 font-black text-green-700" data-testid="portal-receipt-paid">Paid in full</p>
+              ) : (
+                <p className="mt-1 font-black text-gray-600" data-testid="portal-receipt-refunded">{STANDING_WORDS[st.state]}</p>
+              );
+            })()}
             <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
           </div>
         </div>
