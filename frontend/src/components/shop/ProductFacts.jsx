@@ -153,7 +153,7 @@ export default function ProductFacts({ item, mode }) {
     const v = packValue(item);
     if (v) included.push(`${v.quantity} ${v.unit}, used whenever you like`);
     included.push("They do not expire");
-    included.push("Taken off your balance automatically at check-in");
+    included.push("Taken off your balance automatically after each visit");
     if (info.serviceType === "training") included.push("Redeemable against training sessions");
   }
   if (item.kind === "gift_card") {

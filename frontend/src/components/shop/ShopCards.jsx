@@ -269,7 +269,7 @@ export function ValueCard(props) {
         </p>
         <p className="text-[12px] text-shTextMuted mt-3 leading-relaxed">
           Use them whenever you like — they do not expire, and they come off
-          your balance automatically at check-in.
+          your balance automatically after each visit.
         </p>
 
         <div className="mt-4"><CardAction {...props} addLabel="Add to Cart" /></div>
