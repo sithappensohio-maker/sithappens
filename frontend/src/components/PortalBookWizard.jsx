@@ -446,6 +446,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
   // the card page is the Shop's own checkout. Nothing here when credits
   // already cover the booking.
   const [payOptions, setPayOptions] = useState(null);
+  // True exactly when the Pay now box is on screen (same rule BookingPayNow uses).
+  const payOfferShown = !!payOptions?.offer && ((payOptions?.packs || []).length > 0 || !!payOptions?.addons);
   const [payPackId, setPayPackId] = useState("");
   const [payAddons, setPayAddons] = useState(true); // pay the add-on dollars ahead too (when there are any)
   const [payCart, setPayCart] = useState(null);   // what "Book & pay now" was pressed with: Shop checkout items
@@ -1339,7 +1341,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixB
                 below, which answers HOW they can pay. */}
             {selectedCatalogService?.payment?.detail && (
               <p className="text-[14px] text-gray-400 text-center" data-testid="wiz-payment-timing">
-                <i className="fas fa-wallet text-shPrimary mr-1.5"/>{selectedCatalogService.payment.detail}
+                <i className="fas fa-wallet text-shPrimary mr-1.5"/>
+                {/* With the Pay now box on screen, "Nothing to pay" read as a contradiction.
+                    Paying there is a choice, never required, so say exactly that. */}
+                {payOfferShown
+                  ? "You don't have to pay to book. Pay now below if you like, or pay later."
+                  : selectedCatalogService.payment.detail}
               </p>
             )}
 

@@ -637,3 +637,43 @@ describe("the service card shows the price for the dogs picked", () => {
     await act(() => root.unmount());
   });
 });
+
+describe("the payment line on Review never contradicts the Pay now box", () => {
+  const DETAIL = "Nothing to pay to book. We'll sort payment out with you around the visit.";
+  const OFFERED = "You don't have to pay to book. Pay now below if you like, or pay later.";
+
+  // Same Review step as every test above, with the service's own payment wording swapped in.
+  async function reviewFor(service) {
+    api.get.mockImplementation((url) => {
+      if (url === "/services") return Promise.resolve({ data: [service] });
+      if (url === "/services/addons") return Promise.resolve({ data: [] });
+      if (url === "/bookings/availability") return Promise.resolve({ data: OPEN });
+      return Promise.resolve({ data: {} });
+    });
+    return atReview();
+  }
+  const WITH_DETAIL = { ...DAYCARE, payment: { detail: DETAIL } };
+
+  test("Pay now box on screen: the line says paying is a choice, not 'Nothing to pay to book'", async () => {
+    const v = await reviewFor(WITH_DETAIL);
+    expect(v.q("wiz-pay-now")).toBeTruthy();
+    expect(v.q("wiz-payment-timing").textContent).toBe(OFFERED);
+    expect(document.body.textContent).not.toMatch(/Nothing to pay to book/);
+    await v.cleanup();
+  });
+
+  test("credits cover it (no Pay now box): the service's own payment line is shown unchanged", async () => {
+    payOptions = () => Promise.resolve({ data: { offer: false, packs: [] } });
+    const v = await reviewFor(WITH_DETAIL);
+    expect(v.q("wiz-pay-now")).toBeNull();
+    expect(v.q("wiz-payment-timing").textContent).toBe(DETAIL);
+    await v.cleanup();
+  });
+
+  test("a service with no payment wording shows no payment line, offer or not", async () => {
+    const v = await reviewFor(DAYCARE);
+    expect(v.q("wiz-pay-now")).toBeTruthy();
+    expect(v.q("wiz-payment-timing")).toBeNull();
+    await v.cleanup();
+  });
+});
