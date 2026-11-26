@@ -4371,7 +4371,12 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # `block_bookings_if_vaccines_expired` used to be decorative; it now
     # genuinely controls client booking enforcement. Staff can still use the
     # existing explicit override_vaccines path when authorized.
-    if not (is_staff and body.override_vaccines):
+    # A one-time guest dog (POST /clients/{id}/guest-dog) has no records on
+    # file; staff confirmed that at the desk, and it covers today only.
+    from domains.clients.routes import guest_vaccines_ok_today
+    _today = business_today().isoformat()
+    guest_ok = is_staff and str(body.date or "")[:10] == _today and guest_vaccines_ok_today(dog, _today)
+    if not (is_staff and body.override_vaccines) and not guest_ok:
         vaccine_problem = _booking_vaccine_block(settings, dog, body.service_type)
         if vaccine_problem:
             raise vaccine_problem
@@ -61228,13 +61233,15 @@ list_inquiries = _public_site_callables["list_inquiries"]
 # Walk-in intake — the owner + dog who arrive for a quick service without being
 # on file. An ordinary client row marked `walk_in`, so everything downstream
 # (booking, check-in, register, history) needs no special case.
-from domains.clients.routes import WalkInIn, register_clients_routes  # noqa: E402,F401
+from domains.clients.routes import GuestDogIn, WalkInIn, register_clients_routes  # noqa: E402,F401
 
 _walk_in_callables = register_clients_routes(
     api=api, db=db, now_iso=now_iso,
     require_admin_and_permission=require_admin_and_permission, perms_for=lambda u: _perms_for(u),
+    business_today=lambda: business_today(), refuse_if_archived=client_archive.refuse_if_archived,
 )
 create_walk_in = _walk_in_callables["create_walk_in"]
+create_guest_dog = _walk_in_callables["create_guest_dog"]
 
 # Client account and incident routes live in their domains (route freeze). The
 # names stay bound here for the suites that call them directly.

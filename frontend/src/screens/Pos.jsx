@@ -32,6 +32,8 @@ import ShopRefundModal from "../components/ShopRefundModal";
 import ItemThumbnail from "../components/ItemThumbnail";
 import AdminBookingModal from "../components/AdminBookingModal";
 import WalkInModal from "../components/WalkInModal";
+import GuestDogModal from "../components/GuestDogModal";
+import { friendsFamilyOn } from "../lib/friendsFamily";
 import PrintifyFulfillmentModal from "../components/PrintifyFulfillmentModal";
 import PrintifyStockDecisionModal from "../components/PrintifyStockDecisionModal";
 import { RegisterTab } from "./Staff";
@@ -61,7 +63,8 @@ const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venm
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos({ onOpenShopManager } = {}) {
-  const { can } = useAuth();
+  const auth = useAuth();
+  const { can } = auth;
   const confirm = useConfirm();
   const promptDialog = useOptionalPromptDialog();
   const canBookingEdit = can("booking_edit");
@@ -920,6 +923,31 @@ export default function Pos({ onOpenShopManager } = {}) {
       toast.error(formatErr(detail) || "Check-in failed");
     }
     setCheckInBusyId(null);
+  };
+
+  // One-time guest dog on a visit already on today's list (owner request
+  // 2026-11-26): the family's extra dog is saved on their file (GuestDogModal),
+  // joins this visit through the same add-a-dog rule the booking screen uses
+  // (same day, service and bill), and is checked in — it is standing right here.
+  // Adding a dog to a booking needs the add-a-dog permission; saving a dog
+  // needs clients_edit.
+  const canGuestDog = canBookingEdit && canClientsEdit && friendsFamilyOn(auth);
+  const [guestRow, setGuestRow] = useState(null);
+  const addGuestToVisit = async (row, dog) => {
+    // A refusal here is thrown back to the modal, which shows it; pressing Add
+    // again reuses the dog just saved (the server never makes it twice).
+    const { data } = await api.post(`/bookings/${row.booking_id}/group-dogs`, { dog_id: dog.id, addon_service_ids: [] });
+    setGuestRow(null);
+    try {
+      const geo = await captureGeo();
+      // The desk already confirmed "no vaccine records" for this guest today.
+      await api.post(`/bookings/${data.booking.id}/check-in`, { ...geo, vaccine_ack: true });
+      toast.success(`${dog.name} added as a guest and checked in`);
+    } catch (e) {
+      toast.error(`${dog.name} was added to the visit but is not checked in yet: ${formatErr(e.response?.data?.detail) || "check in from the list"}`);
+    }
+    loadRoster();
+    if (selectedClient?.id === row.client_id) refreshClientInvoice(selectedClient.id);
   };
 
   // ── Tender / sale completion ─────────────────────────────────────────────
@@ -2247,6 +2275,14 @@ export default function Pos({ onOpenShopManager } = {}) {
                   {/* Two buttons on an on-site row now: let them wrap under the chip on a phone, never push the name out. */}
                   <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     <FrontDeskStatusChip bucket={bucket} missed={missed} label={label}/>
+                    {canGuestDog && !missed && (bucket === "expected" || bucket === "on_site") && ["daycare", "boarding"].includes(row.service_type) && (
+                      <button onClick={() => setGuestRow(row)} data-testid={`pos-visit-guest-dog-${row.booking_id}`}
+                              title="Add an extra dog that isn't on file, just for this visit" aria-label={`Add a guest dog to ${row.dog_name}'s visit`}
+                              className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-lg px-3 min-h-[42px] inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest hover:text-shText hover:border-shSecondary/60 transition">
+                        <i className="fas fa-plus"/>
+                        <span>Guest dog</span>
+                      </button>
+                    )}
                     {bucket === "expected" && (
                       <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
                               className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest shadow-[0_8px_22px_-10px_rgba(140,198,63,0.8)] hover:brightness-110 transition disabled:opacity-50">
@@ -2884,6 +2920,14 @@ export default function Pos({ onOpenShopManager } = {}) {
             setWalkInOpen(false);
             setWalkInBooking({ clientId: client.id, dogId: dog.id });
           }}
+        />
+      )}
+      {guestRow && (
+        <GuestDogModal
+          clientId={guestRow.client_id}
+          clientName={guestRow.client_name}
+          onClose={() => setGuestRow(null)}
+          onCreated={(dog) => addGuestToVisit(guestRow, dog)}
         />
       )}
       {walkInBooking && (

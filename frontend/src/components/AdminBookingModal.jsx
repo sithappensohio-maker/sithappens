@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { friendsFamilyOn } from "../lib/friendsFamily";
+import GuestDogModal from "./GuestDogModal";
 import WalkInModal from "./WalkInModal";
 import EntitySearchPicker from "./EntitySearchPicker";
 import MultiDatePicker from "./MultiDatePicker";
@@ -284,6 +285,11 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   ffRef.current = ff;
   const [payerId, setPayerId] = useState("");
   const [friendAddOpen, setFriendAddOpen] = useState(false);
+  // One-time guest dog (owner request 2026-11-26): an extra dog that came
+  // along with a family on file. Offered only while checking in now — the
+  // desk's "no vaccine records" confirmation covers today's visit only.
+  const [guestAddOpen, setGuestAddOpen] = useState(false);
+  const canGuest = canAddFamily && !!clientId && !!dogId && checkInNow && !existing;
   // Reset extras whenever client changes — selecting a new owner means the
   // dog list changes and any previously-picked extras may not belong to
   // them anymore. (A friends & family booking keeps its friends' dogs.)
@@ -1331,7 +1337,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               when not editing, not in multi-date mode, and the selected
               client has >1 dog on file. Primary dog is `dogId`; extras are
               tracked in `extraDogs` and share the booking's date/service. */}
-          {!isEdit && !isMultiDate && (clientDogsForGroup.length > 1 || ffAllowed) && (
+          {!isEdit && !isMultiDate && (clientDogsForGroup.length > 1 || ffAllowed || canGuest) && (
             <div className="bg-[var(--sh-card-base)]/40 border border-shPrimary/30 rounded-lg p-3 space-y-3" data-testid="ab-multidog">
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -1345,12 +1351,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                     </label>
                   )}
                 </div>
-                {clientDogsForGroup.some(d => !ffUsed.has(d.id)) && (
-                  <button type="button" onClick={addExtraDog} data-testid="ab-add-dog"
-                          className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap">
-                    <i className="fas fa-plus mr-1"/>Add dog
-                  </button>
-                )}
+                <div className="flex flex-col items-stretch gap-2 shrink-0">
+                  {clientDogsForGroup.some(d => !ffUsed.has(d.id)) && (
+                    <button type="button" onClick={addExtraDog} data-testid="ab-add-dog"
+                            className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap">
+                      <i className="fas fa-plus mr-1"/>Add dog
+                    </button>
+                  )}
+                  {canGuest && (
+                    <button type="button" onClick={() => setGuestAddOpen(true)} data-testid="ab-add-guest-dog"
+                            title="An extra dog that isn't on file, here just for today"
+                            className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition whitespace-nowrap">
+                      <i className="fas fa-plus mr-1"/>Guest dog
+                    </button>
+                  )}
+                </div>
               </div>
               {extraDogs.map((extra, idx) => {
                 const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
@@ -1704,6 +1719,19 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             setClientId(client.id);
             setDogId(dog.id);
             setWalkInOpen(false);
+          }}
+        />
+      )}
+      {guestAddOpen && (
+        <GuestDogModal
+          clientId={clientId}
+          clientName={clients.find(c => c.id === clientId)?.name}
+          onClose={() => setGuestAddOpen(false)}
+          onCreated={(dog) => {
+            // One more dog on this visit, same date and service; it is checked in with the rest.
+            setDogs(prev => (prev.some(d => d.id === dog.id) ? prev : [dog, ...prev]));
+            addFriendDog(dog.id);
+            setGuestAddOpen(false);
           }}
         />
       )}

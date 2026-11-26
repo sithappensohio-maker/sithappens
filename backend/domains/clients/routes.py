@@ -49,8 +49,92 @@ def _vaccine_dates(given: Optional[Dict[str, str]]) -> Dict[str, str]:
     return out
 
 
-def register_clients_routes(*, api, db, now_iso, require_admin_and_permission, perms_for=None) -> Dict[str, Any]:
+GUEST_TAG = "One-time guest"
+
+
+class GuestDogIn(BaseModel):
+    """A dog that came along for the day with a family already on file."""
+
+    dog_name: str = Field(min_length=1, max_length=120)
+    breed: Optional[str] = Field(default="", max_length=120)
+    notes: Optional[str] = Field(default="", max_length=2000)
+    # The desk has seen the warning: no vaccine records are on file for this dog.
+    no_vaccines_confirmed: bool = False
+
+
+def guest_vaccines_ok_today(dog: dict, today: str) -> bool:
+    """Did staff confirm TODAY that this one-time guest has no vaccine records
+    on file? Only then is the dog's visit today not stopped by the vaccine
+    check; any other day it is checked like every other dog."""
+    return bool(today) and (dog or {}).get("guest_vaccines_ok_on") == today
+
+
+def register_clients_routes(*, api, db, now_iso, require_admin_and_permission, perms_for=None,
+                            business_today=None, refuse_if_archived=None) -> Dict[str, Any]:
     """Register walk-in intake. Returns the callables the in-process suite calls."""
+
+    @api.post("/clients/{client_id}/guest-dog")
+    async def create_guest_dog(
+        client_id: str,
+        body: GuestDogIn,
+        user: dict = Depends(require_admin_and_permission("clients_edit")),
+    ):
+        """Add a one-time guest dog to a family already on file (owner request
+        2026-11-26): the extra dog that comes along at drop-off.
+
+        The dog is a real dog on the family's file, tagged "One-time guest", so
+        its visit, care notes and bill have somewhere to live. It has no vaccine
+        records; staff must confirm that, and the confirmation covers today only.
+        """
+        name = (body.dog_name or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="The dog's name is required.")
+        if not body.no_vaccines_confirmed:
+            raise HTTPException(status_code=422, detail="Confirm that this dog has no vaccine records on file before adding it.")
+        client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+        if refuse_if_archived:
+            refuse_if_archived(client)
+        today = business_today().isoformat() if business_today else date.today().isoformat()
+
+        # The same name twice is the same dog: a second press (or a retry after
+        # the booking was refused) gets today's guest back, never a duplicate.
+        on_file = await db.dogs.find({"owner_id": client_id}, {"_id": 0}).to_list(500)
+        for d in on_file:
+            if d.get("deleted_at") or d.get("archived"):
+                continue
+            if str(d.get("name") or "").strip().casefold() != name.casefold():
+                continue
+            if d.get("guest") and d.get("guest_added_on") == today:
+                await db.dogs.update_one({"id": d["id"]}, {"$set": {"guest_vaccines_ok_on": today}})
+                return {"dog": {**d, "guest_vaccines_ok_on": today}, "already_on_file": True}
+            raise HTTPException(
+                status_code=409,
+                detail=f"{client.get('name') or 'This family'} already has a dog named {d.get('name')} on file. Pick that dog instead.")
+
+        dog_doc = {
+            "id": str(uuid.uuid4()),
+            "owner_id": client_id,
+            "name": name,
+            "breed": (body.breed or "").strip(),
+            "age_y": 0,
+            "age_m": 0,
+            "sex": "Male",
+            "fixed": "No",
+            "vaccines": {},   # none handed in; the dog shows as unvaccinated everywhere
+            "notes": (body.notes or "").strip(),
+            "tags": [GUEST_TAG],
+            "guest": True,
+            "guest_added_on": today,
+            "guest_added_by": user.get("id"),
+            "guest_vaccines_ok_on": today,
+            "training_logs": [],
+            "created_at": now_iso(),
+        }
+        await db.dogs.insert_one(dog_doc)
+        dog_doc.pop("_id", None)
+        return {"dog": dog_doc, "already_on_file": False}
 
     @api.post("/clients/walk-in")
     async def create_walk_in(
@@ -120,4 +204,4 @@ def register_clients_routes(*, api, db, now_iso, require_admin_and_permission, p
 
         return {"client": client_doc, "dog": dog_doc}
 
-    return {"create_walk_in": create_walk_in}
+    return {"create_walk_in": create_walk_in, "create_guest_dog": create_guest_dog}
