@@ -163,7 +163,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
           </div>
           <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
                 data-testid="portal-setup-overall-badge">
-            <i className={`fas ${overallMeta.icon} mr-1.5`}/>Step {Math.min(completed_count + 1, total_count)} of {total_count}
+            <i className={`fas ${overallMeta.icon} mr-1.5`}/>{completed_count} of {total_count} done
           </span>
         </div>
 
